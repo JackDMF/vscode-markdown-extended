@@ -1729,8 +1729,6 @@ class ObjectToolbarView implements PluginView {
                 return atCaret ? caretRect(view, Math.min(head, size)) : bar.object ? anchorOf(view, bar.object) : null;
             },
             valid: () => bar.editing,
-            // A run's field stands where an inline object's bar does (#8: Bold at the run): above, where text is on both sides.
-            bothCovered: target !== undefined && block === undefined ? 'above' : undefined,
             hidden: () => this.barHidden(bar, 'displaced'),
             fit: (room, fresh) => bar.fitField(room, fresh),
         }, { force: true });
@@ -2084,8 +2082,6 @@ class ObjectToolbarView implements PluginView {
             el: bar.el,
             anchor: () => (bar.object === null ? null : anchorOf(this.view, this.partAnchor(bar) ?? bar.object)),
             valid: () => bar.object !== null,
-            // An inline object's bar goes above where text is on both sides (Daniel, 2026-10-20); a block's stays below.
-            bothCovered: isBlockPlaced(object) ? undefined : 'above',
             hidden: reason => this.barHidden(bar, reason),
             fit: (room, fresh) => {
                 if (fresh) {

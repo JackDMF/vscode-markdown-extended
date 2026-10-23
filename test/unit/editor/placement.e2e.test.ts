@@ -121,7 +121,7 @@ suite('Editor placement (e2e)', () => {
 
     /** s2: the caret in a link on a paragraph's second line. */
     const s2 = async () => {
-        // Whole lines of text above and below the link's line, the link one word so it never wraps: text under both, an inline object's bar goes above.
+        // Whole lines of text above and below the link's line, the link one word so it never wraps: text under both, the bar keeps below (#15 review 2).
         await showDocument(S2_TEXT, 'linkedwords');
         await clickBefore('linkedwords', 3);
         await waitBar();
@@ -306,17 +306,17 @@ suite('Editor placement (e2e)', () => {
         assert.ok(offLine(bar, line), `off the caret's line: ${JSON.stringify({ bar, line })}`);
     });
 
-    test('s2: a link\'s bar with text above and below goes above the link, at its start, never on the caret\'s line', async function () {
+    test('s2 (#15 review 2, Daniel: above only where below is text and above is not): a link\'s bar with text above and below keeps below the link, at its start, never on the caret\'s line', async function () {
         this.timeout(15000);
         await s2();
         const bar = await box(BAR);
         const link = await page.$eval('.ProseMirror a', a => {
             const rects = a.getClientRects();
-            return { left: rects[0].left, top: rects[0].top };
+            return { left: rects[0].left, bottom: rects[rects.length - 1].bottom };
         });
         const line = await caret();
         assert.ok(bar);
-        assert.ok(bar.bottom <= link.top - GAP + 1, `above the link: ${JSON.stringify({ bar, link })}`);
+        assert.ok(bar.top >= link.bottom + GAP - 1, `below the link: ${JSON.stringify({ bar, link })}`);
         assert.ok(Math.abs(bar.left - link.left) <= 1, `at the link's first line's start: ${JSON.stringify({ bar, link })}`);
         assert.ok(offLine(bar, line), `off the caret's line: ${JSON.stringify({ bar, line })}`);
     });
@@ -351,7 +351,7 @@ suite('Editor placement (e2e)', () => {
         assert.ok(!overlap(bar, lens), 'not over the lens row');
     });
 
-    test('s3a/s3b: a mouse selection in a note shows the bubble alone, below it; collapsed, the note\'s bar after a rest, the bubble gone', async function () {
+    test('s3a/s3b: a mouse selection in a note shows the bubble alone, below it; collapsed, the note\'s bar after a rest, below its line with text on both sides (#15 review 2), the bubble gone', async function () {
         this.timeout(15000);
         await s3a();
         await page.waitForSelector(BUBBLE, { timeout: 500 });
@@ -372,8 +372,8 @@ suite('Editor placement (e2e)', () => {
         const bar = await box(BAR);
         const ref = await box('.ProseMirror .sn-ref');
         assert.ok(bar && ref);
-        // Text above and below the note's line: an inline object's bar goes above.
-        assert.ok(bar.bottom <= ref.top - GAP + 1, `the bar above the note's line: ${JSON.stringify({ bar, ref })}`);
+        // Text above and below the note's line: the bar keeps below (#15 review 2, Daniel: above only where below is text and above is not).
+        assert.ok(bar.top >= ref.bottom + GAP - 1, `the bar below the note's line: ${JSON.stringify({ bar, ref })}`);
         assert.strictEqual(await shown(BUBBLE), false);
     });
 
@@ -522,7 +522,7 @@ suite('Editor placement (e2e)', () => {
         return column + (gaps.length > 0 ? Math.min(...gaps) : 0);
     });
 
-    test('s7: with the lane open the bar and the hint stop short of it and keep off each other and off the caret\'s line', async function () {
+    test('s7: with the lane open the bar and the hint stop short of it and keep off each other and off the caret\'s line; the bar below with text on both sides (#15 review 2)', async function () {
         this.timeout(15000);
         await s7();
         const lane = await laneEdge();
@@ -533,8 +533,8 @@ suite('Editor placement (e2e)', () => {
         assert.ok(bar.right <= lane - GAP + 1 && hint.right <= lane - GAP + 1, `short of the lane: ${JSON.stringify({ bar, hint, lane })}`);
         assert.ok(!overlap(bar, hint), `the hint keeps off the bar: ${JSON.stringify({ bar, hint })}`);
         assert.ok(offLine(hint, line), `the hint off the caret's line: ${JSON.stringify({ hint, line })}`);
-        // A link's bar goes above where text is on both sides: the hint takes the free place under the line.
-        assert.ok(bar.bottom <= line.top + 1 && hint.top >= line.bottom - 1, `the bar above the line, the hint under it: ${JSON.stringify({ bar, hint, line })}`);
+        // A link's bar keeps below where text is on both sides (#15 review 2): the hint takes the place above the line.
+        assert.ok(bar.top >= line.bottom - 1 && hint.bottom <= line.top + 1, `the bar under the line, the hint above it: ${JSON.stringify({ bar, hint, line })}`);
     });
 
     test('s7b: with the table\'s bar below the table, the hint flips above the caret\'s line, and a keystroke takes it', async function () {

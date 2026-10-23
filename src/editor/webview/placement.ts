@@ -80,8 +80,8 @@ export interface Context {
     avoid?: readonly Rect[];
     /** Whether a band covers text (the probe); the tie-break only. Absent = never covered. */
     covered?: (band: Rect) => boolean;
-    /** The side that wins where text is under both: 'above' for an inline object's bar (Daniel, 2026-10-20); the default is below. A side free of text always wins. */
-    bothCovered?: 'above' | 'below';
+    /** 'above': taken wherever it qualifies, text or not — the bubble over a selection in a note's body set out of the line, whose anchor runs to the body's last line (`selectionAnchor`, #15 review 2). */
+    prefer?: 'above';
     /** An anchor in the margin keeps the layer at it, not pulled back to the column (the selection's bubble, #15 critique). */
     atAnchor?: boolean;
 }
@@ -121,9 +121,10 @@ export function probeBand(x: number, y: number, size: Size): Rect {
 
 /**
  * Below the anchor, else above; x = anchor.left clamped into
- * [columnLeft, layerEdge - width]. Both free: the one whose band covers no
- * text (`covered`); text under both: `bothCovered` (below unless an inline
- * object's bar), else below. Neither qualifies: an anchor running out of the
+ * [columnLeft, layerEdge - width]. Both free: below where its band covers no
+ * text, above only where below does and above does not (`covered`; Daniel,
+ * #15 review 2: text under both keeps below); `prefer` 'above' takes above
+ * wherever it qualifies. Neither qualifies: an anchor running out of the
  * window while still in view keeps the layer at the visible bottom edge (the
  * top one where that is on the caret's line); otherwise below the caret's line,
  * else above it, and only where neither fits kept inside the window — or, no
@@ -140,17 +141,13 @@ export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Contex
     const above = anchor.top - GAP - size.height;
     const belowOk = qualifies(x, below, size, frame, ctx);
     const aboveOk = qualifies(x, above, size, frame, ctx);
+    if (aboveOk && ctx.prefer === 'above') {
+        return { x, y: above, side: 'above' };
+    }
     if (belowOk && aboveOk) {
         const covered = ctx.covered;
-        if (covered) {
-            const textBelow = covered(probeBand(x, below, size));
-            const textAbove = covered(probeBand(x, above, size));
-            if (textBelow && !textAbove) {
-                return { x, y: above, side: 'above' };
-            }
-            if (textBelow && textAbove && ctx.bothCovered === 'above') {
-                return { x, y: above, side: 'above' };
-            }
+        if (covered && covered(probeBand(x, below, size)) && !covered(probeBand(x, above, size))) {
+            return { x, y: above, side: 'above' };
         }
         return { x, y: below, side: 'below' };
     }
@@ -348,7 +345,9 @@ export const VIEWPORT = (): Frame => ({ columnLeft: 0, layerEdge: window.innerWi
  * The caret's line across the column, ±2 px, or `null` where there is no
  * caret in the text: no text selection, or the focus in a node view's control
  * (a source box) that hides it. A bar or field that has the focus keeps the
- * caret's line: the caret is still where the person was.
+ * caret's line: the caret is still where the person was. A caret in a
+ * margin (a note's body floated there) has its line across that margin only:
+ * the column beside it is no part of it (#15 review 2, tempo-after).
  */
 export function caretBand(view: EditorView, frame: Frame): Rect | null {
     const sel = view.state.selection;
@@ -357,7 +356,14 @@ export function caretBand(view: EditorView, frame: Frame): Rect | null {
     }
     try {
         const c = view.coordsAtPos(sel.head);
-        return { left: frame.columnLeft, right: frame.layerEdge, top: c.top - 2, bottom: c.bottom + 2 };
+        const line = { top: c.top - 2, bottom: c.bottom + 2 };
+        if (frame.columnRight !== undefined && c.left >= frame.columnRight) {
+            return { left: frame.columnRight, right: Math.max(frame.layerEdge, c.right), ...line };
+        }
+        if (c.right <= frame.columnLeft) {
+            return { left: Math.min(0, c.left), right: frame.columnLeft, ...line };
+        }
+        return { left: frame.columnLeft, right: frame.layerEdge, ...line };
     } catch {
         return null;
     }
@@ -492,6 +498,39 @@ function floatedAnchor(view: EditorView, pos: number, dom: Element, own: Rect): 
 }
 
 /**
+ * The floated or positioned element of the document `pos` stands in — a
+ * note's body or a sidebar set out of its line into a margin — or `null`.
+ */
+export function floatedAround(view: EditorView, pos: number): Element | null {
+    let node: globalThis.Node;
+    try {
+        node = view.domAtPos(pos, 1).node;
+    } catch {
+        return null;
+    }
+    for (let at: Element | null = node instanceof Element ? node : node.parentElement; at !== null && at !== view.dom; at = at.parentElement) {
+        const style = getComputedStyle(at);
+        if (style.float !== 'none' || style.position === 'absolute' || style.position === 'fixed') {
+            return at;
+        }
+    }
+    return null;
+}
+
+/**
+ * The bubble's anchor (Daniel, #15 review 2): the selection's lines
+ * (`rangeAnchor`); in a note's body set out of its line, down to the body's
+ * last line of text — the bubble stands above the selected line (`prefer`),
+ * else below the whole body, never over the note's text below the selection.
+ */
+export function selectionAnchor(view: EditorView, from: number, to: number): Rect | null {
+    const own = rangeAnchor(view, from, to);
+    const body = own === null ? null : floatedAround(view, from);
+    const lines = body === null ? null : textLines(body);
+    return own === null || lines === null ? own : { ...own, bottom: Math.max(own.bottom, lines.bottom) };
+}
+
+/**
  * A range's anchor from its line boxes: the left of its LAST line — the
  * layer stands under that line, so its x belongs to it (on one line, the
  * range's start) — the top of its first, the bottom of its last. The range is
@@ -549,8 +588,8 @@ export interface PlaceOptions {
     /** The frame and the other open layers, where the caller has read them already: not read twice. */
     frame?: Frame;
     avoid?: readonly Rect[];
-    /** The side that wins where text is under both (`Context.bothCovered`). */
-    bothCovered?: 'above' | 'below';
+    /** The side taken wherever it qualifies (`Context.prefer`). */
+    prefer?: 'above';
     /** Kept at an anchor in the margin (`Context.atAnchor`). */
     atAnchor?: boolean;
 }
@@ -574,7 +613,7 @@ export function placeLayer(el: HTMLElement, anchor: Rect, opts: PlaceOptions): P
     const ctx: Context = {
         caret: opts.caret && view ? caretBand(view, frame) : null,
         avoid: opts.avoid ?? openLayers(opts.mount, opts.except ?? el),
-        bothCovered: opts.bothCovered,
+        prefer: opts.prefer,
         atAnchor: opts.atAnchor,
     };
     const size = { width: el.offsetWidth, height: el.offsetHeight };
@@ -686,8 +725,8 @@ export interface LayerClaim {
     hidden(reason: HideReason): void;
     /** Fit the layer to the room it may take before it is placed (`ObjectBar.fit`); `fresh` after a font loaded. */
     fit?(room: number, fresh: boolean): void;
-    /** Where text is under both sides: 'above' for an inline object's bar (the policy's `bothCovered`); absent: below. */
-    bothCovered?: 'above' | 'below';
+    /** The side taken wherever it qualifies, asked as it is placed (the policy's `prefer`): the bubble's in a note's body set out of its line. */
+    prefer?(): 'above' | undefined;
 }
 
 /** What the occupant was last placed from, in viewport coordinates: a re-place with the same inputs (anchor, size, frame, the other layers) does nothing. */
@@ -1052,7 +1091,7 @@ export class LayerSlot {
         if (firstEdge !== wide.layerEdge) {
             fit(wide, false);
         }
-        const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, avoid, bothCovered: claim.bothCovered, atAnchor: claim.kind === 'bubble' };
+        const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, avoid, prefer: claim.prefer?.(), atAnchor: claim.kind === 'bubble' };
         let p = placeLayer(claim.el, anchor, { ...opts, frame: wide });
         const limited = this.marginLimit(p, claim.el, anchor, frame, wide);
         if (limited !== null) {

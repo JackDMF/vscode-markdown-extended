@@ -1,10 +1,11 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
+import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { EditorPage, UNDO, closeEditorPage, delay, describedTip, leaveObjects, openEditorPage, settle } from './pageHarness';
 import { BAR, BreadcrumbPage, CRUMBS, breadcrumbPage, rectOf } from './breadcrumbPage';
 import { TEMPO } from './noteSample';
-import { hostEngine } from './helpers';
+import { hostEngine, repoRoot } from './helpers';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
@@ -78,6 +79,116 @@ function elementRect(page: puppeteer.Page, selector: string, needle: string) {
     }, selector, needle);
 }
 
+/** The bubble while it shows. */
+const BUBBLE = '.mep-bubble:not([hidden])';
+
+/** `length` characters of the first text holding `needle` selected from its character `k` (the caret there for 0) — no click: a body floated into the margin is reached as the test means it. */
+async function selectAt(page: puppeteer.Page, needle: string, k = 0, length = needle.length): Promise<void> {
+    await page.focus('.ProseMirror');
+    await page.evaluate((n, i, len) => {
+        const root = document.querySelector('.ProseMirror') as HTMLElement;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const at = (node.textContent ?? '').indexOf(n);
+            if (at >= 0) {
+                (document.getSelection() as Selection).setBaseAndExtent(node, at + i, node, at + i + len);
+                return;
+            }
+        }
+        throw new Error(`no "${n}" in the document`);
+    }, needle, k, length);
+}
+
+/** The lines of text of the first note body holding `needle`, top to bottom, and its float. */
+function bodyLines(page: puppeteer.Page, needle: string) {
+    return page.evaluate(n => {
+        const el = Array.from(document.querySelectorAll('.ProseMirror .mnote')).find(e => (e.textContent ?? '').includes(n)) as HTMLElement | undefined;
+        if (!el) {
+            throw new Error(`no note body holding "${n}"`);
+        }
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const lines: { top: number; bottom: number; left: number; right: number }[] = [];
+        for (const r of Array.from(range.getClientRects())) {
+            if (r.width === 0 || r.height === 0) {
+                continue;
+            }
+            const line = lines.find(l => Math.abs(l.top - r.top) < 3);
+            if (line) {
+                Object.assign(line, { top: Math.min(line.top, r.top), bottom: Math.max(line.bottom, r.bottom), left: Math.min(line.left, r.left), right: Math.max(line.right, r.right) });
+            } else {
+                lines.push({ top: r.top, bottom: r.bottom, left: r.left, right: r.right });
+            }
+        }
+        return { float: getComputedStyle(el).float, lines: lines.sort((a, c) => a.top - c.top) };
+    }, needle);
+}
+
+/**
+ * #15 review 2 (Daniel): the bubble over words of a note's body set into the
+ * margin stands above the selected line, never over it or the body's text
+ * below it; with no room above, below the body's last line.
+ */
+async function bubbleOffNoteBody(page: puppeteer.Page, b: BreadcrumbPage, what: string): Promise<void> {
+    const body = 'nicht zu abrupt ändern, nicht zu schnell, ganz ruhig und gleichmäßig, mit Pausen an den richtigen Stellen und ohne Hast';
+    for (const [doc, room] of [
+        [`Erster Absatz mit Text.\n\nZweiter Absatz mit Text.\n\nEin Satz mit !!Tempo|${body}!!{.tipp} und mehr Worten danach.\n\nThe last paragraph.\n`, true],
+        [`!!Tempo|${body}!!{.tipp} steht ganz oben.\n\nThe last paragraph.\n`, false],
+    ] as const) {
+        await b.show(doc);
+        await selectAt(page, 'abrupt');
+        await page.waitForSelector(BUBBLE, { visible: true, timeout: 3000 });
+        await delay(200);
+        const bubble = await rectOf(page, BUBBLE);
+        const note = await bodyLines(page, 'abrupt');
+        const row = await rectOf(page, '.mep-toolbar');
+        const said = `${what}, ${room ? 'room above' : 'no room above'}: ${JSON.stringify({ bubble, note, row: row.bottom })}`;
+        assert.notStrictEqual(note.float, 'none', `the body is in the margin: ${said}`);
+        assert.ok(note.lines.length >= 2, `the body runs over lines: ${said}`);
+        // "abrupt" is on the body's first line.
+        const selected = note.lines[0];
+        for (const line of note.lines) {
+            const over = bubble.left < line.right && bubble.right > line.left && bubble.top < line.bottom && bubble.bottom > line.top;
+            assert.ok(!over, `never over the selected line or the body's text below it: ${said}`);
+        }
+        const height = bubble.bottom - bubble.top;
+        assert.strictEqual(selected.top - height - 8 >= row.bottom, room, `the room above is as the case says: ${said}`);
+        if (room) {
+            assert.ok(bubble.bottom <= selected.top + 0.5, `above the selected line: ${said}`);
+        } else {
+            assert.ok(bubble.top >= note.lines[note.lines.length - 1].bottom - 0.5, `below the body's last line: ${said}`);
+        }
+    }
+}
+
+/**
+ * #15 review 2 (Daniel): a bar prefers below; above only where below is text
+ * and above is not. A note's reference with a heading above its line and the
+ * next item below: the bar keeps below, off the heading (tempo-after) — the
+ * caret on the body's second line in the margin, level with the place below
+ * the reference: the caret's line there is the margin's, not the column's.
+ */
+async function barBelowWithTextOnBothSides(page: puppeteer.Page, b: BreadcrumbPage, what: string): Promise<void> {
+    await b.show('Davor ein Absatz.\n\n## Wie wir natürlich vortragen\n\n1. Gründliche !!Vorbereitung|Vorlesung, gut üben, flüssig, dazu wörtliche Rede mit Gefühl, aber kein Theater!!{.tipp} !\n   - Gebet um Konzentration und Ruhe im Kopf\n   - Hauptpunkte im Kopf haben\n\nThe last paragraph.\n');
+    await selectAt(page, 'Gefühl', 3, 0);
+    await delay(INLINE_DELAY_MS + 250);
+    await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+    assert.strictEqual((await barOf(page)).title, 'Marginal note {.tipp}', what);
+    const bar = await rectOf(page, BAR);
+    const ref = await elementRect(page, '.mn-anchor', 'Vorbereitung');
+    const heading = await elementRect(page, 'h2', 'Wie wir');
+    const item = await elementRect(page, 'li li', 'Gebet');
+    const caret = await page.evaluate(() => {
+        const r = (document.getSelection() as Selection).getRangeAt(0).getClientRects()[0];
+        return { left: r.left, top: r.top, bottom: r.bottom };
+    });
+    const said = `${what}: ${JSON.stringify({ bar, ref, heading, item, caret })}`;
+    assert.ok(item.top < ref.bottom + 40 && heading.bottom > ref.top - 40, `text right above and right below the reference's line: ${said}`);
+    assert.ok(caret.left > ref.right && caret.top >= ref.bottom - 2 && caret.top < ref.bottom + 36, `the caret in the margin, level with the place below the reference: ${said}`);
+    assert.ok(bar.top >= ref.bottom - 0.5, `below the reference's line: ${said}`);
+    assert.ok(bar.bottom <= heading.top || bar.top >= heading.bottom, `off the heading: ${said}`);
+}
+
 /**
  * Notes and sidebars as attribute holders (#15 step 3): Daniel's line opens
  * as rich text with `span.mn-ref.tipp`; the bar reads `Marginal note {.tipp}`
@@ -144,7 +255,7 @@ suite('Editor note attributes: the note bar (e2e)', () => {
             const field = await rectOf(page, FIELD_BAR);
             const ref = await elementRect(page, '.mn-anchor', 'Tempo');
             const body = await elementRect(page, '.mnote', 'abrupt');
-            // At the reference's line: under its last line box, or above its first with text on both sides.
+            // At the reference's line: under its last line box, or above its first where only below is text.
             const atRef = (field.top >= ref.bottom - 1 && field.top <= ref.bottom + 40) || (field.bottom <= ref.top + 1 && field.bottom >= ref.top - 40);
             assert.ok(atRef, `at the reference: ${JSON.stringify({ field, ref, body })}`);
             if (width === 1280) {
@@ -228,6 +339,13 @@ suite('Editor note attributes: the note bar (e2e)', () => {
         const text = (await b.lastEdit())?.text ?? '';
         assert.ok(text.includes('- Eintrag !!Hinweis|eine kurze Notiz!! {.i}'), text);
         assert.strictEqual(await b.hint(), `Marginal note attributes removed — ${UNDO}`);
+    });
+
+    // Last: its document leaves the page scrolled for the suite's next `show` of NOTES_DOC.
+    test('fail-first (#15 review 2, below unless only below is text): text above and below a note\'s reference — its bar keeps below, off the heading (the extension\'s lane, 1280)', async function () {
+        // Before: text under both sides put an inline object's bar above, over the heading.
+        this.timeout(20000);
+        await barBelowWithTextOnBothSides(page, b, 'the extension\'s lane');
     });
 });
 
@@ -354,6 +472,50 @@ suite('Editor note attributes: menu, bubble and refusals (e2e)', () => {
         await settle();
         const text = (await b.lastEdit())?.text ?? '';
         assert.ok(text.includes('schnell!!{.tipp .y}') && !text.includes('[abrupt]'), text);
+    });
+
+    test('fail-first (#15 review 2): the bubble over words of a note\'s body in the margin stands above the selected line, never over the body\'s text; no room above, below its last line (the extension\'s lane, 1280)', async function () {
+        // Before: the bubble stood below the selected line, over the body's second line.
+        this.timeout(30000);
+        await bubbleOffNoteBody(page, b, 'the extension\'s lane');
+    });
+
+    test('fail-first (#15 review 2): the editor\'s own copy of [x]{.left-sidebar} and [y]{.sn-ref} pastes back as attribute spans, not as a sidebar or a note', async function () {
+        // Before: the sidebar's and the note's rules (priority 60) read the span's element first: $x${.left-sidebar}, a sidenote with no body.
+        this.timeout(20000);
+        await b.show('Alpha [x]{.left-sidebar} and [y]{.sn-ref} beta.\n\nGamma.\n\nThe last paragraph.\n');
+        assert.strictEqual(await page.$$eval('.ProseMirror p:first-child span[data-mep-attrs]', els => els.length), 2, 'two attribute spans drawn');
+        await page.focus('.ProseMirror');
+        await page.evaluate(() => {
+            const p = document.querySelector('.ProseMirror p') as HTMLElement;
+            const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+            const texts: globalThis.Node[] = [];
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                texts.push(node);
+            }
+            const last = texts[texts.length - 1];
+            (document.getSelection() as Selection).setBaseAndExtent(texts[0], 0, last, (last.textContent ?? '').length);
+        });
+        await delay(200);
+        const html = await page.evaluate(() => {
+            const data = new DataTransfer();
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+            return data.getData('text/html');
+        });
+        await page.evaluate(() => {
+            const gamma = Array.from(document.querySelectorAll('.ProseMirror p')).find(p => p.textContent === 'Gamma.') as HTMLElement;
+            (document.getSelection() as Selection).collapse(gamma.firstChild as globalThis.Node, 'Gamma.'.length);
+        });
+        await delay(200);
+        await page.evaluate(h => {
+            const data = new DataTransfer();
+            data.setData('text/html', h);
+            data.setData('text/plain', 'Alpha');
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+        }, html);
+        await settle();
+        const text = (await b.lastEdit())?.text ?? '';
+        assert.ok(text.includes('Gamma.Alpha [x]{.left-sidebar} and [y]{.sn-ref} beta.\n'), `${html}\n${text}`);
     });
 
     test('fail-first: on italic words of a note without a {…} of their own the bar, Formatting and the bubble all name the note; with one, Italic wins', async function () {
@@ -519,15 +681,21 @@ suite('Editor note attributes: the cost of a key (e2e)', () => {
     });
 });
 
-/** A user stylesheet with a margin layout of its own (Daniel's petrol one), read in place; the margin suite's first half skips without it. */
-const USER_STYLESHEET = process.env.MEP_USER_STYLESHEET;
+/**
+ * A user stylesheet with a margin layout of its own: Daniel's petrol one
+ * (`MEP_USER_STYLESHEET`, read in place), else the fixture shaped like it —
+ * the margin suite runs in the default run too (#15 review 2).
+ */
+const USER_STYLESHEET = process.env.MEP_USER_STYLESHEET !== undefined && fs.existsSync(process.env.MEP_USER_STYLESHEET)
+    ? process.env.MEP_USER_STYLESHEET
+    : path.join(repoRoot, 'test', 'fixtures', 'editor', 'marginLayout.css');
 
 /**
  * Bars reach into the margin (Daniel, #15 critique): where nothing stands in
  * the margin at the bar's height, a bar may grow past the column up to the
  * editor's edge less 16 px before its words give way; beside a note's body
- * it stops short of it. Measured at 1280 with Daniel's stylesheet (its column
- * is narrow, its notes float into the right margin), and without a margin.
+ * it stops short of it. Measured at 1280 with a margin layout (`USER_STYLESHEET`:
+ * its column is narrow, its notes float into the right margin), and without a margin.
  */
 suite('Editor note attributes: bars reach into the margin (e2e)', () => {
     let editor: EditorPage | undefined;
@@ -537,7 +705,9 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         'Erster Absatz ohne alles.',
         '',
         'Davor !!Lang|ein langer Hinweis im Rand, der über mehrere Zeilen nach unten reicht, bis neben den nächsten Punkt, und noch weiter, '
-            + 'immer weiter, Zeile um Zeile, bis tief neben die Liste, und dort noch ein gutes Stück, damit er sicher neben dem Punkt hängt!!.',
+            + 'immer weiter, Zeile um Zeile, bis tief neben die Liste, und dort noch ein gutes Stück, damit er sicher neben dem Punkt hängt, '
+            // Past the item's line too: its bar keeps below it where text is on both sides (#15 review 2), and the note is still there.
+            + 'und weiter neben dem, was unter dem Punkt steht, Zeile um Zeile, bis er auch neben der Leiste unter dem Punkt hängt, und noch etwas!!.',
         '',
         '- Zeit $Uhrzeit${class=living} und ein ruhiger Satz, der weitergeht. {.punkt}',
         '',
@@ -569,17 +739,15 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test('with Daniel\'s stylesheet at 1280: the left sidebar\'s bar grows into the empty right margin, every verb on it, up to the edge less 16 px', async function () {
+    test('with a margin layout at 1280: the left sidebar\'s bar grows into the empty right margin, every verb on it, up to the edge less 16 px', async function () {
         this.timeout(60000);
-        if (USER_STYLESHEET === undefined || !fs.existsSync(USER_STYLESHEET)) {
-            this.skip();
-        }
-        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [USER_STYLESHEET as string] });
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [USER_STYLESHEET] });
         if (!editor) {
             this.skip();
         }
         page = (editor as EditorPage).page;
-        await b.show(DOC);
+        // Without the notes: nothing in the right margin at the bar's height, whichever side of the item it takes.
+        await b.show('Erster Absatz ohne alles.\n\n- Zeit $Uhrzeit${class=living} und ein ruhiger Satz, der weitergeht. {.punkt}\n\n- Ein zweiter Punkt ohne Notiz. {.punkt}\n\nThe last paragraph.\n');
         await b.restAt('Uhrzeit', 2);
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         const bar = await barBox();
@@ -589,13 +757,13 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         assert.ok(!bar.more, `no word gave way: ${JSON.stringify(bar)}`);
     });
 
-    test('with Daniel\'s stylesheet at 1280: a sidebar floated beside a heading has its bar off the heading\'s text lines, not only off its own box', async function () {
+    test('with a margin layout at 1280: a sidebar floated beside a heading has its bar off the heading\'s text lines, not only off its own box', async function () {
         this.timeout(60000);
         if (editor === undefined) {
             this.skip();
         }
         const words = 'Rückblick, Ausblick und ein Lied mit vielen Worten, die über mehrere Zeilen laufen und laufen';
-        // Text right above and right below the heading: the bar's two sides both have text, and above wins for an inline object's bar.
+        // Text right above and right below the heading: the bar's two sides both have text, and it keeps below (#15 review 2), under the heading's last line.
         const filler = Array.from({ length: 12 }, (_, k) => `Zeile ${k} mit etwas Text.`).join('\n\n');
         await b.show(`${filler}\n\nDavor ein Absatz mit Text, der bis an die Überschrift reicht.\n\n## ${words} $03:00\${class=living}\nDanach ein Absatz direkt darunter mit vielen Worten, die weitergehen.\n\nThe last paragraph.\n`);
         await page.focus('.ProseMirror');
@@ -629,7 +797,24 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         }
     });
 
-    test('with Daniel\'s stylesheet at 1280: beside a note\'s body in the margin the bar stops short of it', async function () {
+    test('fail-first (#15 review 2), with a margin layout at 1280: the bubble over words of a note\'s body stands above the selected line, never over the body\'s text; no room above, below its last line', async function () {
+        this.timeout(30000);
+        if (editor === undefined) {
+            this.skip();
+        }
+        await bubbleOffNoteBody(page, b, 'a margin layout');
+        await page.keyboard.press('Escape');
+    });
+
+    test('fail-first (#15 review 2, below unless only below is text), with a margin layout at 1280: text above and below a note\'s reference — its bar keeps below, off the heading', async function () {
+        this.timeout(30000);
+        if (editor === undefined) {
+            this.skip();
+        }
+        await barBelowWithTextOnBothSides(page, b, 'a margin layout');
+    });
+
+    test('with a margin layout at 1280: beside a note\'s body in the margin the bar stops short of it', async function () {
         this.timeout(60000);
         if (editor === undefined) {
             this.skip();

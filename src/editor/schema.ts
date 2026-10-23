@@ -171,6 +171,13 @@ export function literalDOM(carrier: Mark | Node): Record<string, string> {
     return { ...domAttrsOf(literal), 'data-mep-attrs': literal };
 }
 
+/**
+ * On an attribute span's element (`attr_span`): the editor's own copy of
+ * `[x]{.left-sidebar}` or `[x]{.sn-ref}` pastes as the span, not as the note
+ * or sidebar its class names, whose rules read before it (#15 review 2).
+ */
+const SPAN_ATTR = 'data-mep-span';
+
 /** The literal an element of the page was drawn with (`literalDOM`), or `null`: HTML from elsewhere carries none. */
 function literalOfDOM(dom: HTMLElement): string | null {
     return dom.getAttribute('data-mep-attrs') || null;
@@ -291,7 +298,8 @@ function sidebarNode(className: string): NodeSpec {
         group: 'inline',
         attrs: noteLiteral,
         // Before the attribute span's `span[data-mep-attrs]` (a mark's rule, read first at equal priority): a copy of a sidebar with a literal pastes as the sidebar.
-        parseDOM: [{ tag: `span.${className}`, priority: 60, getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }) }],
+        // The editor's own copy of a span carrying the class (`[x]{.left-sidebar}`) is the span (`SPAN_ATTR`, #15 review 2).
+        parseDOM: [{ tag: `span.${className}`, priority: 60, getAttrs: (dom: HTMLElement) => (dom.hasAttribute(SPAN_ATTR) ? false : { literal: literalOfDOM(dom) }) }],
     });
 }
 
@@ -303,7 +311,7 @@ function noteNode(refClass: string, bodyType: string, bodyClass: string, anchorC
         isolating: true,
         attrs: noteLiteral,
         // Before the attribute span's rule, as a sidebar's (`sidebarNode`): `span.mn-ref.tipp[data-mep-attrs]` is the note.
-        parseDOM: [{ tag: `span.${refClass}`, priority: 60, getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }), getContent: noteContent(bodyType, bodyClass, anchorClass) }],
+        parseDOM: [{ tag: `span.${refClass}`, priority: 60, getAttrs: (dom: HTMLElement) => (dom.hasAttribute(SPAN_ATTR) ? false : { literal: literalOfDOM(dom) }), getContent: noteContent(bodyType, bodyClass, anchorClass) }],
         toDOM(node): DOMOutputSpec { return ['span', withClass(refClass, node.attrs.literal as string | null), 0]; },
     };
 }
@@ -830,7 +838,7 @@ export const editorSchema = new Schema({
             parseDOM: [{ tag: 'span[data-mep-attrs]', getAttrs: (dom: HTMLElement) => ({ literal: dom.getAttribute('data-mep-attrs') }) }],
             toDOM(mark: Mark): DOMOutputSpec {
                 const literal = mark.attrs.literal as string;
-                return ['span', { ...domAttrsOf(literal), 'data-mep-attrs': literal }, 0];
+                return ['span', { ...domAttrsOf(literal), 'data-mep-attrs': literal, [SPAN_ATTR]: '' }, 0];
             },
         },
         // A literal after the closing delimiter (`_x_{.a}`) is the mark's

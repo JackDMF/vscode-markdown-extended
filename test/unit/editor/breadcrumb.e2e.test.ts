@@ -217,7 +217,7 @@ export const FIELDS_DOC = [
     '{.steps}',
     '',
     '> A quoted line with **term**{.term} in the middle of it, and more words after it, enough of them to wrap the paragraph onto a second line under the',
-    '> bold run at any width the suites open, so the run has text above it and below it — where an inline field stands above.',
+    '> bold run at any width the suites open, so the run has text above it and below it — where an inline field stays below.',
     '> {.warning}',
     '',
     'The last paragraph.',
@@ -308,7 +308,7 @@ suite('Editor breadcrumb: the parts\' fields (e2e)', () => {
         assert.ok(list.rect.top >= ul.bottom, `under the list: ${JSON.stringify({ field: list.rect, ul })}`);
     });
 
-    test('Quote › Bold: the Bold part\'s field at the run, above it with text on both sides; the Quote part\'s under the quote', async function () {
+    test('Quote › Bold: the Bold part\'s field at the run, below it with text on both sides as the bar (#15 review 2); the Quote part\'s under the quote', async function () {
         this.timeout(20000);
         await b.show(FIELDS_DOC);
         await b.restAt('term', 2);
@@ -316,7 +316,7 @@ suite('Editor breadcrumb: the parts\' fields (e2e)', () => {
         const bold = await field();
         const run = await lineOf(page, 'term');
         assert.strictEqual(bold.heading, 'Bold · Attributes');
-        assert.ok(bold.rect.bottom <= run.top + 1, `above the run: ${JSON.stringify({ field: bold.rect, run })}`);
+        assert.ok(bold.rect.top >= run.bottom - 1, `below the run: ${JSON.stringify({ field: bold.rect, run })}`);
         await page.keyboard.press('Escape');
         await b.restAt('term', 2);
         await b.pressAlt('Enter');

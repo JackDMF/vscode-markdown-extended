@@ -618,7 +618,9 @@ suite('Editor object bars (e2e)', () => {
         for (const sheet of [':root { --md-note-width: 500px; }', ':root { --md-note-width: 500px; --md-note-gap: 8px; }']) {
             await page.addStyleTag({ content: sheet });
             try {
-                await openRow({ ...(rows.find(r => r.slug === 'table') as Row), source: 'Intro with a ++note|beside the column++ here.\n\n| a | b |\n| - | - |\n| one | two |\n', marker: 'one' });
+                // A long body, hanging down past the table: whichever side the bar takes, the note is at its height (#15 review 2).
+                const body = Array.from({ length: 12 }, (_, k) => `line ${k + 1} of the note's body beside the column`).join(', ');
+                await openRow({ ...(rows.find(r => r.slug === 'table') as Row), source: `Intro with a ++note|${body}++ here.\n\n| a | b |\n| - | - |\n| one | two |\n`, marker: 'one' });
                 await viewport(1000);
                 const placed = await page.$eval(BAR, bar => {
                     const note = document.querySelector('.ProseMirror .sidenote') as HTMLElement;
@@ -633,7 +635,8 @@ suite('Editor object bars (e2e)', () => {
                 assert.ok(grown.pastColumn || more, `${sheet}: the table's bar is wider than the column, or holds "…" (${JSON.stringify({ grown, more })})`);
                 // Daniel (#15 critique): a bar may reach into the margin where nothing stands at its height; beside a note it ends 4 px short.
                 const beside = placed.top < placed.noteBottom + 4 && placed.bottom > placed.noteTop - 4;
-                assert.ok(!beside || placed.right <= placed.noteLeft - 4 + 0.5, `${sheet}: beside the note the bar ends 4px short of it: ${JSON.stringify(placed)}`);
+                assert.ok(beside, `${sheet}: the note is at the bar's height: ${JSON.stringify(placed)}`);
+                assert.ok(placed.right <= placed.noteLeft - 4 + 0.5, `${sheet}: beside the note the bar ends 4px short of it: ${JSON.stringify(placed)}`);
             } finally {
                 await page.evaluate(s => document.querySelectorAll('style').forEach(el => {
                     if (el.textContent === s) {

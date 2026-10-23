@@ -36,7 +36,7 @@ import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
-import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, placeCard, placeMenu, rangeAnchor, revealField } from '../placement';
+import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
 import { dismissRefusal, showHint, showRefusal } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
@@ -2496,8 +2496,10 @@ class ToolbarView implements PluginView {
             el: this.bubble,
             anchor: () => {
                 const sel = view.state.selection;
-                return rangeAnchor(view, sel.from, sel.to);
+                return selectionAnchor(view, sel.from, sel.to);
             },
+            // In a note's body set into the margin: above the selected line, never over the note's text below it (#15 review 2).
+            prefer: () => (floatedAround(view, view.state.selection.from) !== null ? 'above' : undefined),
             valid: () => this.bubbleWanted() && this.selectionKey() === key,
             hidden: () => this.hideBubble(),
             fit: (room, fresh) => this.fitBubble(room, fresh),

@@ -1,0 +1,39 @@
+/*
+ * A user stylesheet with a margin layout of its own (test fixture, shaped
+ * like Daniel's petrol sheet, not his file): a narrow text column, left
+ * sidebars floated into a left margin, notes and right sidebars into a wide
+ * right margin. The margin suite of `noteAttributes.e2e.test.ts` runs with
+ * it by default (#15 review 2); `MEP_USER_STYLESHEET` runs it with a real one.
+ */
+html {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+body {
+    padding-left: 160px !important;
+    padding-right: 0 !important;
+    width: calc(100% - 160px - 400px) !important;
+    max-width: none !important;
+}
+
+span.left-sidebar {
+    display: block;
+    float: left;
+    clear: left;
+    width: 120px;
+    margin-left: -150px;
+}
+
+li > span.left-sidebar {
+    margin-left: calc(-150px - 1rem);
+}
+
+span:is(.sidenote, .mnote, .right-sidebar) {
+    display: block;
+    float: right;
+    clear: right;
+    position: relative;
+    width: 300px;
+    margin-right: -360px;
+}
