@@ -44,6 +44,17 @@ export function attributesTyped(literal: string | null): string {
 }
 
 /**
+ * The tooltip of a part's or a block's **Attributes…** (#8 review 1, W1/W4):
+ * the part named — "Attributes of List item: .class #id key=value. Leave
+ * empty to remove them." — the removal said only where there is a literal
+ * (`holdsLiteral`), `extra` after it, and Enter's one verb, "set", as the
+ * field's keys line says it.
+ */
+export function attributesTip(name: string, literal: string | null, extra = ''): string {
+    return `Attributes of ${name}: ${ATTR_SYNTAX}.${holdsLiteral(literal) ? ' Leave empty to remove them.' : ''}${extra} Enter to set, Esc to cancel.`;
+}
+
+/**
  * One outer pair of braces off `value` when it has both — a `{…}` pasted or
  * completed by typing its `}` — else `value` as it is. Only the outermost
  * pair: `{.a} {.b}` gives `.a} {.b`, which the commit then refuses.

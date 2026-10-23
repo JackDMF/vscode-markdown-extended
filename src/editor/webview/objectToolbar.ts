@@ -75,7 +75,7 @@ import {
     AttributesTarget, CrumbPart, Crumbs, Followed, attributesTargetAt, blockAttrsRefusal, commitAttributes, constructExplanation, crumbsAt, followAll,
 } from './objects';
 import { attributesField, attributesRemovedHint, attributesStep, goneFieldHint, holderAttributesStep } from './attributes';
-import { attributesTyped } from '../attributeLiteral';
+import { attributesTip, attributesTyped } from '../attributeLiteral';
 import { currentReadsAttrs } from '../inlineEngine';
 import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
 import { barSeparator, followPointer, selectionWantsBubble, separator } from './toolbar/toolbar';
@@ -2436,12 +2436,15 @@ class ObjectToolbarView implements PluginView {
     private withCrumbRemove(object: EditorObject, verbs: Verb[], crumbs: Crumbs, title: boolean): Verb[] {
         const outer = crumbs.outer as CrumbPart;
         const current = crumbs.current;
+        // What stays, in a word (#8 review 1, W2/W3): "item" for a list item, else the part's own name.
+        const stays = (part: CrumbPart) => (part.name === BLOCK_NAMES.list_item ? 'item' : part.name.toLowerCase());
+        const removes = (part: CrumbPart) => `Removes the ${part.name.toLowerCase()}'s attributes; the ${stays(part)} stays.`;
         const entryOf = (part: CrumbPart): MenuEntry => ({
             id: `remove-${part.role}`,
             label: part.name,
             code: part.literal ?? undefined,
-            keys: part.target !== null && 'object' in part.target ? STAYS[part.target.object.kind] ?? 'text stays' : undefined,
-            title: `The ${part.name.toLowerCase()}'s {…} goes; the ${part.name.toLowerCase()} stays.`,
+            keys: part.target !== null && 'object' in part.target ? STAYS[part.target.object.kind] ?? 'text stays' : `${stays(part)} stays`,
+            title: removes(part),
             run: () => this.removePart(object, part),
         });
         if (title) {
@@ -2474,7 +2477,7 @@ class ObjectToolbarView implements PluginView {
             return [...rest, {
                 id: 'remove-attributes',
                 label: `Remove attributes of ${part.name}`,
-                title: `The ${part.name.toLowerCase()}'s {…} goes; the ${part.name.toLowerCase()} stays.`,
+                title: removes(part),
                 slot: 'destroy',
                 run: () => this.removePart(object, part),
             }];
@@ -2544,7 +2547,7 @@ class ObjectToolbarView implements PluginView {
         const base = {
             id: `crumb-${part.role}`,
             label: `Attributes of ${name}…`,
-            title: `The ${name.toLowerCase()}'s {…}: ${attributesTyped(part.literal)} (Enter to apply, Esc to cancel).`,
+            title: attributesTip(name, part.literal),
             slot: 'attributes' as const,
         };
         const opens = part.anchor === 'run' && part.target !== null && 'object' in part.target
@@ -2582,7 +2585,7 @@ class ObjectToolbarView implements PluginView {
         const verb: Verb = {
             id: 'inline-attributes',
             label: `${name}…`,
-            title: `The ${names.noun}'s {…}, written right after it: ${attributesTyped(literalOfObject(inside.object))} (Enter to apply, Esc to cancel).`,
+            title: attributesTip(names.label, literalOfObject(inside.object), ' Written right after it.'),
             slot: 'attributes',
             field: step,
             // The run itself: followed with the field while it is open (F7).
@@ -2724,7 +2727,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, typed => `The link's {…}, written after its (…): ${typed} (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, typed => `The link's {…}, written after its (…): ${typed} (Enter to set, Esc to cancel).`),
                         {
                             id: 'remove-link',
                             label: remove.label,
@@ -2781,7 +2784,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, typed => `The image's {…}, written after its (…): ${typed} (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, typed => `The image's {…}, written after its (…): ${typed} (Enter to set, Esc to cancel).`),
                         { id: 'open-image', label: open.label, short: open.short, title: `Open ${src} (as Ctrl+click on a link does).`, slot: 'open', run: () => host.openLink(src) },
                         {
                             id: 'delete-image',
@@ -2827,7 +2830,7 @@ class ObjectToolbarView implements PluginView {
                         {
                             id: 'edit-attributes',
                             label: VERB.attributes,
-                            title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
+                            title: 'Change the span\'s {…} (Enter to set, Esc to cancel).',
                             slot: 'attributes',
                             field: step,
                             // At the span it edits, as every run's attributes field (`markAttributesVerb`), followed with it.
@@ -2851,7 +2854,7 @@ class ObjectToolbarView implements PluginView {
                 return {
                     label: names.label,
                     title: `\`${text}\`: ${names.noun} — Attributes… gives it a {…}`,
-                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Give the ${names.noun} a {…}, written right after it: ${typed} (Enter to apply, Esc to cancel).`)],
+                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Give the ${names.noun} a {…}, written right after it: ${typed} (Enter to set, Esc to cancel).`)],
                 };
             }
             case 'styled': {
@@ -2865,7 +2868,7 @@ class ObjectToolbarView implements PluginView {
                     code: literal,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
                     verbs: [
-                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Change the ${name.toLowerCase()}'s {…}: ${typed} (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Change the ${name.toLowerCase()}'s {…}: ${typed} (Enter to set, Esc to cancel).`),
                         {
                             id: 'remove-attributes',
                             label: remove.label,
@@ -3222,7 +3225,7 @@ class ObjectToolbarView implements PluginView {
             id: 'block-attributes',
             label: VERB.attributes,
             slot: 'attributes',
-            title: `The block's {…}: ${attributesTyped(refused ? null : literalOf(found.node))} (Enter to apply, Esc to cancel).${fences}`,
+            title: attributesTip(refused ? 'Block' : found.name, refused ? null : literalOf(found.node), fences),
             refusal: refused ? found.refusal : null,
             field: refused ? undefined : attributesStep(this.view, found),
         };
@@ -3247,7 +3250,7 @@ class ObjectToolbarView implements PluginView {
             id: 'block-attributes',
             label: `Attributes of ${target.name}…`,
             slot: 'attributes',
-            title: `The ${target.name.toLowerCase()}'s {…}: ${attributesTyped(literalOf(target.node))} (Enter to apply, Esc to cancel).`,
+            title: attributesTip(target.name, literalOf(target.node)),
             field: attributesStep(this.view, target),
             anchorBlock: target,
         };
@@ -3264,7 +3267,7 @@ class ObjectToolbarView implements PluginView {
         return {
             id: 'remove-attributes',
             label: remove.label,
-            title: `The {…} goes; the ${name.toLowerCase()} stays.`,
+            title: `Removes the ${name.toLowerCase()}'s attributes; the ${name === BLOCK_NAMES.list_item ? 'item' : name.toLowerCase()} stays.`,
             slot: 'destroy',
             refusal: blockAttrsRefusal(object.node),
             run: () => this.removeBlockLiteral(object, () => {

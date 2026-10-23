@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { EXTENSION_ID, EditorPage, UNDO, closeEditorPage, delay, openEditorPage, settle } from './pageHarness';
+import { EXTENSION_ID, EditorPage, UNDO, closeEditorPage, delay, describedTip, openEditorPage, settle } from './pageHarness';
 import { BAR, CRUMBS, ROW_FIELD, blockRect, breadcrumbPage, rectOf } from './breadcrumbPage';
 
 /** The constructs the breadcrumb is drawn for (#8), and one it is not. */
@@ -441,7 +441,11 @@ suite('Editor breadcrumb: Remove and the first focus (e2e)', () => {
         const button = await page.$eval(REMOVE, el => ({ text: el.textContent, popup: el.getAttribute('aria-haspopup') }));
         assert.deepStrictEqual(button, { text: 'Remove attributes', popup: 'menu' });
         await openRemove();
-        assert.deepStrictEqual(await entries(), [['List item', '{.lead}', null], ['List', '{.steps}', null]]);
+        assert.deepStrictEqual(await entries(), [['List item', '{.lead}', 'item stays'], ['List', '{.steps}', 'list stays']]);
+        // W2: what an entry does, naming what stays.
+        assert.strictEqual(await describedTip(page, `${MENU} [data-entry="remove-current"]`), 'Removes the list item\'s attributes; the item stays.');
+        // W1/W4: Attributes…'s tooltip names the part, and Enter's verb is "set", as in the field.
+        assert.strictEqual(await describedTip(page, `${BAR} [data-verb="block-attributes"]`),'Attributes of List item: .class #id key=value. Leave empty to remove them. Enter to set, Esc to cancel.');
         await page.click(`${MENU} [data-entry="remove-current"]`);
         await settle();
         assert.ok(!(await b.lastEdit())?.text.includes('{.lead}') && (await b.lastEdit())?.text.includes('{.steps}'), (await b.lastEdit())?.text);
@@ -467,7 +471,7 @@ suite('Editor breadcrumb: Remove and the first focus (e2e)', () => {
         await b.show(REMOVE_DOC);
         await b.restAt('term', 2);
         await openRemove();
-        assert.deepStrictEqual(await entries(), [['Bold', '{.term}', 'formatting stays'], ['Quote', '{.warning}', null]]);
+        assert.deepStrictEqual(await entries(), [['Bold', '{.term}', 'formatting stays'], ['Quote', '{.warning}', 'quote stays']]);
         await page.click(`${MENU} [data-entry="remove-current"]`);
         await settle();
         assert.ok((await b.lastEdit())?.text.includes('**term** in it'), (await b.lastEdit())?.text);
@@ -479,7 +483,7 @@ suite('Editor breadcrumb: Remove and the first focus (e2e)', () => {
         await b.show(REMOVE_DOC);
         await b.restAt('Sync rules', 2);
         await openRemove(`${BAR} [data-verb="remove-menu"]`);
-        assert.deepStrictEqual(await entries(), [['Attributes of Heading', '{#sync-rules}', null], ['Admonition, keep content', null, null]]);
+        assert.deepStrictEqual(await entries(), [['Attributes of Heading', '{#sync-rules}', 'heading stays'], ['Admonition, keep content', null, null]]);
         assert.strictEqual(await page.$eval(`${MENU} [data-entry="remove-wrapper"]`, el => el.previousElementSibling?.classList.contains('mep-menu-separator')), true, 'a divider before it');
         await page.click(`${MENU} [data-entry="remove-wrapper"]`);
         await settle();
@@ -505,12 +509,12 @@ suite('Editor breadcrumb: Remove and the first focus (e2e)', () => {
         await b.show(REMOVE_DOC);
         await b.restAt('Queue the edit', 2);
         await openRemove();
-        assert.deepStrictEqual((await entries())[1], ['List', '{.steps}', null]);
+        assert.deepStrictEqual((await entries())[1], ['List', '{.steps}', 'list stays']);
         await page.keyboard.press('Escape');
         await b.show(REMOVE_DOC.replace('{.steps}', '{.other}'));
         await b.restAt('Queue the edit', 2);
         await openRemove();
-        assert.deepStrictEqual((await entries())[1], ['List', '{.other}', null], 'never the stale {.steps}');
+        assert.deepStrictEqual((await entries())[1], ['List', '{.other}', 'list stays'], 'never the stale {.steps}');
         await page.click(`${MENU} [data-entry="remove-outer"]`);
         await settle();
         const text = (await b.lastEdit())?.text ?? '';
@@ -520,6 +524,8 @@ suite('Editor breadcrumb: Remove and the first focus (e2e)', () => {
     test('an entry picked after a resync changed its part: refused at Remove, nothing removed (the re-resolve path)', async function () {
         this.timeout(20000);
         await b.show(REMOVE_DOC);
+        // Out of the item the last test's Esc dismissed its bar in.
+        await b.clickAt('Between the lists', 2);
         await b.restAt('Queue the edit', 2);
         await openRemove();
         const before = (await (editor as EditorPage).edits()).length;
