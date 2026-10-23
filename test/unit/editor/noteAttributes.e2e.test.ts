@@ -387,3 +387,68 @@ suite('Editor note attributes: menu, bubble and refusals (e2e)', () => {
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing posted');
     });
 });
+
+/**
+ * What a note's literal costs a key (#15 step 6): typing 50 characters in a
+ * note of 1000 paragraphs that each end in `!!a|b!!{.tipp}` costs, key for key
+ * from keydown to the next painted frame, no more than 1.15× the same
+ * paragraphs whose notes carry none. The holder lookup is one O(depth)
+ * `noteContextAt` per state, cached; the literal draws no decoration.
+ */
+suite('Editor note attributes: the cost of a key (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    const b = notePage(() => editor as EditorPage);
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    /** The mean time from each of 50 keydowns in `needle`'s note to the frame painted after it, in ms. */
+    const perKey = async (text: string, needle: string): Promise<number> => {
+        await b.show(text);
+        await b.clickAt(needle, 3);
+        await page.evaluate(() => {
+            const w = window as unknown as { keyTimes: number[] };
+            w.keyTimes = [];
+            document.addEventListener('keydown', () => {
+                const start = performance.now();
+                requestAnimationFrame(() => setTimeout(() => w.keyTimes.push(performance.now() - start), 0));
+            }, { capture: true });
+        });
+        for (const ch of 'the quick brown fox jumps over the lazy dog again!') {
+            await page.keyboard.type(ch);
+            await delay(40);
+        }
+        await delay(300);
+        const times = await page.evaluate(() => (window as unknown as { keyTimes: number[] }).keyTimes);
+        assert.ok(times.length >= 50, `${times.length} keys measured`);
+        return times.reduce((a, t) => a + t, 0) / times.length;
+    };
+
+    test('typing in a note of 1000 paragraphs whose notes carry {.tipp} costs no more than 1.15× the same without', async function () {
+        this.timeout(300000);
+        const doc = (literal: string) => `${Array.from({ length: 1000 }, (_, k) => (k === 0
+            ? `Paragraph 1 !!ref|first note body!!${literal}`
+            : `Paragraph ${k + 1} of the document !!a|b!!${literal}`)).join('\n\n')}\n\nThe last paragraph.\n`;
+        // Twice each, interleaved: the better run of each, so a busy moment of the machine is not the editor's.
+        const runs = { literal: [] as number[], bare: [] as number[] };
+        for (let k = 0; k < 2; k++) {
+            runs.bare.push(await perKey(doc(''), 'first note body'));
+            runs.literal.push(await perKey(doc('{.tipp}'), 'first note body'));
+        }
+        const best = (xs: number[]) => Math.min(...xs);
+        const ratio = best(runs.literal) / best(runs.bare);
+        console.log(`#15 cost per key (ms, best of 2): notes with {.tipp} ${best(runs.literal).toFixed(2)}, without ${best(runs.bare).toFixed(2)}; ratio ${ratio.toFixed(3)}`);
+        assert.ok(ratio <= 1.15, `per key ${best(runs.literal).toFixed(2)} ms vs ${best(runs.bare).toFixed(2)} ms: ${ratio.toFixed(3)}×`);
+    });
+});
