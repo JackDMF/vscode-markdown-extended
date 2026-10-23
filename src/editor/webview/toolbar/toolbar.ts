@@ -256,8 +256,13 @@ function inlineEntry(inline: InlineHolderAt): { label: string; syntax: string; p
     const markup = holderMarkup(inline);
     const holder = inline.holder;
     if (inline.object.kind === 'note') {
-        // A note's or a sidebar's card is the Annotation menu's sample with a class on its outer span (#15).
-        return { label, syntax: holder.example('text', CLASS_LITERAL), preview: notePreviewWithClass(inline.object.node.type.name as NoteNodeName, 'tipp') };
+        // A note's or a sidebar's card is the note itself, its body and its class on the outer span (#15 critique).
+        const note = inline.object.node;
+        const name = note.type.name as NoteNodeName;
+        const sidebar = name === 'left_sidebar' || name === 'right_sidebar';
+        const text = sidebar ? { body: note.textContent } : { ref: note.child(0).textContent, body: note.child(1).textContent };
+        const literal = typeof note.attrs.literal === 'string' ? note.attrs.literal : null;
+        return { label, syntax: holder.example('text', CLASS_LITERAL), preview: notePreviewWithClass(name, literal, text) };
     }
     const tag = holder.tag?.(markup);
     const text = holder.holder === 'code' ? 'code' : holder.holder === 'image' ? 'alt' : 'text';

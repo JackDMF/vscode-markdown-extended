@@ -567,7 +567,7 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         ? '---'
         : `${(c as HTMLElement).dataset.entry}:${c.querySelector('.mep-entry-label')?.textContent}:${c.getAttribute('role')}${c.querySelector('.codicon-chevron-right') ? ':>' : ''}`));
 
-    test('b1 a link in bold at 420: the title hidden, Remove and then Attributes of Bold… moved into "…", which names them; its entry removes the link with the undo hint; the bar still names its object on a rest', async function () {
+    test('b1 a link in bold at 420: the title hidden, Remove moved into "…", which names it; its entry removes the link with the undo hint; the bar still names its object on a rest', async function () {
         this.timeout(60000);
         for (const [theme, t] of THEMES) {
             await applyTheme(page, theme);
@@ -576,16 +576,17 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
             await barAt('bold docs', 3, 'link');
             const s = await barState();
             assert.strictEqual(s.title, null, `${t}: the title hidden`);
-            // `overflowOrder`: Remove first, then from the right — Attributes of Bold… (measured: both leave at 420).
-            assert.deepStrictEqual(s.moved, ['inline-attributes', 'remove-link'], `${t}: ${JSON.stringify(s)}`);
-            assert.deepStrictEqual(s.shown, ['open-link', 'edit-link', 'link-attributes'], 'Edit… (first focus) stays');
-            assert.strictEqual(s.more, 'More actions: Attributes of Bold…, Remove link, keep text');
+            // `overflowOrder`: Remove first, then from the right. Measured: at 420 the bar reaches into the empty margin
+            // (Daniel, #15 critique), so only Remove leaves; Attributes of Bold… stays.
+            assert.deepStrictEqual(s.moved, ['remove-link'], `${t}: ${JSON.stringify(s)}`);
+            assert.deepStrictEqual(s.shown, ['open-link', 'edit-link', 'link-attributes', 'inline-attributes'], 'Edit… (first focus) stays');
+            assert.strictEqual(s.more, 'More actions: Remove link, keep text');
             assert.ok(s.moreLast && s.inside && !s.spills, JSON.stringify(s));
             assert.ok(String(s.description).includes('Link'), `${t}: a rest on the bar names the object: ${s.description}`);
             await page.click(barMore);
             await page.waitForSelector(`${BAR} .mep-object-menu`);
             await delay(80);
-            assert.deepStrictEqual(await moreMenu(), ['inline-attributes:Attributes of Bold…:menuitem', '---', 'remove-link:Remove link, keep text:menuitem']);
+            assert.deepStrictEqual(await moreMenu(), ['remove-link:Remove link, keep text:menuitem']);
             await shot(`bars-420-link-open-${t}.png`);
             if (t === 'light') {
                 await page.focus(`${BAR} .mep-object-menu [data-entry="remove-link"]`);
@@ -633,17 +634,18 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         this.timeout(60000);
         // What the bar needs, measured on a copy without the room's cap — every verb on it, its title (the form it took) shown
         // whole or left out — against the room it may take, worked out here and not read from the product's own max-width: from
-        // its column's left edge to the editor's right edge less the gutter (a bar may go past the column), but `GAP` short of
-        // the notes where the stylesheet reserves a margin lane for them (the page's right padding; the lane begins at the
-        // column plus the nearer of the note and sidebar gaps), and never less than the column. Where that falls is the font's.
+        // its column's left edge to the editor's right edge less the gutter (a bar may go past the column, into the margin too
+        // where nothing stands there at its height: Daniel, #15 critique), but `GAP` short of a note in the margin beside it,
+        // and never less than the column. Where that falls is the font's.
         const needs = () => page.$eval(BAR, (bar, gutter, gap) => {
             const mount = (bar.parentElement as HTMLElement).getBoundingClientRect();
+            const own = bar.getBoundingClientRect();
             let edge = document.documentElement.clientWidth - gutter;
-            if (parseFloat(getComputedStyle(document.documentElement).paddingRight) > 0) {
-                const body = getComputedStyle(document.body);
-                const column = document.body.getBoundingClientRect().right - (parseFloat(body.paddingRight) || 0);
-                const gaps = ['--md-note-gap', '--md-sidebar-gap'].map(n => parseFloat(body.getPropertyValue(n))).filter(n => !isNaN(n));
-                edge = Math.min(edge, column + (gaps.length > 0 ? Math.min(...gaps) : 0) - gap);
+            for (const note of Array.from(document.querySelectorAll('.ProseMirror .sidenote, .ProseMirror .mnote, .ProseMirror .right-sidebar'))) {
+                const r = note.getBoundingClientRect();
+                if (r.left >= mount.right && r.top < own.bottom + gap && r.bottom > own.top - gap) {
+                    edge = Math.min(edge, r.left - gap);
+                }
             }
             const room = Math.max(mount.right, edge) - mount.left;
             const width = (title: boolean) => {

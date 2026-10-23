@@ -44,6 +44,7 @@
  */
 import { ADMONITION_FAMILIES, ADMONITION_MARKER, INLINE_MARKERS, KBD_MARKERS, MARKER_NAMES, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
 import { holderNamed, namesOf } from '../../inlineLiterals';
+import { domAttrsOf } from '../../attrs';
 import { keyLabel } from '../../keys';
 import { Said, Tip, TipPart } from '../../tips';
 import { NOTE_LABELS, NoteNodeName } from '../notes';
@@ -591,24 +592,38 @@ function sidebarPreview(marker: string, cssClass: string): ActionPreview {
     };
 }
 
+/** The words a note's card shows of it: at most `NOTE_CARD_CHARS`, then "…". */
+const NOTE_CARD_CHARS = 48;
+
+function cardWords(text: string): string {
+    const plain = text.replace(/\s+/g, ' ').trim();
+    return plain.length <= NOTE_CARD_CHARS ? plain : `${plain.slice(0, NOTE_CARD_CHARS - 1).trimEnd()}…`;
+}
+
 /**
- * The Annotation menu's sample of `node`, its `{.cls}` written glued to the
- * closing marker and drawn on the outer span after the plugin's class
- * (`mn-ref tipp`): the card of Attributes of Marginal note… (#15).
+ * The card of Attributes of Marginal note… (#15 critique): the note at the
+ * caret as it is — its reference and its body, a sidebar's text — with its
+ * own literal glued to the closing marker and its classes drawn on the outer
+ * span after the plugin's class (`mn-ref tipp`); without a literal yet,
+ * `{.class}` shows where it goes. Long texts are cut (`cardWords`).
  */
-export function notePreviewWithClass(node: NoteNodeName, cls: string): ActionPreview {
-    const literal = `{.${cls}}`;
+export function notePreviewWithClass(node: NoteNodeName, literal: string | null, text: { ref?: string; body: string }): ActionPreview {
+    const written = literal ?? CLASS_LITERAL;
+    const classes = literal === null ? ['class'] : (domAttrsOf(literal).class ?? '').split(/\s+/).filter(c => c !== '');
+    const cls = classes.map(c => `.${c}`).join('');
+    const body = cardWords(text.body);
     if (node === 'left_sidebar' || node === 'right_sidebar') {
         const { marker, cssClass } = node === 'left_sidebar' ? LS : RS;
         return {
-            markdown: `${marker}Context that runs alongside.${marker}${literal} The main text carries on.`,
-            nodes: [el('p', el(`span.${cssClass}.${cls}`, 'Context that runs alongside.'), ' The main text carries on.')],
+            markdown: `${marker}${body}${marker}${written} The main text carries on.`,
+            nodes: [el('p', el(`span.${cssClass}${cls}`, body), ' The main text carries on.')],
         };
     }
     const { marker, refClass, anchorClass, noteClass } = node === 'sidenote' ? SN : MN;
+    const ref = cardWords(text.ref ?? '');
     return {
-        markdown: `Main text with ${marker}a reference${NOTE_SEPARATOR}The note that goes with it.${marker}${literal} that carries on.`,
-        nodes: [el('p', 'Main text with ', el(`span.${refClass}.${cls}`, el(`span.${anchorClass}`, 'a reference'), el(`span.${noteClass}`, 'The note that goes with it.')), ' that carries on.')],
+        markdown: `Text ${marker}${ref}${NOTE_SEPARATOR}${body}${marker}${written} carries on.`,
+        nodes: [el('p', 'Text ', el(`span.${refClass}${cls}`, el(`span.${anchorClass}`, ref), el(`span.${noteClass}`, body)), ' carries on.')],
     };
 }
 

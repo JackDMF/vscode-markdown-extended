@@ -230,14 +230,23 @@ suite('Editor toolbar: every action makes the element it shows', () => {
     }
 
     for (const node of ['sidenote', 'marginal_note', 'left_sidebar', 'right_sidebar'] as const) {
-        test(`Attributes of ${node}…: its card shows the note with its class on the outer span, as the engine renders it (#15)`, () => {
-            const card = notePreviewWithClass(node, 'tipp');
-            assert.ok(card.markdown.includes('{.tipp}'), card.markdown);
+        test(`Attributes of ${node}…: its card shows the note itself, its body and its class on the outer span, as the engine renders it (#15)`, () => {
+            const body = 'nicht zu abrupt ändern, nicht zu schnell, und ganz ruhig bleiben bitte';
+            const card = notePreviewWithClass(node, '{.tipp .x}', { ref: 'Tempo', body });
+            assert.ok(card.markdown.includes('{.tipp .x}'), card.markdown);
+            assert.ok(card.markdown.includes('nicht zu abrupt ändern'), card.markdown);
+            assert.ok(card.markdown.includes('…') && !card.markdown.includes('bitte'), `long bodies are cut: ${card.markdown}`);
             const html = md.render(card.markdown);
             for (const sample of card.nodes) {
                 assertRendersSample(html, sample, `${node} card`);
             }
-            assert.ok(/<span class="(sn-ref|mn-ref|left-sidebar|right-sidebar) tipp"/.test(html), html);
+            assert.ok(/<span class="(sn-ref|mn-ref|left-sidebar|right-sidebar) tipp x"/.test(html), html);
+            // Without a literal yet: `{.class}` where it goes.
+            const bare = notePreviewWithClass(node, null, { ref: 'Tempo', body: 'kurz' });
+            assert.ok(bare.markdown.includes('kurz') && bare.markdown.includes('{.class}'), bare.markdown);
+            for (const sample of bare.nodes) {
+                assertRendersSample(md.render(bare.markdown), sample, `${node} bare card`);
+            }
         });
     }
 

@@ -2482,23 +2482,26 @@ class ObjectToolbarView implements PluginView {
         if (carrying.length === 0) {
             return rest;
         }
+        // In the Remove slot, before the verb that destroys ("Delete note"): the destroying verb stays last (#15 critique).
+        const destroys = rest.findIndex(v => v.slot === 'destroy');
+        const placed = (remove: Verb): Verb[] => (destroys < 0 ? [...rest, remove] : [...rest.slice(0, destroys), remove, ...rest.slice(destroys)]);
         if (carrying.length === 1) {
             const part = carrying[0];
-            return [...rest, {
+            return placed({
                 id: 'remove-attributes',
                 label: `Remove attributes of ${part.name}`,
                 title: removes(part),
                 slot: 'destroy',
                 run: () => this.removePart(object, part),
-            }];
+            });
         }
-        return [...rest, {
+        return placed({
             id: 'remove-attributes',
             label: wording({ verb: 'Remove', noun: 'attributes', titled: false }).label,
             title: 'Choose whose attributes to remove',
             slot: 'destroy',
             menu: carrying.map(entryOf),
-        }];
+        });
     }
 
     /**

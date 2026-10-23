@@ -27,7 +27,7 @@
  */
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { PROBING_CLASS, contentIn, firstLineTop, rowCeiling } from './clearance';
+import { PROBING_CLASS, contentIn, firstLineTop, marginContentLeft, rowCeiling, textLines } from './clearance';
 import { focusPlace } from './focusPlace';
 import { rightLaneEdge } from './lane';
 import { AttributesTarget, EditorObject, currentTarget, isBlockObject, isBlockPlaced, isMarkObject, objectOfNode } from './objects';
@@ -82,6 +82,8 @@ export interface Context {
     covered?: (band: Rect) => boolean;
     /** The side that wins where text is under both: 'above' for an inline object's bar (Daniel, 2026-10-20); the default is below. A side free of text always wins. */
     bothCovered?: 'above' | 'below';
+    /** An anchor in the margin keeps the layer at it, not pulled back to the column (the selection's bubble, #15 critique). */
+    atAnchor?: boolean;
 }
 
 export type Side = 'below' | 'above' | 'right' | 'left' | 'edge' | 'caret' | 'none';
@@ -129,7 +131,9 @@ export function probeBand(x: number, y: number, size: Size): Rect {
  */
 export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Context = {}): Placement {
     // A layer wider than the room was fitted to it before (`ObjectBar.fit`): this clamps, never shrinks.
-    const clamped = Math.max(frame.columnLeft, Math.min(anchor.left, rightEdge(size.width, frame) - size.width));
+    // The bubble over a selection in the margin (a note's body there) stands at it, up to the layer edge (#9, #15).
+    const inMargin = ctx.atAnchor === true && frame.columnRight !== undefined && anchor.left >= frame.columnRight;
+    const clamped = Math.max(frame.columnLeft, Math.min(anchor.left, (inMargin ? frame.layerEdge : rightEdge(size.width, frame)) - size.width));
     // Wider than the column allows (a field's floor, `fieldFloor`): kept inside the window, left of the column if it must.
     const x = frame.windowRight !== undefined && clamped + size.width > frame.windowRight ? Math.max(LAYER_GUTTER, frame.windowRight - size.width) : clamped;
     const below = anchor.bottom + GAP;
@@ -456,7 +460,8 @@ export function anchorOf(view: EditorView, object: EditorObject): Rect | null {
                 // the margin is not one of them, so the layer keeps to the reference's lines.
                 const rects = Array.from(dom.getClientRects()).filter(r => r.width > 0 || r.height > 0);
                 if (rects.length > 0) {
-                    return { left: rects[0].left, top: rects[0].top, right: Math.max(...rects.map(r => r.right)), bottom: rects[rects.length - 1].bottom };
+                    const own = { left: rects[0].left, top: rects[0].top, right: Math.max(...rects.map(r => r.right)), bottom: rects[rects.length - 1].bottom };
+                    return floatedAnchor(view, object.from, dom, own) ?? own;
                 }
             }
         }
@@ -466,6 +471,24 @@ export function anchorOf(view: EditorView, object: EditorObject): Rect | null {
     } catch {
         return null;
     }
+}
+
+/**
+ * The anchor of a sidebar floated out of its line (into a margin, by the
+ * page's stylesheet or a user's), or `null` for one that is not: its box
+ * and its textblock's own lines of text (`textLines`), top to bottom — so
+ * its bar stands below or above both, never over the heading's text the
+ * sidebar hangs beside (#9, #15 critique); x stays the sidebar's.
+ */
+function floatedAnchor(view: EditorView, pos: number, dom: Element, own: Rect): Rect | null {
+    const style = getComputedStyle(dom);
+    if (style.float === 'none' && style.position !== 'absolute' && style.position !== 'fixed') {
+        return null;
+    }
+    const $pos = view.state.doc.resolve(pos);
+    const block = $pos.depth > 0 ? view.nodeDOM($pos.before()) : null;
+    const lines = block instanceof Element ? textLines(block) : null;
+    return lines === null ? null : { left: own.left, right: own.right, top: Math.min(own.top, lines.top), bottom: Math.max(own.bottom, lines.bottom) };
 }
 
 /**
@@ -528,6 +551,8 @@ export interface PlaceOptions {
     avoid?: readonly Rect[];
     /** The side that wins where text is under both (`Context.bothCovered`). */
     bothCovered?: 'above' | 'below';
+    /** Kept at an anchor in the margin (`Context.atAnchor`). */
+    atAnchor?: boolean;
 }
 
 /** Write `p` (viewport coordinates) as `el`'s position in its space. */
@@ -550,6 +575,7 @@ export function placeLayer(el: HTMLElement, anchor: Rect, opts: PlaceOptions): P
         caret: opts.caret && view ? caretBand(view, frame) : null,
         avoid: opts.avoid ?? openLayers(opts.mount, opts.except ?? el),
         bothCovered: opts.bothCovered,
+        atAnchor: opts.atAnchor,
     };
     const size = { width: el.offsetWidth, height: el.offsetHeight };
     let placement: Placement;
@@ -673,6 +699,8 @@ interface Placed {
     frame: Frame;
     /** The other open layers it kept off. */
     avoid: Rect[];
+    /** The layer edge margin content kept it to (`marginLimit`), or `null`: the editor's edge less the gutter. */
+    limited: number | null;
 }
 
 /** Where an element was last written, in its own space: what `moved` compares. */
@@ -997,26 +1025,47 @@ export class LayerSlot {
         const frame = readFrame(this.mount);
         const fresh = this.refitNext;
         this.refitNext = false;
+        // A layer may reach into the margin up to the editor's edge less the gutter where nothing stands
+        // there at its height (Daniel, #15 critique): fitted and placed to that edge first, then — a note,
+        // a sidebar or other margin content beside it — fitted and placed again short of what stands there.
+        const wide: Frame = { ...frame, layerEdge: Math.max(frame.layerEdge, frame.windowRight ?? frame.layerEdge) };
         // A field's room is never narrower than a hint's (#8 review 1): a user stylesheet's narrow column or margin lane
         // (petrol at 520 px wrapped a keys line at 150 px) gives it min(44ch, window − 32 px), placed inside the window.
-        const room = frame.layerEdge - frame.columnLeft;
-        claim.fit?.(claim.kind === 'field' ? Math.max(room, fieldFloor(claim.el)) : room, fresh);
+        const fit = (f: Frame, refit: boolean) => {
+            const room = f.layerEdge - f.columnLeft;
+            claim.fit?.(claim.kind === 'field' ? Math.max(room, fieldFloor(claim.el)) : room, refit);
+        };
+        const prev = this.placed;
+        // The same layer again (a scroll, a re-place): fitted to the edge it was kept to last time first, so
+        // nothing is measured twice where nothing changed.
+        const again = !appeared && !fresh && prev !== null && prev.key === claim.key;
+        const firstEdge = again && prev.limited !== null ? prev.limited : wide.layerEdge;
+        fit({ ...frame, layerEdge: firstEdge }, fresh);
         const width = claim.el.offsetWidth;
         const height = claim.el.offsetHeight;
         const avoid = openLayers(this.mount, claim.el);
-        const prev = this.placed;
-        if (!appeared && !fresh && prev !== null && prev.key === claim.key && sameRect(prev.anchor, anchor)
+        if (again && sameRect(prev.anchor, anchor)
             && Math.abs(prev.width - width) < 0.5 && Math.abs(prev.height - height) < 0.5 && sameFrame(prev.frame, frame)
             && prev.avoid.length === avoid.length && prev.avoid.every((r, i) => sameRect(r, avoid[i]))) {
             return;
         }
-        const p = placeLayer(claim.el, anchor, { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, frame, avoid, bothCovered: claim.bothCovered });
+        if (firstEdge !== wide.layerEdge) {
+            fit(wide, false);
+        }
+        const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, avoid, bothCovered: claim.bothCovered, atAnchor: claim.kind === 'bubble' };
+        let p = placeLayer(claim.el, anchor, { ...opts, frame: wide });
+        const limited = this.marginLimit(p, claim.el, anchor, frame, wide);
+        if (limited !== null) {
+            const short: Frame = { ...frame, layerEdge: limited };
+            fit(short, false);
+            p = placeLayer(claim.el, anchor, { ...opts, frame: short });
+        }
         // Compared where it is written: a layer that scrolls with the text has not moved.
         const base = this.mount.getBoundingClientRect();
         const at: Placement = { x: p.x - base.left, y: p.y - base.top, side: p.side };
         const before = this.written?.el === claim.el ? this.written.at : null;
         this.written = { el: claim.el, at };
-        this.placed = { key: claim.key, anchor, width, height, frame, avoid };
+        this.placed = { key: claim.key, anchor, width: claim.el.offsetWidth, height: claim.el.offsetHeight, frame, avoid, limited };
         if (claim.kind === 'field') {
             // A field was asked for and has the focus: nothing under the pointer is meant for the text, and its
             // set-verb menu opens inside it — no inert time (a bar the field replaced gives up what it had).
@@ -1024,6 +1073,30 @@ export class LayerSlot {
         } else if (appeared || moved(before, at)) {
             this.arm(claim.el);
         }
+    }
+
+    /**
+     * The layer edge a layer placed at `p` (in `wide`, to the editor's edge)
+     * is kept to, or `null` where it may stay: where it stands past the
+     * column, the left of the margin content beside it (`marginContentLeft`,
+     * its subject at `anchor` passed over) less `GAP`, never left of the
+     * column's right edge.
+     */
+    private marginLimit(p: Placement, el: HTMLElement, anchor: Rect, frame: Frame, wide: Frame): number | null {
+        const column = frame.columnRight ?? frame.layerEdge;
+        if (p.x + el.offsetWidth <= column + 0.5) {
+            return null;
+        }
+        // The band the layer takes past the column, grown by `GAP`.
+        const band = { left: Math.max(column, p.x - GAP), right: Math.min(wide.layerEdge, p.x + el.offsetWidth) + GAP, top: p.y - GAP, bottom: p.y + el.offsetHeight + GAP };
+        this.mount.classList.add(PROBING_CLASS);
+        let left: number | null;
+        try {
+            left = marginContentLeft(this.view, band, anchor);
+        } finally {
+            this.mount.classList.remove(PROBING_CLASS);
+        }
+        return left === null ? null : Math.max(column, left - GAP);
     }
 
     /** `el` takes the pointer again before its inert time is over. */

@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
 import * as puppeteer from 'puppeteer';
 import { EditorPage, UNDO, closeEditorPage, delay, describedTip, leaveObjects, openEditorPage, settle } from './pageHarness';
 import { BAR, BreadcrumbPage, CRUMBS, breadcrumbPage, rectOf } from './breadcrumbPage';
@@ -212,6 +213,8 @@ suite('Editor note attributes: the note bar (e2e)', () => {
         await page.waitForSelector(CRUMBS, { visible: true, timeout: 2000 });
         const parts = await page.$$eval(`${CRUMBS} .mep-crumb`, els => els.map(p => [p.querySelector('.mep-crumb-name')?.textContent, p.querySelector('.mep-crumb-code')?.textContent ?? null]));
         assert.deepStrictEqual(parts, [['List item', '{.i}'], ['Marginal note', '{.tipp}']]);
+        // Remove attributes ▾ in the Remove slot, the destroying verb last (#15 critique).
+        assert.deepStrictEqual((await barOf(page)).verbs.slice(-2), ['Remove attributes', 'Delete note']);
         await page.click(`${BAR} [data-verb="remove-attributes"]`);
         await page.waitForSelector(`${BAR} .mep-object-menu`, { visible: true, timeout: 2000 });
         const entries = await page.$$eval(`${BAR} .mep-object-menu .mep-menu-item`, els => els.map(el => [
@@ -513,5 +516,154 @@ suite('Editor note attributes: the cost of a key (e2e)', () => {
         const ratio = best(runs.literal) / best(runs.bare);
         console.log(`#15 cost per key (ms, best of 2): notes with {.tipp} ${best(runs.literal).toFixed(2)}, without ${best(runs.bare).toFixed(2)}; ratio ${ratio.toFixed(3)}`);
         assert.ok(ratio <= 1.15, `per key ${best(runs.literal).toFixed(2)} ms vs ${best(runs.bare).toFixed(2)} ms: ${ratio.toFixed(3)}×`);
+    });
+});
+
+/** A user stylesheet with a margin layout of its own (Daniel's petrol one), read in place; the margin suite's first half skips without it. */
+const USER_STYLESHEET = process.env.MEP_USER_STYLESHEET;
+
+/**
+ * Bars reach into the margin (Daniel, #15 critique): where nothing stands in
+ * the margin at the bar's height, a bar may grow past the column up to the
+ * editor's edge less 16 px before its words give way; beside a note's body
+ * it stops short of it. Measured at 1280 with Daniel's stylesheet (its column
+ * is narrow, its notes float into the right margin), and without a margin.
+ */
+suite('Editor note attributes: bars reach into the margin (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    const b = notePage(() => editor as EditorPage);
+    const DOC = [
+        'Erster Absatz ohne alles.',
+        '',
+        'Davor !!Lang|ein langer Hinweis im Rand, der über mehrere Zeilen nach unten reicht, bis neben den nächsten Punkt, und noch weiter, '
+            + 'immer weiter, Zeile um Zeile, bis tief neben die Liste, und dort noch ein gutes Stück, damit er sicher neben dem Punkt hängt!!.',
+        '',
+        '- Zeit $Uhrzeit${class=living} und ein ruhiger Satz, der weitergeht. {.punkt}',
+        '',
+        '- Ein Satz mit !!Tempo|nicht zu abrupt ändern, nicht zu schnell, ganz ruhig!!{.tipp} und mehr Worten danach. {.punkt}',
+        '',
+        'The last paragraph.',
+        '',
+    ].join('\n');
+
+    /** The bar's box, whether "…" shows, and the window's width. */
+    const barBox = () => page.$eval(BAR, el => {
+        const r = el.getBoundingClientRect();
+        const more = el.querySelector<HTMLElement>('.mep-object-more');
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, more: more !== null && !more.hidden && more.isConnected, edge: document.documentElement.clientWidth };
+    });
+    const columnRight = () => page.$eval('.ProseMirror', el => {
+        const p = el.querySelector('p') as HTMLElement;
+        return p.getBoundingClientRect().right;
+    });
+
+    teardown(async () => {
+        if (editor !== undefined) {
+            await page.keyboard.press('Escape');
+            await leaveObjects(page);
+        }
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    test('with Daniel\'s stylesheet at 1280: the left sidebar\'s bar grows into the empty right margin, every verb on it, up to the edge less 16 px', async function () {
+        this.timeout(60000);
+        if (USER_STYLESHEET === undefined || !fs.existsSync(USER_STYLESHEET)) {
+            this.skip();
+        }
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [USER_STYLESHEET as string] });
+        if (!editor) {
+            this.skip();
+        }
+        page = (editor as EditorPage).page;
+        await b.show(DOC);
+        await b.restAt('Uhrzeit', 2);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        const bar = await barBox();
+        const column = await columnRight();
+        assert.ok(bar.right > column + 1, `past the column: ${JSON.stringify({ bar, column })}`);
+        assert.ok(bar.right <= bar.edge - 16 + 0.5, `inside the edge less 16 px: ${JSON.stringify(bar)}`);
+        assert.ok(!bar.more, `no word gave way: ${JSON.stringify(bar)}`);
+    });
+
+    test('with Daniel\'s stylesheet at 1280: a sidebar floated beside a heading has its bar off the heading\'s text lines, not only off its own box', async function () {
+        this.timeout(60000);
+        if (editor === undefined) {
+            this.skip();
+        }
+        const words = 'Rückblick, Ausblick und ein Lied mit vielen Worten, die über mehrere Zeilen laufen und laufen';
+        // Text right above and right below the heading: the bar's two sides both have text, and above wins for an inline object's bar.
+        const filler = Array.from({ length: 12 }, (_, k) => `Zeile ${k} mit etwas Text.`).join('\n\n');
+        await b.show(`${filler}\n\nDavor ein Absatz mit Text, der bis an die Überschrift reicht.\n\n## ${words} $03:00\${class=living}\nDanach ein Absatz direkt darunter mit vielen Worten, die weitergehen.\n\nThe last paragraph.\n`);
+        await page.focus('.ProseMirror');
+        await page.evaluate(() => {
+            const h = document.querySelector('.ProseMirror h2') as HTMLElement;
+            h.scrollIntoView({ block: 'center' });
+            const side = h.querySelector('.left-sidebar') as HTMLElement;
+            (document.getSelection() as Selection).collapse(side.firstChild as globalThis.Node, 2);
+        });
+        await delay(INLINE_DELAY_MS + 300);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        const bar = await barBox();
+        const lines = await page.evaluate(() => {
+            const h = document.querySelector('.ProseMirror h2') as HTMLElement;
+            const out: { top: number; bottom: number; left: number; right: number }[] = [];
+            const walker = document.createTreeWalker(h, NodeFilter.SHOW_TEXT);
+            const range = document.createRange();
+            for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+                if ((n.parentElement as HTMLElement).closest('.left-sidebar') || (n.textContent ?? '').trim() === '') {
+                    continue;
+                }
+                range.selectNodeContents(n);
+                out.push(...Array.from(range.getClientRects()).map(r => ({ top: r.top, bottom: r.bottom, left: r.left, right: r.right })));
+            }
+            return out;
+        });
+        assert.ok(lines.length > 1, `the heading wraps: ${JSON.stringify(lines)}`);
+        for (const line of lines) {
+            const over = bar.left < line.right && bar.right > line.left && bar.top < line.bottom && bar.bottom > line.top;
+            assert.ok(!over, `never over the heading's text: ${JSON.stringify({ bar, line })}`);
+        }
+    });
+
+    test('with Daniel\'s stylesheet at 1280: beside a note\'s body in the margin the bar stops short of it', async function () {
+        this.timeout(60000);
+        if (editor === undefined) {
+            this.skip();
+        }
+        await b.show(DOC);
+        await b.restAt('Tempo', 2);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        const bar = await barBox();
+        const column = await columnRight();
+        for (const needle of ['abrupt', 'langer Hinweis']) {
+            const body = await elementRect(page, '.mnote', needle);
+            const overlaps = bar.left < body.right && bar.right > body.left && bar.top < body.bottom && bar.bottom > body.top;
+            assert.ok(!overlaps, `never over a note's body: ${JSON.stringify({ bar, body, column })}`);
+        }
+        // The crumbs bar is wider than the column, and the long note hangs beside it: it gave way before it, not over it.
+        const long = await elementRect(page, '.mnote', 'langer Hinweis');
+        assert.ok(long.top < bar.bottom && long.bottom > bar.top, `the long note is at the bar's height: ${JSON.stringify({ bar, long })}`);
+        assert.ok(bar.right <= long.left - 4 + 0.5, JSON.stringify({ bar, long }));
+        await closeEditorPage(this, editor);
+        editor = undefined;
+    });
+
+    test('without a margin (600 px, the extension\'s stylesheet): the bar keeps inside the edge less 16 px, its verbs giving way into "…"', async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 600, height: 900, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = (editor as EditorPage).page;
+        await b.show(DOC);
+        await b.restAt('Uhrzeit', 2);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        const bar = await barBox();
+        assert.ok(bar.right <= bar.edge - 16 + 0.5, `inside the edge less 16 px: ${JSON.stringify(bar)}`);
+        assert.ok(bar.more, `the verbs gave way into "…": ${JSON.stringify(bar)}`);
     });
 });
