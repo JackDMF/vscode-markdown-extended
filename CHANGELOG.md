@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.10.0 — Says Why, Keeps Its Place
 
 - A menu card's syntax line and reason keep the editor's font, whatever font a stylesheet gives the document.
 - Refusals share one look — an amber bar, what happened, what to do — at the caret, field or control.
