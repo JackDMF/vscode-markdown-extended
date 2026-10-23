@@ -1,12 +1,16 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
-import { EditorState, TextSelection } from 'prosemirror-state';
+import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { groupSourceBlocks, splitLines } from '../../../src/editor/blocks';
 import { definitionOf } from '../../../src/editor/inlineEngine';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
-import { convertNoteTransaction } from '../../../src/editor/webview/objects';
+import {
+    LiteralObject, attributeHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, convertNoteTransaction, crumbsAt, noteFieldRange,
+    noteLiteralMarkerRefusal, noteLiteralRemoveGlued, objectAtSelection,
+} from '../../../src/editor/webview/objects';
+import { saidText } from '../../../src/editor/tips';
 import { unwrapNote } from '../../../src/editor/webview/notes';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, replaceChild, topChildren, touched } from './helpers';
@@ -166,5 +170,140 @@ suite('Editor note attributes: a {…} glued to a note\'s closing marker is the 
         }));
         assert.deepStrictEqual(notesOf(next.doc), []);
         assert.ok(!write(next.doc).includes('{.tipp}'), write(next.doc));
+    });
+});
+
+function stateOf(src: string): EditorState {
+    return EditorState.create({ doc: parsed(src).doc, plugins: editorPlugins() });
+}
+
+/** The position of character `index` of the first text `needle` stands in. */
+function posOf(doc: Node, needle: string, index = 0): number {
+    let found = -1;
+    doc.descendants((node, pos) => {
+        if (found < 0 && node.isText && (node.text ?? '').includes(needle)) {
+            found = pos + (node.text ?? '').indexOf(needle) + index;
+        }
+        return found < 0;
+    });
+    assert.ok(found >= 0, `no "${needle}" in the document`);
+    return found;
+}
+
+function select(state: EditorState, from: number, to = from): EditorState {
+    return state.apply(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
+}
+
+function noteAt(state: EditorState, name = 'marginal_note'): { pos: number; node: Node } {
+    let found: { pos: number; node: Node } | null = null;
+    state.doc.descendants((node, pos) => {
+        found = found ?? (node.type.name === name ? { pos, node } : null);
+        return found === null;
+    });
+    assert.ok(found !== null, `no ${name}`);
+    return found;
+}
+
+suite('Editor note attributes: the note is the holder at a caret or a selection in it', () => {
+    const src = `- Punkt ${TEMPO} {.i}\n`;
+
+    test('a caret in the reference or the body, a selection in the body or across both, and a selected note all name the note', () => {
+        const state = stateOf(src);
+        const note = noteAt(state);
+        const places: [string, EditorState][] = [
+            ['caret in the reference', select(state, posOf(state.doc, 'Tempo', 2))],
+            ['caret in the body', select(state, posOf(state.doc, 'abrupt', 1))],
+            ['selection in the body', select(state, posOf(state.doc, 'abrupt'), posOf(state.doc, 'abrupt', 6))],
+            ['selection across reference and body', select(state, posOf(state.doc, 'Tempo', 1), posOf(state.doc, 'nicht', 3))],
+            ['the note selected', state.apply(state.tr.setSelection(NodeSelection.create(state.doc, note.pos)))],
+        ];
+        for (const [what, at] of places) {
+            const inline = attributeHolderAt(at).inline;
+            assert.strictEqual(inline?.object.kind, 'note', what);
+            assert.strictEqual(inline?.object.from, note.pos, what);
+            assert.strictEqual(inline?.holder.label, 'Marginal note', what);
+            assert.strictEqual(objectAtSelection(at)?.kind, 'note', `${what}: the bar shows the note`);
+        }
+        assert.strictEqual(attributeHolderAt(select(state, posOf(state.doc, 'Punkt', 1))).inline, null, 'outside the note');
+        assert.strictEqual(attributeHolderAt(select(state, posOf(state.doc, 'Punkt', 1), posOf(state.doc, 'abrupt'))).inline, null, 'from outside into it');
+    });
+
+    test('code with a literal inside a note wins over the note, as inside a link', () => {
+        const state = stateOf('a !!r|b `c`{.k} d!!{.tipp}\n');
+        const inline = attributeHolderAt(select(state, posOf(state.doc, 'c') + 1)).inline;
+        assert.strictEqual(inline?.holder.label, 'Code');
+        assert.strictEqual(attributeHolderAt(select(state, posOf(state.doc, ' d', 1))).inline?.holder.label, 'Marginal note');
+    });
+
+    test('the breadcrumb: List item {.i} › Marginal note {.tipp}; Heading {.h} › Right sidebar {.r}; a bare note alone', () => {
+        const item = crumbsAt(select(stateOf(src), posOf(stateOf(src).doc, 'abrupt', 1)));
+        assert.deepStrictEqual([item?.current.name, item?.current.literal, item?.outer?.name, item?.outer?.literal],
+            ['Marginal note', '{.tipp}', 'List item', '{.i}']);
+        const heading = stateOf('## Kopf @10:00@{.r} {.h}\n');
+        const crumbs = crumbsAt(select(heading, posOf(heading.doc, '10:00', 2)));
+        assert.deepStrictEqual([crumbs?.current.name, crumbs?.current.literal, crumbs?.outer?.name, crumbs?.outer?.literal],
+            ['Right sidebar', '{.r}', 'Heading', '{.h}']);
+        const bare = stateOf('Text !!r|b!! more.\n');
+        const alone = crumbsAt(select(bare, posOf(bare.doc, 'b', 0) + 1));
+        assert.deepStrictEqual([alone?.current.name, alone?.current.literal, alone?.outer ?? null], ['Marginal note', null, null]);
+    });
+
+    test('the field opens at the reference, never at the body in the margin; a sidebar at itself', () => {
+        const state = stateOf(src);
+        const note = noteAt(state);
+        const ref = noteFieldRange({ from: note.pos, to: note.pos + note.node.nodeSize, node: note.node });
+        assert.deepStrictEqual(ref, { from: note.pos + 1, to: note.pos + 1 + note.node.child(0).nodeSize });
+        assert.strictEqual(state.doc.textBetween(ref.from, ref.to), 'Tempo');
+        const item = crumbsAt(select(state, posOf(state.doc, 'abrupt', 1)));
+        assert.deepStrictEqual([item?.current.from, item?.current.to], [ref.from, ref.to]);
+        const sidebar = stateOf('x @a@{.r} y\n');
+        const s = noteAt(sidebar, 'right_sidebar');
+        assert.deepStrictEqual(noteFieldRange({ from: s.pos, to: s.pos + s.node.nodeSize, node: s.node }), { from: s.pos, to: s.pos + s.node.nodeSize });
+    });
+});
+
+suite('Editor note attributes: setting and removing a note\'s literal', () => {
+    function noteObject(state: EditorState, name = 'marginal_note'): LiteralObject {
+        const note = noteAt(state, name);
+        return { kind: 'note', from: note.pos, to: note.pos + note.node.nodeSize, node: note.node };
+    }
+
+    test('one step sets it, written glued to the marker; the re-parse gives the same literal; undo is one step', () => {
+        const state = stateOf(`Tempo ${TEMPO}\n`);
+        const tr = changeInlineLiteralTransaction(state, noteObject(state), '{.tipp .x}');
+        assert.ok(tr !== null);
+        assert.strictEqual(tr.steps.length, 1);
+        const next = state.apply(tr);
+        const out = write(next.doc);
+        assert.strictEqual(out, 'Tempo !!Tempo|nicht zu abrupt ändern, nicht zu schnell!!{.tipp .x}\n');
+        assert.deepStrictEqual(notesOf(parsed(out).doc), [['marginal_note', '{.tipp .x}']]);
+        const removed = state.apply(changeInlineLiteralTransaction(state, noteObject(state), '') as NonNullable<ReturnType<typeof changeInlineLiteralTransaction>>);
+        assert.strictEqual(write(removed.doc), 'Tempo !!Tempo|nicht zu abrupt ändern, nicht zu schnell!!\n');
+    });
+
+    test('a literal holding a note marker the engine still reads is set: {.x!!}', () => {
+        const state = stateOf('x !!r|a!! y !!c|d!!\n');
+        assert.strictEqual(changeInlineLiteralRefusal(state, noteObject(state), '{.x!!}'), null);
+        const next = state.apply(changeInlineLiteralTransaction(state, noteObject(state), '{.x!!}') as NonNullable<ReturnType<typeof changeInlineLiteralTransaction>>);
+        assert.deepStrictEqual(notesOf(parsed(write(next.doc)).doc), [['marginal_note', '{.x!!}'], ['marginal_note', null]]);
+    });
+
+    test('R2: one that would pair with a later sidebar is refused, naming the marker', () => {
+        const state = stateOf('x @a@ and @b@\n');
+        const refusal = changeInlineLiteralRefusal(state, noteObject(state, 'right_sidebar'), '{data-x="@"}');
+        assert.ok(refusal !== null);
+        assert.strictEqual(saidText(refusal), saidText(noteLiteralMarkerRefusal('right sidebar', '@')));
+        assert.strictEqual(changeInlineLiteralTransaction(state, noteObject(state, 'right_sidebar'), '{data-x="@"}'), null);
+    });
+
+    test('R4: removing a left sidebar\'s literal that keeps it apart from a digit is refused', () => {
+        const state = stateOf('x $a${.l}5\n');
+        const refusal = changeInlineLiteralRefusal(state, noteObject(state, 'left_sidebar'), '');
+        assert.ok(refusal !== null);
+        assert.strictEqual(saidText(refusal), noteLiteralRemoveGlued('left sidebar'));
+        assert.strictEqual(changeInlineLiteralTransaction(state, noteObject(state, 'left_sidebar'), ''), null);
+        // With a space after it, the removal goes through.
+        const spaced = stateOf('x $a${.l} 5\n');
+        assert.strictEqual(changeInlineLiteralRefusal(spaced, noteObject(spaced, 'left_sidebar'), ''), null);
     });
 });

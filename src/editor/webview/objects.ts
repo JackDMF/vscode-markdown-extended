@@ -41,7 +41,7 @@ import { ReplaceAroundStep, Step, StepMap, liftTarget } from 'prosemirror-transf
 import { Fragment, Mark, Node, NodeType, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
-import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
+import { NOTE_SYNTAX_CHARS, attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { innerOf, isRemoval } from '../attributeLiteral';
 import { Said, TipPart, said, value } from '../tips';
 import { QUOTE_PARAGRAPH_ATTRIBUTES, TITLE_ATTRIBUTES } from '../sourceReason';
@@ -49,7 +49,7 @@ import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLitera
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
-import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteLiteralHost, quoteTakesLiteral, serializeInline } from '../serialize';
+import { LiteralLoss, SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteLiteralHost, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 import { SOURCE_VERB_META } from './sourceBlock';
 import { VERB, quotedVerb, wording } from '../verbs';
@@ -214,20 +214,23 @@ function runObject(holder: InlineLiteralHolder, mark: Mark, from: number, to: nu
  * seam between two runs of one kind the one after the caret is meant; over
  * exactly the same text, the innermost. With `withLiteral`, a styled mark
  * counts only while it carries a literal: formatting has no bar of its own.
+ * Then the note or sidebar both ends of the selection are in — its reference,
+ * its body, or across the two — so a mark inside a note wins over the note,
+ * as one inside a link wins over the link; a selected note is one too.
  */
 function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[], withLiteral: boolean, accept: (object: LiteralObject) => boolean = () => true): InlineHolderAt | null {
     const sel = state.selection;
     if (sel instanceof NodeSelection) {
         const holder = holderOfCarrier(sel.node.type.name);
         return holder !== undefined && holders.includes(holder) && 'node' in holder.carrier
-            ? { holder, object: { kind: 'image', from: sel.from, to: sel.to, node: sel.node } }
+            ? { holder, object: { kind: holder.holder === 'image' ? 'image' : 'note', from: sel.from, to: sel.to, node: sel.node } }
             : null;
     }
     const { $from, $to } = sel;
-    if (!$from.parent.inlineContent || !$from.sameParent($to)) {
+    if (!$from.parent.inlineContent) {
         return null;
     }
-    for (const holder of holders) {
+    for (const holder of $from.sameParent($to) ? holders : []) {
         if (!('mark' in holder.carrier)) {
             continue;
         }
@@ -241,7 +244,25 @@ function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[]
             }
         }
     }
+    const note = noteHolderAt($from, $to);
+    if (note !== null && holders.includes(note.holder) && accept(note.object)) {
+        return note;
+    }
     return null;
+}
+
+/** The note or sidebar both `$from` and `$to` stand in (`noteContextAt`), as an inline holder; `null` where they are in none, or in two. */
+function noteHolderAt($from: ResolvedPos, $to: ResolvedPos): InlineHolderAt | null {
+    const from = noteContextAt($from);
+    if (from === null) {
+        return null;
+    }
+    const to = $to.pos === $from.pos ? from : noteContextAt($to);
+    const holder = holderOfCarrier(from.note.type.name);
+    if (to === null || to.noteBefore !== from.noteBefore || holder === undefined) {
+        return null;
+    }
+    return { holder, object: { kind: 'note', from: from.noteBefore, to: from.noteAfter, node: from.note } };
 }
 
 /**
@@ -858,16 +879,45 @@ const INLINE_PLACES: ReadonlySet<string> = new Set(INLINE_LITERAL_HOLDERS.map(h 
 
 /**
  * An object that carries an inline literal (`inlineLiterals.ts`): a mark's run
- * — a link, a span, a styled run — or an image, a node.
+ * — a link, a span, a styled run — or an image, a note or a sidebar, a node.
  */
-export type LiteralObject = Extract<EditorObject, { mark: Mark }> | { kind: 'image'; from: number; to: number; node: Node };
+export type LiteralObject = Extract<EditorObject, { mark: Mark }>
+    | { kind: 'image'; from: number; to: number; node: Node }
+    | { kind: 'note'; from: number; to: number; node: Node };
 
-/** `object` as one that carries an inline literal (`LiteralObject`), or `null`: a mark's run, or an image. */
+/** `object` as one that carries an inline literal (`LiteralObject`), or `null`: a mark's run, an image, a note or a sidebar. */
 export function literalObjectOf(object: EditorObject | null): LiteralObject | null {
     if (object === null) {
         return null;
     }
-    return isMarkObject(object) ? object : object.kind === 'image' ? { kind: 'image', from: object.from, to: object.to, node: object.node } : null;
+    if (isMarkObject(object)) {
+        return object;
+    }
+    return object.kind === 'image' || object.kind === 'note' ? { kind: object.kind, from: object.from, to: object.to, node: object.node } : null;
+}
+
+/**
+ * Where a note's attributes field opens and what it draws as pending: the
+ * reference's line boxes (a sidenote's or a marginal note's `note_ref`),
+ * never the body floated into the margin; a sidebar is its own place (#15 F4).
+ */
+export function noteFieldRange(object: { from: number; to: number; node: Node }): { from: number; to: number } {
+    const name = object.node.type.name;
+    if (name === 'sidenote' || name === 'marginal_note') {
+        const ref = object.from + 1;
+        return { from: ref, to: ref + object.node.child(0).nodeSize };
+    }
+    return { from: object.from, to: object.to };
+}
+
+/** Why a note's literal is refused that would end the note early or start another one (#15 R2): `ch` the note marker it holds. */
+export function noteLiteralMarkerRefusal(noun: string, ch: string): Said {
+    return said`Not set: ${value(ch)} in these attributes would end the ${noun} early or start another one. Remove it.`;
+}
+
+/** Why a sidebar's literal is not removed that keeps it apart from the character after it (#15 R4). */
+export function noteLiteralRemoveGlued(noun: string): string {
+    return `Not removed: without its attributes the ${noun} would touch the character after it and stop being a sidebar. Put a space after it first.`;
 }
 
 /** The mark or the node of `object` that carries its literal. */
@@ -932,16 +982,31 @@ function literalChange(state: EditorState, object: LiteralObject, literal: strin
  * it is written (`literalRefusal`, at `inlineLiteralPlace`), then read with
  * its block (`literalsReadBackRefusal`), then the note around it
  * (`noteRefusal`). An empty field or `{}` removes it, which only its block and
- * a note can refuse.
+ * a note can refuse. A note's own literal holding a note marker that breaks
+ * the read-back is named by that marker (R2); a sidebar whose literal kept it
+ * apart from a letter or digit after it is not left glued to it (R4).
  */
 export function changeInlineLiteralRefusal(state: EditorState, object: LiteralObject, literal: string): Said | null {
-    const value = typedMarkLiteral(literal);
-    const alone = value === null ? null : literalRefusal(value, inlineLiteralPlace(object));
+    const typed = typedMarkLiteral(literal);
+    const alone = typed === null ? null : literalRefusal(typed, inlineLiteralPlace(object));
     if (alone !== null) {
         return alone;
     }
-    const tr = literalChange(state, object, value);
-    return literalsReadBackRefusal(tr.doc, object.from, state.doc, literalOfObject(object)) ?? noteRefusal(tr);
+    const tr = literalChange(state, object, typed);
+    const readBack = literalsReadBackRefusal(tr.doc, object.from, state.doc, literalOfObject(object));
+    const noun = object.kind === 'note' ? holderNames(inlineHolderOf(object)).noun : null;
+    const marker = typed === null ? null : NOTE_SYNTAX_CHARS.exec(typed)?.[0] ?? null;
+    if (noun !== null && marker !== null && (readBack !== null || noteRefusal(tr) !== null)) {
+        return noteLiteralMarkerRefusal(noun, marker);
+    }
+    if (readBack !== null) {
+        return readBack;
+    }
+    const note = noteRefusal(tr);
+    if (noun !== null && typed === null && (note === SIDEBAR_GLUED_AFTER || note === SIDEBAR_GLUED_BEFORE)) {
+        return noteLiteralRemoveGlued(noun);
+    }
+    return note;
 }
 
 /**
@@ -1697,9 +1762,11 @@ function blockCrumbsOf($from: ResolvedPos, $to: ResolvedPos): Crumbs | null {
 
 /** `at` as the breadcrumb's current part: an inline element, its field at its run. */
 function inlinePart(at: InlineHolderAt): CrumbPart {
+    // A note's field opens at its reference, never at the body floated into the margin (#15 F4).
+    const { from, to } = at.object.kind === 'note' ? noteFieldRange(at.object) : at.object;
     return {
         role: 'current', name: holderNames(at).label, literal: literalOfObject(at.object), target: at, refusal: null,
-        anchor: 'run', from: at.object.from, to: at.object.to,
+        anchor: 'run', from, to,
     };
 }
 

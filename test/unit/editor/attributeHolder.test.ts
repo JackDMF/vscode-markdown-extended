@@ -45,6 +45,7 @@ suite('Editor attribute holder: one rule for what at the selection carries a {â€
             'See [the `x` here](u){.l} and [plain *em* link](v) now.\n',
             'A *`x`* b, **_x_{.a}**{.b} c, `y`{.c}*z*{.d} e.\n',
             'A ![a](s.png){.c} and ![b](t.png) here, [![i](s.png){.e}](u){.f}.\n',
+            'A !!r *b*{.e}|body `c`{.k} **d**!!{.tipp} and ++s|t++ $x${.l} y @z@.\n',
         ];
         let checked = 0;
         for (const text of docs) {
@@ -54,8 +55,13 @@ suite('Editor attribute holder: one rule for what at the selection carries a {â€
                     for (let p = pos + 1; p <= pos + node.nodeSize - 1; p++) {
                         const caret = state.apply(state.tr.setSelection(TextSelection.create(state.doc, p)));
                         const object = objectAtSelection(caret);
-                        if (object !== null && isMarkObject(object)) {
+                        if (object !== null && (isMarkObject(object) || object.kind === 'note')) {
                             const inline = attributeHolderAt(caret).inline;
+                            if (object.kind === 'note' && inline?.object.kind === 'holder') {
+                                // Bare formatting inside a note has no bar of its own; the menu names it, innermost first.
+                                assert.ok(inline.object.from >= object.from && inline.object.to <= object.to);
+                                continue;
+                            }
                             assert.ok(inline !== null && sameObject(inline.object, object), `${JSON.stringify(text.slice(0, 40))} at ${p}: ${object.kind} vs ${inline?.object.kind ?? 'none'}`);
                             checked++;
                         }
