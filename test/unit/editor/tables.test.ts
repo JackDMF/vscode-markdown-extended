@@ -8,6 +8,7 @@ import { definitionOf } from '../../../src/editor/inlineEngine';
 import { tableLines, unwritableInTable } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { addRowTransaction, deleteColumnRefusal, deleteRowRefusal, deleteRowTransaction, enterInCell, tableRefusal } from '../../../src/editor/webview/tables';
+import { saidText } from '../../../src/editor/tips';
 import { CellSelection } from 'prosemirror-tables';
 import { hostEngine, toCrlf, topChildren, touched } from './helpers';
 
@@ -274,10 +275,10 @@ suite('Editor pipe tables', () => {
             nodes.table_row.create(null, [cell]),
         ])]);
         const sidebar = nodes.left_sidebar.create(null, [editorSchema.text('a'), nodes.hard_break.create(), editorSchema.text('b')]);
-        assert.ok(unwritableInTable(table(nodes.table_cell.create(null, sidebar)))?.includes('one line'));
-        assert.ok(unwritableInTable(table(nodes.table_cell.create(null, editorSchema.text('a|b', [editorSchema.marks.code.create()]))))?.includes('"|"'));
+        assert.ok(saidText(unwritableInTable(table(nodes.table_cell.create(null, sidebar))) ?? '').includes('one line'));
+        assert.ok(saidText(unwritableInTable(table(nodes.table_cell.create(null, editorSchema.text('a|b', [editorSchema.marks.code.create()])))) ?? '').includes('"|"'));
         const span = editorSchema.marks.attr_span.create({ literal: '{title="a|b"}' });
-        assert.ok(unwritableInTable(table(nodes.table_cell.create(null, editorSchema.text('s', [span]))))?.includes('{title="a|b"}'));
+        assert.ok(saidText(unwritableInTable(table(nodes.table_cell.create(null, editorSchema.text('s', [span])))) ?? '').includes('{title="a|b"}'));
         assert.strictEqual(unwritableInTable(table(nodes.table_cell.create(null, editorSchema.text('a|b')))), null, 'text holding | is written \\|');
         assert.throws(() => nodes.table_cell.create(null, nodes.hard_break.create()).check(), 'a cell holds no hard break of its own');
     });
@@ -310,7 +311,7 @@ suite('Editor pipe tables', () => {
         const at = cellTextPos(state.doc, 'code') + 2;
         state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, at)));
         const typed = state.tr.insertText('|');
-        assert.ok(tableRefusal(typed)?.includes('"|"'), String(tableRefusal(typed)));
+        assert.ok(saidText(tableRefusal(typed) ?? '').includes('"|"'), String(tableRefusal(typed)));
         assert.strictEqual(state.apply(typed).doc.eq(state.doc), true, 'the filter drops it');
         const plain = EditorState.create({ doc: parseDocument(md, '| a |\n| - |\n| text |\n').doc, plugins: editorPlugins() });
         const inText = plain.apply(plain.tr.setSelection(TextSelection.create(plain.doc, cellTextPos(plain.doc, 'text') + 2)));

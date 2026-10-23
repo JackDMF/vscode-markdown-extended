@@ -12,6 +12,7 @@ import {
 } from '../../../src/editor/webview/objects';
 import { toggleMarkup } from '../../../src/editor/webview/toolbar/commands';
 import { hostEngine, readText, repoRoot, topChildren, touched } from './helpers';
+import { saidText } from '../../../src/editor/tips';
 
 const options = { defaultWrap: 90 };
 
@@ -354,10 +355,15 @@ suite('Editor inline literals: inline code, an image, superscript, subscript and
     test('an image\'s src, alt and title are its own: a {…} setting them is no literal, as a link\'s href', () => {
         assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){alt=b} b.\n')), 'A ![a](s.png) b.\n', 'the preview takes the alt from the text');
         assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){title=t} b.\n')), 'A ![a](s.png "t") b.\n');
+        // F8: the key, what it is, and the verb that changes it — the image bar's own label, or Show in text editor for a title.
+        const what: Record<string, string> = { src: 'the image\'s path — "Edit image…"', alt: 'the image\'s alt text — "Edit image…"', title: 'the image\'s title — "Show in text editor"' };
         for (const literal of ['{src=x.png}', '{alt=x}', '{title=x}', '{.c title=x}']) {
             const key = /\{\.?c? ?(\w+)=/.exec(literal)?.[1] as string;
-            assert.strictEqual(literalRefusal(literal, 'image'), `${key} is the image's own: change it with Edit image…. Here, give it a class, an id or another attribute.`, literal);
+            const said = literalRefusal(literal, 'image');
+            assert.strictEqual(said === null ? null : saidText(said), `Not set: ${key} is ${what[key]} changes it. Here, give it a class, an id or another attribute.`, literal);
         }
+        const href = literalRefusal('{href=x}', 'link');
+        assert.deepStrictEqual(href, ['Not set: ', { code: 'href' }, ' is the link\'s address — "Edit link…" changes it. Here, give it a class, an id or another attribute.']);
         assert.strictEqual(literalRefusal('{.hero width=300}', 'image'), null);
     });
 
@@ -515,15 +521,17 @@ suite('Editor inline literals: edits keep the literal of code, an image, supersc
         assert.strictEqual(changeInlineLiteralTransaction(cell, code, '{data-x="a|b"}'), null);
         // The table's own filter names the element, whatever made it.
         const piped = cell.tr.addMark(code.from, code.to, editorSchema.marks.code.create({ literal: '{data-x="a|b"}' }));
-        assert.ok(unwritableInTable(piped.doc)?.startsWith('Inline code in a table cell cannot hold {data-x="a|b"}'), unwritableInTable(piped.doc) ?? 'none');
+        const inCell = saidText(unwritableInTable(piped.doc) ?? 'none');
+        assert.strictEqual(inCell, 'Not applied: the attributes {data-x="a|b"} hold a "|" or a backtick, which would split the table row. Remove it from the attributes.');
         const image = literalObjectOf(objectAtSelection(selectImage(cell))) as LiteralObject;
         const pipedImage = cell.tr.setNodeMarkup(image.from, undefined, { ...(image as { node: Node }).node.attrs, literal: '{data-x="a|b"}' });
-        assert.ok(unwritableInTable(pipedImage.doc)?.startsWith('An image in a table cell cannot hold'), unwritableInTable(pipedImage.doc) ?? 'none');
+        assert.strictEqual(saidText(unwritableInTable(pipedImage.doc) ?? 'none'), inCell, 'an image\'s the same');
 
         const note = select(stateOf('Text ++ref|a `q`{.c} body++ end.\n'), 'q', 1);
         const inNote = objectAtSelection(note) as Extract<EditorObject, { kind: 'styled' }>;
         assert.strictEqual(inNote.kind, 'styled');
-        assert.ok(changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}')?.startsWith('Inline code in a note cannot hold'), changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}') ?? 'none');
+        const inNoteRefusal = saidText(changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}') ?? 'none');
+        assert.strictEqual(inNoteRefusal, 'Not applied: the attributes {data-x="a|b"} hold a note marker, which would end the sidenote there. Remove it from the attributes.');
     });
 });
 
@@ -565,7 +573,7 @@ suite('Editor inline literals: two runs of one mark side by side', () => {
         const from = posOf(state.doc, 'foo');
         state = state.apply(state.tr.addMark(from, from + 3, editorSchema.marks.code.create()));
         const lost = literalNotReadBack(touched(state.doc.child(0)));
-        assert.ok(lost !== null && literalLostReason(lost).startsWith('After this edit two pieces of inline code would stand side by side'), JSON.stringify(lost));
+        assert.ok(lost !== null && saidText(literalLostReason(lost)).startsWith('Not applied: the two inline code parts would join into one'), JSON.stringify(lost));
     });
 });
 
@@ -603,7 +611,7 @@ suite('Editor inline literals: review 2 — the right run, and the save read bac
             const lost = literalNotReadBack(touched(tr.doc.child(0)));
             assert.ok(lost !== null, `${source}: refused`);
             if (reason !== 'refused') {
-                assert.strictEqual(literalLostReason(lost), reason, source);
+                assert.deepStrictEqual(literalLostReason(lost), reason, source);
             }
         }
     });

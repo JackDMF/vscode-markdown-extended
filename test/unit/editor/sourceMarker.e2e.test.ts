@@ -59,7 +59,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
             assert.ok(!(await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes(typed), `${what}: nothing typed stands in the page`);
         }
         const hint = await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden, tone: (el as HTMLElement).dataset.tone }));
-        assert.deepStrictEqual(hint, { text: 'This paragraph holds a footnote — Edit source to change it', shown: true, tone: 'refusal' }, `${what}: the refusal says why`);
+        assert.deepStrictEqual(hint, { text: 'This paragraph holds a footnote — change it with "Edit source"', shown: true, tone: 'refusal' }, `${what}: the refusal says why`);
     };
 
     /** The caret at the start or the end of the `n`th top-level paragraph (1-based), by a click there. */
@@ -718,8 +718,11 @@ suite('Editor source block marker (e2e)', () => {
         await page().mouse.click(box.x + 20, box.y + 8);
         await page().waitForSelector(`${SELECTED_BLOCK_BAR} .mep-object-label`);
         assert.strictEqual(await page().$eval(`${SELECTED_BLOCK_BAR} .mep-object-label`, el => el.textContent), 'Source · has a footnote');
-        const said = await page().$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden, quiet: el.hasAttribute('data-quiet'), role: el.getAttribute('role'), width: el.getBoundingClientRect().width }));
-        assert.deepStrictEqual(said, { text: 'Source block, has a footnote — Alt+Enter for actions', shown: true, quiet: true, role: 'status', width: 1 });
+        // Said through the page's one status region (#10), drawn nowhere; the hint itself stays hidden.
+        await delay(50);
+        const said = await page().$eval('.mep-live', el => ({ text: el.textContent, role: el.getAttribute('role'), width: el.getBoundingClientRect().width }));
+        assert.deepStrictEqual(said, { text: 'Source block, has a footnote — Alt+Enter for actions', role: 'status', width: 1 });
+        assert.strictEqual(await page().$eval('.mep-hint', el => (el as HTMLElement).hidden), true, 'nothing drawn');
 
         const dl = await (await page().$(`${block(1)} .mep-atom-content`))?.boundingBox();
         assert.ok(dl);
@@ -727,7 +730,7 @@ suite('Editor source block marker (e2e)', () => {
         await page().mouse.click(dl.x + 20, dl.y + dl.height - 6);
         await delay(150);
         assert.strictEqual(await page().$eval(`${SELECTED_BLOCK_BAR} .mep-object-label`, el => el.textContent), 'Source · definition list');
-        assert.strictEqual(await page().$eval('.mep-hint', el => el.textContent), 'Source block, definition list — Alt+Enter for actions');
+        assert.strictEqual(await page().$eval('.mep-live', el => el.textContent), 'Source block, definition list — Alt+Enter for actions');
     });
 
     test('an open source box has no chip over it', async function () {
@@ -817,7 +820,7 @@ suite('Editor source block marker (e2e)', () => {
             await page().mouse.click(box.x + 30, box.y + 8);
             await delay(300);
             await page().evaluate(() => {
-                const said = document.querySelector('.mep-hint')?.textContent ?? '';
+                const said = document.querySelector('.mep-live')?.textContent ?? '';
                 const rows = Array.from(document.querySelectorAll('.ProseMirror > .mep-raw-block')).map(el => {
                     const rail = el.querySelector(':scope > .mep-raw-rail');
                     return `<${el.tagName.toLowerCase()} role="${el.getAttribute('role')}" aria-roledescription="${el.getAttribute('aria-roledescription')}" aria-label="${el.getAttribute('aria-label') ?? ''}"> — chip aria-hidden="${rail?.getAttribute('aria-hidden')}"`;

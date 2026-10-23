@@ -227,12 +227,37 @@ suite('Editor stylesheet colours', () => {
         assert.ok(note.some(d => /^background: var\(--vscode-inputValidation-infoBackground,/.test(d)), note.join('; '));
         assert.ok(note.includes('border-radius: 3px'));
         const flash = rule('.mep-row-lock.mep-row-lock-flash > .mep-row-lock-text');
-        // The caret hint's refusal tone (`.mep-hint[data-tone="refusal"]`), not the focus blue.
-        assert.ok(flash.some(d => d.includes('var(--vscode-editorWarning-foreground, #bf8803)')), flash.join('; '));
+        // The refusal's one mark (`--mep-refusal-bar`), not the focus blue.
         assert.ok(!flash.some(d => d.includes('focusBorder')), flash.join('; '));
         // Two pixels, in the amber drawn towards the theme's text colour: Light Modern's own
         // amber stands at 2.5:1 on the tint, under the 3:1 a mark needs to be seen.
-        assert.ok(flash.includes(`outline: 2px solid ${FLASH_AMBER}`), flash.join('; '));
+        assert.ok(flash.includes('outline: 2px solid var(--mep-refusal-bar)'), flash.join('; '));
+        assert.ok(rule('html').includes(`--mep-refusal-bar: ${FLASH_AMBER}`), rule('html').join('; '));
+    });
+
+    test('one refusal component (#10): the bar in the one variable, 44ch balanced, above every menu, beside the body, the values muted mono, High Contrast a 4 px double bar', () => {
+        const rule = (selector: string) => {
+            const at = css.indexOf(`\n${selector} {`);
+            assert.ok(at >= 0, `editor.css has ${selector}`);
+            return css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at)).trim().split(/\s*;\s*/).filter(d => d !== '');
+        };
+        const z = (selector: string) => Number(rule(selector).find(d => d.startsWith('z-index:'))?.slice(8));
+        const hint = rule('.mep-hint');
+        assert.ok(z('.mep-hint') > z('.mep-menu'), `the hint (${z('.mep-hint')}) above the menus (${z('.mep-menu')})`);
+        assert.strictEqual(z('.mep-hint'), 35);
+        assert.ok(hint.includes('pointer-events: none'));
+        assert.ok(hint.includes('font-family: var(--vscode-font-family, sans-serif)'), 'the chrome\'s font, not the document\'s');
+        const refusal = rule('.mep-hint[data-tone="refusal"]');
+        assert.ok(refusal.includes('max-width: min(44ch, calc(100vw - 32px))') && refusal.includes('width: max-content') && refusal.includes('text-wrap: balance'), refusal.join('; '));
+        assert.ok(refusal.includes('border-left: 3px solid var(--mep-refusal-bar)'), refusal.join('; '));
+        // Beside the body a user stylesheet may narrow: the window's width, above the menus.
+        const overlay = rule('.mep-overlay');
+        assert.ok(overlay.includes('width: 100%') && overlay.includes('pointer-events: none') && z('.mep-overlay') >= z('.mep-hint'), overlay.join('; '));
+        assert.ok(rule('.mep-field-refusal-text').includes('border-left: 3px solid var(--mep-refusal-bar)'), 'the field\'s reason: the same bar');
+        const code = rule('.mep-hint code');
+        assert.ok(code.includes('background: none') && code.some(d => d.startsWith('color: var(--vscode-descriptionForeground')), code.join('; '));
+        assert.deepStrictEqual(rule(':root:has(> body.vscode-high-contrast) .mep-hint[data-tone="refusal"]'), ['border-left-width: 4px', 'border-left-style: double']);
+        assert.ok(rule('.mep-live').includes('clip-path: inset(50%)'), 'the live region drawn nowhere');
     });
 
     test('the flash\'s amber stands at 3:1 or more against the tint and the row, in light, dark and high contrast', () => {

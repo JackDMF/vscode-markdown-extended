@@ -14,6 +14,7 @@ import { PRESERVE_SOURCE_META } from '../../fidelity';
 import { SUFFIX_NODES, editorSchema } from '../../schema';
 import { serializeNode } from '../../serialize';
 import { noteRefusal } from '../notes';
+import type { Said } from '../../tips';
 import { ActionApply, BlockTarget, FOOTNOTE_LABEL } from './actions';
 
 const nodes = editorSchema.nodes;
@@ -152,7 +153,7 @@ function addKeepingLiterals(tr: Transaction, from: number, to: number, type: Mar
  * would glue a sidebar to a letter or digit (`a **x**$y$`, `a x$y$` once
  * code is taken off `x`).
  */
-function markRefusalOf(tr: Transaction | null): string | null {
+function markRefusalOf(tr: Transaction | null): Said | null {
     return tr === null ? null : noteRefusal(tr);
 }
 
@@ -168,7 +169,7 @@ function toggleMarkWith(type: MarkType, markup: string | null, removes: (state: 
 }
 
 /** Why a toolbar button's mark cannot be toggled here, for its tooltip; `null` when nothing refuses it. */
-export function markRefusal(state: EditorState, type: MarkType, markup: string | null): string | null {
+export function markRefusal(state: EditorState, type: MarkType, markup: string | null): Said | null {
     return markRefusalOf(markTransaction(state, type, markup, s => markActive(s, type, markup)));
 }
 
@@ -208,13 +209,13 @@ function isRequirementHeading(node: Node): boolean {
 }
 
 export const REQUIREMENT_HEADING_LOCK = 'A requirement heading keeps its type: changing it would lose its id and its anchor. Edit the title only.';
-export const ATOM_LOCK = 'A source block or content another extension shows is selected; it has no block type to change.';
+export const ATOM_LOCK = 'This block has no block type — Edit source changes a source block.';
 export const NODE_LOCK = 'A whole element is selected, not text in a block; put the caret in a paragraph or heading to change its type.';
-export const GAP_LOCK = 'The caret is between two blocks, where there is no block to retype. Insert adds a block here.';
-export const ALL_LOCK = 'The whole document is selected, several blocks at once; select one block to change its type.';
-export const WHOLE_LOCK = 'The whole document is selected; put the caret in the block to change its type.';
+export const GAP_LOCK = 'No block here — Insert adds one at this spot.';
+export const ALL_LOCK = 'Several blocks are selected — put the caret in one block to change its type.';
+export const WHOLE_LOCK = 'The whole document is selected — put the caret in the block to change its type.';
 export const NO_TEXT_LOCK = 'Put the caret in a paragraph or heading to change its type.';
-export const TABLE_LOCK = 'A table cell holds one line of text and has no block type; the table\'s bar adds rows and columns.';
+export const TABLE_LOCK = 'A table cell keeps its block type — text formatting still works here.';
 
 /**
  * Why the block type cannot be changed here, or `null` when it can — decided

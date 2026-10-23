@@ -48,10 +48,10 @@ suite('Editor source block reason', () => {
     });
 
     test('the refusal names the block and why, as a clause', () => {
-        assert.strictEqual(sourceRefusal('has a footnote', 'list'), 'This list holds a footnote — Edit source to change it');
-        assert.strictEqual(sourceRefusal('definition list', 'block'), 'This definition list is source — Edit source to change it');
-        assert.strictEqual(sourceRefusal('heading attributes', 'block'), 'These heading attributes are source — Edit source to change it');
-        assert.strictEqual(sourceRefusal(null, 'paragraph'), 'This paragraph is source — Edit source to change it');
+        assert.strictEqual(sourceRefusal('has a footnote', 'list'), 'This list holds a footnote — change it with "Edit source"');
+        assert.strictEqual(sourceRefusal('definition list', 'block'), 'This definition list is source — change it with "Edit source"');
+        assert.strictEqual(sourceRefusal('heading attributes', 'block'), 'These heading attributes are source — change it with "Edit source"');
+        assert.strictEqual(sourceRefusal(null, 'paragraph'), 'This paragraph is source — change it with "Edit source"');
     });
 
     for (const [reason, src, words] of [

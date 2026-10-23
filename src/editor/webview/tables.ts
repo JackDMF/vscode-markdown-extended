@@ -46,6 +46,7 @@ import { TableAlign, editorSchema } from '../schema';
 import { CELL_BREAK_REFUSAL, serializeNode, unwritableInTable } from '../serialize';
 import { showHint } from './hint';
 import { refusableRange } from './notes';
+import type { Said } from '../tips';
 import { insertionPoint } from './toolbar/commands';
 import type { SourceContext } from './toolbar/commands';
 
@@ -226,10 +227,10 @@ export function addColumnTransaction(state: EditorState, side: 'left' | 'right')
 export function deleteRowRefusal(state: EditorState): string | null {
     const rect = rectOf(state);
     if (rect === null) {
-        return 'Put the caret in a row of the table.';
+        return 'Put the caret in a row first.';
     }
     return rect.top === 0 && rect.bottom === rect.map.height
-        ? 'These are all the table\'s rows: Delete table removes it.'
+        ? 'A table needs at least one row — Delete table deletes the whole table.'
         : null;
 }
 
@@ -237,10 +238,10 @@ export function deleteRowRefusal(state: EditorState): string | null {
 export function deleteColumnRefusal(state: EditorState): string | null {
     const rect = rectOf(state);
     if (rect === null) {
-        return 'Put the caret in a column of the table.';
+        return 'Put the caret in a column first.';
     }
     return rect.left === 0 && rect.right === rect.map.width
-        ? 'These are all the table\'s columns: Delete table removes it.'
+        ? 'A table needs at least one column — Delete table deletes the whole table.'
         : null;
 }
 
@@ -435,7 +436,7 @@ export function tableKeymap(): Plugin {
 // ---------------------------------------------------------------------------
 
 /** Why the transaction must not be applied: it leaves in a table what the tidy form cannot write (`unwritableInTable`). */
-export function tableRefusal(tr: Transaction): string | null {
+export function tableRefusal(tr: Transaction): Said | null {
     const range = refusableRange(tr);
     return range === null ? null : unwritableInTable(tr.doc, range.from, range.to);
 }

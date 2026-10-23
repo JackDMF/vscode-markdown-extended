@@ -1,0 +1,842 @@
+import * as assert from 'assert';
+import * as puppeteer from 'puppeteer';
+import { buildEditorEngine } from '../../../src/editor/host/engineHost';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
+import { refusalMs } from '../../../src/editor/refusal';
+import { EditorPage, EXTENSION_ID, closeEditorPage, clickText, delay, editCommand, openEditorPage, pointAt, shot, MOD, UNDO } from './pageHarness';
+import { MOD_NAME } from './rowLock';
+import { DARK_MODERN, HC_DARK, LIGHT_MODERN, applyTheme } from './themes';
+
+/** One document holding every place a refusal is made in: a table with code in its cells, a one-row table, a list, a source block, bold text. */
+export const REFUSALS_DOC = [
+    '# Refusals',
+    '',
+    'First paragraph with **bold** words.',
+    '',
+    '| Name | Code |',
+    '| ---- | ---- |',
+    '| one | `ab` |',
+    '| two | `cd` |',
+    '| three | `ef` |',
+    '',
+    'Between the tables.',
+    '',
+    '| Only | Row |',
+    '| ---- | --- |',
+    '| x | y |',
+    '',
+    '- item one',
+    '- item two',
+    '',
+    '<div>raw block</div>',
+    '',
+    'Glad to see you :) here.',
+    '',
+    'Last paragraph.',
+    '',
+].join('\n');
+
+/** The selection's object toolbar, shown. */
+const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
+const MENU = `${BAR} .mep-object-menu`;
+
+/**
+ * The one refusal component (#10) in the real page: where a refusal stands,
+ * what ends it — the next caret move, a press, focus elsewhere, a mode change,
+ * a document from the host — how long it stays otherwise, that a repeat is
+ * said again, and that the other hints keep their own rules.
+ */
+suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    let version = 0;
+
+    /** Post `text` parsed, as the host does; `fresh` hides what the last test left (the host's document ends a refusal anyway). */
+    const showDocument = async (text = REFUSALS_DOC, marker = 'Refusals') => {
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        version++;
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
+        await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
+        await delay(100);
+    };
+
+    const fresh = async (text = REFUSALS_DOC, marker = 'Refusals') => {
+        await page.mouse.move(2, 2);
+        await page.evaluate(() => {
+            // A menu the last test left open is closed as Esc in it closes it.
+            for (const menu of Array.from(document.querySelectorAll('.mep-menu:not([hidden])'))) {
+                menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            }
+            (document.activeElement as HTMLElement | null)?.blur();
+            window.scrollTo(0, 0);
+        });
+        await showDocument(text, marker);
+        await page.evaluate(() => {
+            const hint = document.querySelector('.mep-hint') as HTMLElement | null;
+            if (hint) {
+                hint.hidden = true;
+            }
+        });
+        await delay(200);
+    };
+
+    /** The page as it stands, saved as `<name>-<width>.png` in `MEP_SHOTS_DIR` (none without it). */
+    const shotAs = async (name: string) => shot(page, `${name}-${page.viewport()?.width ?? 0}.png`);
+
+    const hint = () => page.$eval('.mep-hint', el => ({ text: el.textContent ?? '', shown: !(el as HTMLElement).hidden, tone: (el as HTMLElement).dataset.tone, at: (el as HTMLElement).dataset.at }));
+    const shown = async () => (await hint()).shown;
+
+    /** A `|` typed into the inline code `ab` in a table cell: refused (C3), the hint at the caret. */
+    const refuseInCell = async (needle = 'ab') => {
+        // Two presses at one spot within 500 ms are a double click to ProseMirror, not a click that focuses the text.
+        await delay(500);
+        await clickText(page, needle, 1);
+        await page.keyboard.type('|');
+        await page.waitForSelector('.mep-hint:not([hidden])', { timeout: 2000 });
+    };
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 1280, height: 800, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    test('D1: a refusal goes at a click elsewhere, an arrow key, focus into the row, a source box opening and a document from the host', async function () {
+        this.timeout(30000);
+        await fresh();
+        // (a) A click into another paragraph.
+        await refuseInCell();
+        await clickText(page, 'Last paragraph', 2);
+        await delay(100);
+        assert.strictEqual(await shown(), false, 'gone at the click');
+        // (b) ArrowRight.
+        await refuseInCell();
+        await page.keyboard.press('ArrowRight');
+        await delay(100);
+        assert.strictEqual(await shown(), false, 'gone at the arrow key');
+        // (c) Focus into the row.
+        await refuseInCell();
+        await page.focus('.mep-toolbar [data-action="bold"]');
+        await delay(100);
+        assert.strictEqual(await shown(), false, 'gone with the focus in the row');
+        // (d) The source box opened by a double click.
+        await refuseInCell();
+        const raw = await pointAt(page, 'raw block', 1);
+        await page.mouse.click(raw.x, raw.y, { clickCount: 2 });
+        await page.waitForSelector('.mep-raw-editor', { timeout: 2000 });
+        assert.strictEqual(await shown(), false, 'gone with the source box opened');
+        await page.keyboard.press('Escape');
+        await delay(100);
+        // (e) The host's document — one with another text; the same text again (a reparse, a save's echo) leaves it.
+        await refuseInCell();
+        await showDocument();
+        assert.strictEqual(await shown(), true, 'kept through a document with the same text');
+        await showDocument(REFUSALS_DOC.replace('Last paragraph.', 'Last paragraph, changed.'));
+        assert.strictEqual(await shown(), false, 'gone with the document the host sent');
+    });
+
+    test('D13: an accepted edit that leaves the caret in place — a forward Delete — ends the refusal', async function () {
+        this.timeout(15000);
+        await fresh();
+        await refuseInCell();
+        await delay(150);
+        await page.keyboard.press('Delete');
+        await delay(100);
+        assert.ok(await page.evaluate(() => document.querySelector('.ProseMirror')?.textContent?.includes('oneatwo')), 'the Delete was taken');
+        assert.strictEqual(await shown(), false, 'gone with the change of the document');
+    });
+
+    const BLOCK_TYPE = '.mep-menu[data-menu="block-type"]';
+
+    /** At 420 px the Block type menu of the table cell `one` is open: a refusal there stands as a row inside the menu. */
+    const openNarrowBlockType = async () => {
+        await page.setViewport({ width: 420, height: 800 });
+        await fresh();
+        await delay(500);
+        await clickText(page, 'one', 1);
+        await delay(300);
+        await page.click(`${ROW} .mep-menu-face[data-menu="block-type"]`);
+        await page.waitForSelector(`${BLOCK_TYPE}:not([hidden])`);
+        await delay(400);
+    };
+    /** A press on the face closes the menu, as in D4e. */
+    const closeBlockType = async () => {
+        await page.click(`${ROW} .mep-menu-face[data-menu="block-type"]`);
+    };
+    const entryTop = (action: string) => page.$eval(`${BLOCK_TYPE} [data-action="${action}"]`, el => Math.round(el.getBoundingClientRect().top));
+    const entryCentre = (action: string) => page.$eval(`${BLOCK_TYPE} [data-action="${action}"]`, el => {
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    const hintRow = () => page.$eval('.mep-hint', el => ({
+        shown: !(el as HTMLElement).hidden, at: (el as HTMLElement).dataset.at, after: (el.previousElementSibling as HTMLElement | null)?.dataset.action,
+    }));
+
+    test('D14: a refusal standing as a row in a menu has no time — entries never move under a resting pointer; it ends with the menu', async function () {
+        this.timeout(40000);
+        try {
+            await openNarrowBlockType();
+            const before = await entryTop('block-type-attributes');
+            const h1 = await entryCentre('heading-1');
+            await page.mouse.click(h1.x, h1.y);
+            await delay(300);
+            assert.deepStrictEqual(await hintRow(), { shown: true, at: 'menu-row', after: 'heading-1' }, 'the refusal is a row under the entry');
+            const withRow = await entryTop('block-type-attributes');
+            assert.ok(withRow > before, `the row pushed the entries below it down: ${before} -> ${withRow}`);
+            // The pointer rests on the entry below the row for longer than any refusal's time.
+            await page.mouse.move(h1.x, withRow + 10);
+            await delay(Math.max(6000, refusalMs((await hint()).text) + 600));
+            assert.deepStrictEqual(await hintRow(), { shown: true, at: 'menu-row', after: 'heading-1' }, 'still there after its time');
+            assert.strictEqual(await entryTop('block-type-attributes'), withRow, 'the entries did not move');
+            await closeBlockType();
+            await delay(150);
+            assert.strictEqual(await page.$(`${BLOCK_TYPE}:not([hidden])`), null, 'the menu closed');
+            assert.strictEqual(await shown(), false, 'gone with the menu');
+        } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+            await delay(300);
+        }
+    });
+
+    test('D15: a press ends a row in a menu once it is up — a refused entry below it still gets its click, an enabled one runs', async function () {
+        this.timeout(40000);
+        try {
+            for (const target of ['heading-3', 'block-type-attributes']) {
+                await openNarrowBlockType();
+                await page.evaluate(() => {
+                    const w = window as unknown as { clicks: string[]; counting?: boolean };
+                    w.clicks = [];
+                    if (!w.counting) {
+                        w.counting = true;
+                        document.addEventListener('click', e => {
+                            const entry = (e.target as Element).closest('[role^="menuitem"]') as HTMLElement | null;
+                            w.clicks.push(entry?.dataset.action ?? '');
+                        }, true);
+                    }
+                });
+                const h1 = await entryCentre('heading-1');
+                await page.mouse.click(h1.x, h1.y);
+                await delay(300);
+                assert.strictEqual((await hintRow()).after, 'heading-1');
+                await page.evaluate(() => {
+                    (window as unknown as { clicks: string[] }).clicks = [];
+                });
+                await delay(300);
+                const at = await entryCentre(target);
+                await page.mouse.move(at.x, at.y);
+                await page.mouse.down();
+                await delay(120);
+                assert.strictEqual((await hintRow()).shown, true, `${target}: the row stays while the press is down (nothing moves under it)`);
+                await page.mouse.up();
+                await delay(300);
+                assert.deepStrictEqual(await page.evaluate(() => (window as unknown as { clicks: string[] }).clicks), [target], `${target}: the click landed on the entry pressed`);
+                if (target === 'heading-3') {
+                    assert.deepStrictEqual(await hintRow(), { shown: true, at: 'menu-row', after: 'heading-3' }, 'its own refusal replaced the first');
+                } else {
+                    assert.strictEqual(await shown(), false, 'the enabled entry ran: no refusal is left');
+                }
+                await closeBlockType();
+            }
+        } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+            await delay(300);
+        }
+    });
+
+    test('D16: by keyboard, Enter on a refused entry shows the row; ArrowDown ends it and moves to the next reachable entry', async function () {
+        this.timeout(30000);
+        try {
+            await page.setViewport({ width: 420, height: 800 });
+            await fresh();
+            await delay(500);
+            await clickText(page, 'one', 1);
+            await delay(300);
+            await page.focus(`${ROW} .mep-menu-face[data-menu="block-type"]`);
+            await page.keyboard.press('ArrowDown');
+            await page.waitForSelector(`${BLOCK_TYPE}:not([hidden])`);
+            await delay(300);
+            const focused = () => page.evaluate(() => (document.activeElement as HTMLElement).dataset.action ?? '');
+            let first = await focused();
+            // The first entries are enabled in a table cell (Paragraph); walk to the first refused one.
+            for (let i = 0; i < 12 && await page.evaluate(() => (document.activeElement as HTMLElement).getAttribute('aria-disabled') !== 'true'); i++) {
+                await page.keyboard.press('ArrowDown');
+                await delay(60);
+            }
+            first = await focused();
+            assert.ok(first.startsWith('heading'), `focus is on a refused entry: ${first}`);
+            await page.keyboard.press('Enter');
+            await delay(300);
+            assert.deepStrictEqual(await hintRow(), { shown: true, at: 'menu-row', after: first }, 'Enter shows the row under the entry');
+            assert.strictEqual(await focused(), first, 'the focus stays on the entry');
+            await page.keyboard.press('ArrowDown');
+            await delay(300);
+            const next = await focused();
+            assert.notStrictEqual(next, first);
+            assert.ok(next !== '', 'the focus moved to another entry');
+            assert.strictEqual(await shown(), false, 'the row is gone with the focus move');
+            assert.strictEqual(await page.$eval(`${BLOCK_TYPE} [data-action="${first}"]`, el => el.nextElementSibling?.classList.contains('mep-hint') ?? false), false, 'and no longer in the menu');
+            await page.keyboard.press('Escape');
+        } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+            await delay(300);
+        }
+    });
+
+    test('D17: a rendering from the host is not the person\'s edit — a fresh source-block refusal stands through it', async function () {
+        this.timeout(30000);
+        await fresh('Plain top here.\n\nFirst para[^1] one.\n\nPlain bottom.\n\n[^1]: note one\n', 'Plain top');
+        const raw = await page.$eval('.mep-raw-block', el => { const r = el.getBoundingClientRect(); return { x: r.left + 40, y: r.top + r.height / 2 }; });
+        await page.mouse.click(raw.x, raw.y, { clickCount: 2 });
+        await page.waitForSelector('.mep-raw-editor', { timeout: 3000 });
+        await page.keyboard.press('End');
+        await page.keyboard.type(' more');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('Enter');
+        await page.keyboard.up(MOD);
+        await delay(300);
+        const request = (await (editor as EditorPage).posted()).filter(m => m.type === 'render').pop() as unknown as { requestId: number } | undefined;
+        assert.ok(request, 'the applied block asked the host for a rendering');
+        await delay(500);
+        const top = await pointAt(page, 'Plain top', 1);
+        await page.mouse.click(top.x, top.y);
+        await delay(300);
+        await page.keyboard.press('End');
+        await page.keyboard.press('ArrowDown');
+        await delay(300);
+        await page.keyboard.type('x');
+        await delay(250);
+        assert.deepStrictEqual([await shown(), (await hint()).tone], [true, 'refusal'], 'the keystroke over the selected source block is refused');
+        await (editor as EditorPage).send({ type: 'rendered', requestId: request.requestId, html: '<p>First para<sup>1</sup> one more.</p>' } as never);
+        await delay(200);
+        assert.deepStrictEqual([await shown(), (await hint()).tone], [true, 'refusal'], 'the host\'s rendering left it');
+    });
+
+    test('D11: the refused keystroke itself does not end its refusal', async function () {
+        this.timeout(15000);
+        await fresh();
+        await refuseInCell();
+        await delay(300);
+        assert.strictEqual(await shown(), true, 'still there after the arming frame');
+        assert.strictEqual((await hint()).tone, 'refusal');
+    });
+
+    test('D2: the same refusal again restarts its time and is said again; a repeat within a second is not said twice', async function () {
+        this.timeout(30000);
+        await fresh();
+        await page.evaluate(() => {
+            const live = document.querySelector('.mep-live');
+            const w = window as unknown as { said: string[] };
+            w.said = [];
+            if (live) {
+                new MutationObserver(() => {
+                    if (live.textContent) {
+                        w.said.push(live.textContent);
+                    }
+                }).observe(live, { childList: true, characterData: true, subtree: true });
+            }
+        });
+        const said = () => page.evaluate(() => (window as unknown as { said: string[] }).said.slice());
+        await refuseInCell();
+        const text = (await hint()).text;
+        const ms = refusalMs(text);
+        await delay(2000);
+        await page.keyboard.type('|');
+        await delay(ms - 1000);
+        assert.strictEqual(await shown(), true, `visible ${ms - 1000} ms after the second (its time restarted)`);
+        assert.deepStrictEqual(await said(), [text, text], 'said twice, two seconds apart');
+        await fresh();
+        await page.evaluate(() => {
+            (window as unknown as { said: string[] }).said = [];
+        });
+        await refuseInCell('cd');
+        await delay(300);
+        await page.keyboard.type('|');
+        await delay(200);
+        assert.strictEqual((await said()).length, 1, 'two refusals 300 ms apart at one place: said once');
+        // A held key: the same refusal every 300 ms for two seconds — the window slides, it is said once.
+        await fresh();
+        await page.evaluate(() => {
+            (window as unknown as { said: string[] }).said = [];
+        });
+        await refuseInCell('ab');
+        for (let t = 300; t <= 2100; t += 300) {
+            await delay(300);
+            await page.keyboard.type('|');
+        }
+        await delay(200);
+        assert.strictEqual((await said()).length, 1, 'repeats every 300 ms for two seconds: said once');
+    });
+
+    test('D9: a refusal stays its time (2 s + 50 ms a character); a neutral hint three seconds', async function () {
+        this.timeout(30000);
+        await fresh();
+        await refuseInCell();
+        const ms = refusalMs((await hint()).text);
+        await delay(ms - 400);
+        assert.strictEqual(await shown(), true, `still there at ${ms - 400} ms`);
+        await delay(800);
+        assert.strictEqual(await shown(), false, `gone at ${ms + 400} ms`);
+        // A neutral hint: the table's "Row deleted".
+        await clickText(page, 'two', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await chooseEntry('row', 'delete-row');
+        assert.strictEqual((await hint()).text, `Row deleted — ${UNDO}`);
+        await delay(3300);
+        assert.strictEqual(await shown(), false, 'a neutral hint gone at 3.3 s');
+    });
+
+    test('D12: the other hints keep their rules — a change hint survives a click and goes at the next change; a paragraph hint stays in its paragraph', async function () {
+        this.timeout(30000);
+        await fresh();
+        await clickText(page, 'two', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await chooseEntry('row', 'delete-row');
+        assert.strictEqual((await hint()).text, `Row deleted — ${UNDO}`);
+        await clickText(page, 'Last paragraph', 3);
+        await delay(100);
+        assert.strictEqual(await shown(), true, 'a change hint survives a click');
+        await page.keyboard.type('x');
+        await delay(100);
+        assert.strictEqual(await shown(), false, 'and goes at the next change');
+        // The paragraph hint: an emoji made text by a letter typed after it.
+        const p = await pointAt(page, ' here', 0);
+        await page.mouse.click(p.x, p.y);
+        await delay(150);
+        await page.keyboard.type('Z');
+        await delay(100);
+        assert.strictEqual((await hint()).text, `:)Z is no longer an emoji — ${UNDO}`);
+        await clickText(page, 'Glad', 1);
+        await delay(100);
+        assert.strictEqual(await shown(), true, 'a click in the same paragraph keeps it');
+    });
+
+    test('A1: the drawn hint is hidden from the reader, one status region in the mount says it once', async function () {
+        this.timeout(15000);
+        await fresh();
+        await refuseInCell();
+        await delay(100);
+        const aria = await page.evaluate(() => {
+            const mount = (document.querySelector('.ProseMirror') as HTMLElement).parentElement as HTMLElement;
+            return {
+                hidden: document.querySelector('.mep-hint')?.getAttribute('aria-hidden'),
+                regions: mount.querySelectorAll('[role="status"]').length,
+                live: document.querySelector('.mep-live')?.textContent,
+                text: document.querySelector('.mep-hint')?.textContent,
+            };
+        });
+        assert.deepStrictEqual(aria, { hidden: 'true', regions: 1, live: aria.text, text: aria.text });
+    });
+
+    test('A2: the refusal\'s bar stands at 3:1 or more against the hint in Light Modern, Dark Modern and HC Dark', async function () {
+        this.timeout(20000);
+        await fresh();
+        for (const theme of [LIGHT_MODERN, DARK_MODERN, HC_DARK]) {
+            await applyTheme(page, theme);
+            await refuseInCell();
+            const [bar, back] = await page.$eval('.mep-hint', el => [getComputedStyle(el).borderLeftColor, getComputedStyle(el).backgroundColor]);
+            const ratio = contrastOf(bar, back);
+            assert.ok(ratio >= 3, `${theme.name}: ${ratio.toFixed(2)}:1 (${bar} on ${back})`);
+            await page.keyboard.press('ArrowRight');
+        }
+        await applyTheme(page, LIGHT_MODERN);
+    });
+
+    test('C24: a container title ending in {…} is refused in its Classes field, which stays open with what was typed', async function () {
+        this.timeout(20000);
+        await fresh('Intro.\n\n::: box\nFirst kept.\n:::\n\nAfter.\n', 'First');
+        const before = (await (editor as EditorPage).edits()).length;
+        await clickText(page, 'First kept', 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await page.click(`${BAR} [data-verb="edit-classes"]`);
+        const input = await page.waitForSelector(`${BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+        assert.ok(input);
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a', editCommand('a'));
+        await page.keyboard.up(MOD);
+        await page.keyboard.type('box {.x}');
+        await page.keyboard.press('Enter');
+        await delay(150);
+        const field = await page.evaluate(sel => {
+            const el = document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null;
+            return {
+                value: el?.value ?? null,
+                focused: document.activeElement === el,
+                invalid: el?.getAttribute('aria-invalid') ?? null,
+                reason: document.querySelector(`${sel} .mep-field-refusal-text`)?.textContent ?? null,
+                codes: Array.from(document.querySelectorAll(`${sel} .mep-field-refusal-text code`)).map(c => c.textContent),
+            };
+        }, BAR);
+        assert.deepStrictEqual(field, {
+            value: 'box {.x}', focused: true, invalid: 'true',
+            reason: 'Not set: a container\'s title can\'t end in {…} — it would be read as attributes. Remove the {…} at its end.',
+            codes: ['{…}', '{…}'],
+        });
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
+        await page.keyboard.press('Escape');
+    });
+
+    /** The hint's box and its placement, and the boxes of `controls` (selectors), in the window's coordinates. */
+    const placed = (...controls: string[]) => page.evaluate(sels => {
+        const box = (el: Element | null) => {
+            const r = (el as HTMLElement).getBoundingClientRect();
+            return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+        };
+        const hint = document.querySelector('.mep-hint') as HTMLElement;
+        return {
+            hint: box(hint),
+            at: hint.dataset.at,
+            shown: !hint.hidden,
+            text: hint.textContent ?? '',
+            controls: sels.map(s => box(document.querySelector(s))),
+        };
+    }, controls);
+
+    const BOLD = '.mep-toolbar [data-action="bold"]';
+    const ITALIC = '.mep-toolbar [data-action="italic"]';
+    const ROW = '.mep-toolbar';
+    /** A document with properties, for the property field's and the panel button's locks. */
+    const PROPS_DOC = '---\ntitle: Demo\nstream: UXD\n---\n\nSome words here to select.\n\nLast paragraph.\n';
+
+    test('D4: a press on a locked tool says why under it — the source box\'s key — the note at the row\'s end still flashes, the tool keeps aria-disabled', async function () {
+        this.timeout(20000);
+        await fresh();
+        const raw = await pointAt(page, 'raw block', 1);
+        await page.mouse.click(raw.x, raw.y, { clickCount: 2 });
+        await page.waitForSelector('.mep-raw-editor', { timeout: 2000 });
+        await delay(100);
+        const bold = await page.$eval(BOLD, el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+        await page.mouse.click(bold.x, bold.y);
+        await delay(80);
+        const p = await placed(BOLD, ROW);
+        assert.strictEqual(p.shown, true, 'a hint at the pressed tool');
+        assert.strictEqual(p.at, 'control');
+        assert.strictEqual(p.text, `Formatting is off while editing source — ${MOD_NAME}+Enter applies`);
+        assert.ok(Math.abs(p.hint.left - p.controls[0].left) <= 2, `at Bold's left: ${p.hint.left} vs ${p.controls[0].left}`);
+        assert.ok(Math.abs(p.hint.top - (p.controls[1].bottom + 4)) <= 1, `under the row: ${p.hint.top} vs ${p.controls[1].bottom + 4}`);
+        assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock`, el => el.classList.contains('mep-row-lock-flash')), true, 'the note at the row\'s end flashes');
+        assert.deepStrictEqual(await page.$eval(BOLD, el => [el.getAttribute('aria-disabled'), el.hasAttribute('disabled')]), ['true', false]);
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).className), 'mep-raw-editor', 'the box keeps the focus');
+        await shotAs('s3-source-lock');
+        // D10: the hint never takes the pointer — a press on what it covers reaches that.
+        const covered = await page.evaluate(sel => {
+            const hint = (document.querySelector('.mep-hint') as HTMLElement).getBoundingClientRect();
+            const el = document.elementFromPoint(hint.left + 4, hint.top + 4);
+            return el?.closest('.mep-hint') === null;
+        }, ITALIC);
+        assert.strictEqual(covered, true, 'pointer-events: none');
+        await page.keyboard.press('Escape');
+        await delay(100);
+    });
+
+    test('D4b/D4c: a property\'s field says Enter applies; a panel button says Esc or click into the text — at 520 at "…"', async function () {
+        this.timeout(30000);
+        await fresh(PROPS_DOC, 'Some words');
+        await page.click('.mep-properties .mep-props-toggle');
+        await page.waitForSelector('.mep-prop-row', { visible: true });
+        await page.click('.mep-prop-row[data-key="stream"] input');
+        await delay(120);
+        await page.click(BOLD);
+        await delay(80);
+        assert.strictEqual((await hint()).text, 'Formatting is off while editing a property — Enter applies');
+        assert.strictEqual((await hint()).at, 'control');
+        await page.keyboard.press('Escape');
+        await delay(120);
+        await page.focus('.mep-properties .mep-props-toggle');
+        await delay(120);
+        await page.click(BOLD);
+        await delay(80);
+        const quiet = 'Formatting is off outside the text — click into the text or press Esc.';
+        assert.deepStrictEqual([(await hint()).text, (await hint()).at], [quiet, 'control']);
+        await shotAs('s4-quiet-lock');
+        await page.setViewport({ width: 520, height: 800 });
+        await delay(300);
+        await page.focus('.mep-properties .mep-props-toggle');
+        await delay(120);
+        // Below 600 px (Daniel, 2026-10-20): no note in the row — the tools stay where they are, dimmed; a press says the short reason.
+        assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock`, el => (el as HTMLElement).hidden), true, 'no note in the row at 520');
+        assert.deepStrictEqual(await page.$eval(BOLD, el => [(el as HTMLElement).getClientRects().length > 0, el.getAttribute('aria-disabled')]), [true, 'true'], 'Bold stays in the row, dimmed');
+        await page.click(BOLD);
+        await delay(80);
+        const p = await placed(BOLD, ROW);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'control', quiet]);
+        assert.ok(p.hint.left >= 0 && p.hint.right <= 520, `inside the window: ${JSON.stringify(p.hint)}`);
+        await shotAs('s4-quiet-lock-520');
+        await page.setViewport({ width: 1280, height: 800 });
+        await delay(300);
+    });
+
+    test('D4d: a state lock — the gap cursor — said at the Block type face', async function () {
+        this.timeout(20000);
+        await fresh('| a | b |\n| - | - |\n| 1 | 2 |\n\nAfter the table.\n', 'After');
+        await clickText(page, 'a', 0);
+        await page.keyboard.press('Home');
+        await page.keyboard.press('ArrowLeft');
+        await delay(120);
+        assert.ok(await page.$('.ProseMirror-gapcursor'), 'a gap cursor before the table');
+        // The face opens — its Attributes of … entry keeps Formatting's state — and its types are refused with the gap's reason.
+        const face = `${ROW} .mep-menu-face[data-menu="block-type"]`;
+        await page.click(face);
+        const menu = '.mep-menu[data-menu="block-type"]';
+        await page.waitForSelector(`${menu}:not([hidden])`);
+        const entry = `${menu} [data-action="heading-2"]`;
+        assert.strictEqual(await page.$eval(entry, el => el.getAttribute('aria-disabled')), 'true');
+        await page.click(entry);
+        await delay(80);
+        const p = await placed(entry, menu);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'No block here — Insert adds one at this spot.']);
+        assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1);
+        await shotAs('s11-gap-lock');
+        await page.click(face);
+    });
+
+    test('D4e: a refused Block type entry (a table cell) says why beside the menu, at the entry; the card is put away', async function () {
+        this.timeout(20000);
+        await fresh();
+        await clickText(page, 'one', 1);
+        const face = `${ROW} .mep-menu-face[data-menu="block-type"]`;
+        await page.click(face);
+        const menu = '.mep-menu[data-menu="block-type"]';
+        await page.waitForSelector(`${menu}:not([hidden])`);
+        const entry = `${menu} [data-action="heading-2"]`;
+        await page.hover(entry);
+        await delay(400);
+        await page.click(entry);
+        await delay(80);
+        const p = await placed(entry, menu);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'A table cell keeps its block type — text formatting still works here.']);
+        assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1, `at the entry's top: ${p.hint.top} vs ${p.controls[0].top}`);
+        assert.ok(Math.abs(p.hint.left - (p.controls[1].right + 4)) <= 1 || Math.abs(p.hint.right - (p.controls[1].left - 4)) <= 1, `beside the menu: ${JSON.stringify(p)}`);
+        assert.strictEqual(await page.$eval('.mep-preview-card', el => (el as HTMLElement).hidden), true, 'the card put away');
+        assert.strictEqual(await page.$eval(menu, el => (el as HTMLElement).hidden), false, 'the menu stays open');
+        await shotAs('s8-blocktype-entry');
+        // A press on the face closes the menu; the hint goes with the press.
+        await page.click(face);
+        await delay(80);
+        assert.deepStrictEqual([await page.$eval(menu, el => (el as HTMLElement).hidden), await shown()], [true, false], 'the menu closed, the hint gone with it');
+    });
+
+    test('D5/D6: a refused entry of a table bar\'s menu says why beside the menu, at the entry; the menu stays open', async function () {
+        this.timeout(20000);
+        await fresh('| Only | Row |\n| ---- | --- |\n\nAfter the table.\n', 'After');
+        await clickText(page, 'Only', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await chooseEntry('row', 'delete-row');
+        const entry = `${MENU} [data-entry="delete-row"]`;
+        assert.strictEqual(await page.$eval(entry, el => el.getAttribute('aria-disabled')), 'true');
+        let p = await placed(entry, MENU);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'A table needs at least one row — Delete table deletes the whole table.']);
+        assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1, `at the entry's top: ${JSON.stringify(p)}`);
+        assert.ok(p.hint.left >= p.controls[1].right + 3 || p.hint.right <= p.controls[1].left - 3, `beside the menu, not over it: ${JSON.stringify(p)}`);
+        assert.ok(await page.$(MENU), 'the menu stays open');
+        await shotAs('s7-bar-entry');
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(), false, 'gone with the menu');
+
+        await fresh('| Only |\n| ---- |\n| x |\n\nAfter the table.\n', 'After');
+        await clickText(page, 'x', 0);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await chooseEntry('column', 'delete-column');
+        p = await placed(`${MENU} [data-entry="delete-column"]`, MENU);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'A table needs at least one column — Delete table deletes the whole table.']);
+        await page.keyboard.press('Escape');
+    });
+
+    test('D5b: a refused bar verb says why under the bar at the verb; moved into the bar\'s "…", at its entry', async function () {
+        this.timeout(30000);
+        await fresh('Alpha ++beta|the body++@y@ gamma.\n', 'Alpha');
+        await clickText(page, 'body', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        const verb = `${BAR} [data-verb="delete-note"]`;
+        assert.deepStrictEqual(await page.$eval(verb, el => [el.getAttribute('aria-disabled'), el.hasAttribute('disabled')]), ['true', false]);
+        const reason = (await page.$eval(verb, el => el.getAttribute('aria-description') ?? '')).split('\n').pop() ?? '';
+        const edits = (await (editor as EditorPage).edits()).length;
+        await page.click(verb);
+        await delay(80);
+        const p = await placed(verb, BAR);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'control', reason]);
+        assert.ok(Math.abs(p.hint.left - p.controls[0].left) <= 2, `at the verb: ${JSON.stringify(p)}`);
+        assert.ok(p.hint.top >= p.controls[1].bottom + 3 || p.hint.bottom <= p.controls[0].top - 3, `under the bar (or above the verb at the floor): ${JSON.stringify(p)}`);
+        assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'nothing posted');
+        await shotAs('s6-bar-verb');
+        // The narrowest of these widths moves Delete note — Delete/Remove moves first — into the bar's "…".
+        const more = `${BAR} .mep-object-more`;
+        let width = 0;
+        for (const w of [520, 420, 360, 300, 260]) {
+            width = w;
+            await page.setViewport({ width: w, height: 800 });
+            await delay(300);
+            // The caret out of the note and back: the bar comes at the rest in it, laid out for the width.
+            await clickText(page, 'Alpha', 1);
+            await delay(500);
+            await clickText(page, 'body', 2);
+            await page.waitForSelector(BAR, { timeout: 2000 });
+            if (await page.$(`${verb}:not([hidden])`) === null) {
+                break;
+            }
+        }
+        if (await page.$(`${more}:not([hidden])`) !== null && await page.$(`${verb}:not([hidden])`) === null) {
+            await page.click(more);
+            await page.waitForSelector(MENU, { visible: true, timeout: 2000 });
+            const entry = `${MENU} [data-entry="delete-note"]`;
+            await page.click(entry);
+            await delay(80);
+            const q = await placed(entry, MENU);
+            // No room beside the menu at this width (#10 build critique F2): a row in the menu, right under the entry, the menu's width.
+            assert.deepStrictEqual([q.shown, q.at, q.text], [true, 'menu-row', reason]);
+            assert.ok(q.hint.top >= q.controls[0].bottom && q.hint.top - q.controls[0].bottom <= 4, `right under the entry: ${JSON.stringify(q)}`);
+            assert.ok(q.hint.left >= q.controls[1].left && q.hint.right <= q.controls[1].right, `inside the menu: ${JSON.stringify(q)}`);
+            assert.ok(q.hint.bottom <= 800 && q.hint.right <= width, `inside the window: ${JSON.stringify(q)}`);
+            assert.strictEqual(await page.$eval(entry, el => el.nextElementSibling?.classList.contains('mep-hint')), true, 'the row follows the entry in the menu');
+            await shotAs('s6-bar-entry');
+        } else {
+            assert.fail(`Delete note moves into the bar's "…" by ${width} px`);
+        }
+        await page.setViewport({ width: 1280, height: 800 });
+        await delay(300);
+    });
+
+    test('D7: while an export runs, Export says "One export at a time" atop its menu; a waiting format pressed says when to retry at it', async function () {
+        this.timeout(20000);
+        await fresh();
+        const FACE = `${ROW} .mep-menu-face[data-menu="export"]`;
+        const PANEL = '.mep-menu[data-menu="export"]';
+        const exports = async () => (await (editor as EditorPage).posted()).filter(m => m.type === 'export');
+        const before = (await exports()).length;
+        await page.click(FACE);
+        await page.click(`${PANEL} [data-export="pdf"]`);
+        await delay(80);
+        await page.click(FACE);
+        await page.waitForSelector(`${PANEL}:not([hidden])`);
+        assert.deepStrictEqual(await page.$eval(`${PANEL} .mep-menu-caption`, el => ({
+            text: el.textContent, hidden: (el as HTMLElement).hidden, first: el === el.parentElement?.firstElementChild, aria: el.getAttribute('aria-hidden'),
+        })), { text: 'One export at a time — PDF is running', hidden: false, first: true, aria: 'true' });
+        const html = `${PANEL} [data-export="html"]`;
+        assert.strictEqual(await page.$eval(html, el => el.getAttribute('aria-description')), 'HTML waits for PDF — choose it again when PDF is done.');
+        await page.click(html);
+        await delay(80);
+        const p = await placed(html, PANEL);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'HTML waits for PDF — choose it again when PDF is done.']);
+        assert.ok(Math.abs(p.hint.right - (p.controls[1].left - 4)) <= 1, `its right edge 4 px left of the menu: ${JSON.stringify(p)}`);
+        assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1, `at the entry's top: ${JSON.stringify(p)}`);
+        assert.strictEqual(await page.$eval(PANEL, el => (el as HTMLElement).hidden), false, 'the menu stays open');
+        assert.strictEqual((await exports()).length - before, 1, 'refused, not queued: no second export asked for');
+        await shotAs('s5-export-busy');
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
+        await delay(80);
+        assert.strictEqual(await shown(), false, 'gone when the export is done');
+        assert.strictEqual(await page.$eval(`${PANEL} .mep-menu-caption`, el => (el as HTMLElement).hidden), true, 'the caption hidden');
+        await page.keyboard.press('Escape');
+    });
+
+    test('D8: the source box\'s Apply and Cancel — Cancel never applies on the way out, Apply is one undo step, the keys still work, the buttons never take the focus', async function () {
+        this.timeout(30000);
+        await fresh();
+        const open = async () => {
+            await delay(500);
+            const raw = await pointAt(page, 'raw block', 1);
+            await page.mouse.click(raw.x, raw.y, { clickCount: 2 });
+            await page.waitForSelector('.mep-raw-editor', { timeout: 2000 });
+            await delay(80);
+        };
+        const centre = (sel: string) => page.$eval(sel, el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+        const edits = async () => (await (editor as EditorPage).edits()).length;
+        const lastText = async () => (await (editor as EditorPage).edits()).pop()?.text ?? '';
+        await open();
+        const buttons = await page.$$eval('.mep-raw-actions > button', els => els.map(b => ({
+            cls: b.className, text: b.textContent, key: b.querySelector('.mep-raw-key')?.textContent, tab: (b as HTMLElement).tabIndex, shortcut: b.getAttribute('aria-keyshortcuts'),
+        })));
+        assert.deepStrictEqual(buttons, [
+            { cls: 'mep-raw-apply', text: `Apply${MOD_NAME}+Enter`, key: `${MOD_NAME}+Enter`, tab: -1, shortcut: process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter' },
+            { cls: 'mep-raw-cancel', text: 'CancelEsc', key: 'Esc', tab: -1, shortcut: 'Escape' },
+        ]);
+        const box = await page.$eval('.mep-raw-editor', el => el.getBoundingClientRect().right);
+        const actions = await page.$eval('.mep-raw-actions', el => el.getBoundingClientRect().right);
+        assert.ok(Math.abs(actions - box) <= 2, `at the box's right end: ${actions} vs ${box}`);
+        await shotAs('s3-source-box');
+        // D8a: Cancel, after typing: nothing posted.
+        const before = await edits();
+        await page.keyboard.type(' X');
+        const cancel = await centre('.mep-raw-cancel');
+        // D8d: a press keeps the focus in the box.
+        await page.mouse.move(cancel.x, cancel.y);
+        await page.mouse.down();
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).className), 'mep-raw-editor', 'the press keeps the focus in the box');
+        await page.mouse.up();
+        await delay(400);
+        assert.strictEqual(await page.$('.mep-raw-editor'), null, 'the box closed');
+        assert.strictEqual(await edits(), before, 'Cancel posts nothing');
+        assert.ok((await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('raw block'), 'the block as it was');
+        // D8b: Apply, one edit; one undo restores it.
+        await open();
+        await page.keyboard.type(' Y');
+        await page.click('.mep-raw-apply');
+        await delay(400);
+        assert.strictEqual(await page.$('.mep-raw-editor'), null);
+        assert.strictEqual(await edits(), before + 1, 'Apply posts one edit');
+        assert.ok((await lastText()).includes('<div>raw block</div> Y'), await lastText());
+        await clickText(page, 'Last paragraph', 2);
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('z');
+        await page.keyboard.up(MOD);
+        await delay(400);
+        assert.ok(!(await lastText()).includes(' Y'), `one undo step: ${await lastText()}`);
+        // D8c: the keys still apply and cancel.
+        await open();
+        await page.keyboard.type(' Z');
+        await page.keyboard.press('Escape');
+        await delay(400);
+        assert.ok(!(await lastText()).includes(' Z'), 'Esc cancels');
+        await open();
+        await page.keyboard.type(' W');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('Enter');
+        await page.keyboard.up(MOD);
+        await delay(400);
+        assert.ok((await lastText()).includes(' W'), `${MOD_NAME}+Enter applies`);
+    });
+
+    /** Open the bar's `verb` menu and press `entry` with the mouse. */
+    async function chooseEntry(verb: string, entry: string): Promise<void> {
+        const button = await page.waitForSelector(`${BAR} [data-verb="${verb}"]`, { visible: true, timeout: 2000 });
+        const box = await button?.boundingBox();
+        assert.ok(box, `no box for ${verb}`);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForSelector(MENU, { visible: true, timeout: 2000 });
+        const item = await page.$(`${MENU} [data-entry="${entry}"]`);
+        const itemBox = await item?.boundingBox();
+        assert.ok(itemBox, `no entry ${entry}`);
+        await page.mouse.click(itemBox.x + itemBox.width / 2, itemBox.y + itemBox.height / 2);
+        await delay(80);
+    }
+});
+
+/** WCAG's contrast ratio of two computed colours (`rgb(…)`, `rgba(…)`, or `color(srgb …)` as `color-mix` computes). */
+export function contrastOf(a: string, b: string): number {
+    const rgb = (c: string): number[] => {
+        const srgb = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(c);
+        if (srgb) {
+            return srgb.slice(1, 4).map(x => Number(x) * 255);
+        }
+        const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(c);
+        assert.ok(m, `not a colour: ${c}`);
+        return m.slice(1, 4).map(Number);
+    };
+    const lum = (c: number[]) => {
+        const [r, g, bl] = c.map(x => {
+            const s = x / 255;
+            return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+    };
+    const [hi, lo] = [lum(rgb(a)), lum(rgb(b))].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+}

@@ -162,7 +162,8 @@ suite('Editor toolbar: Export (e2e)', () => {
             const face = (document.querySelector(faceSelector) as HTMLElement).getBoundingClientRect();
             const p = panel.getBoundingClientRect();
             return {
-                entries: Array.from(panel.children).map(c => (c.getAttribute('role') === 'separator' ? '—' : `${c.querySelector('.mep-entry-label')?.textContent}|${c.querySelector('.mep-entry-detail')?.textContent ?? ''}`)),
+                // The busy caption (#10), hidden at rest, is no entry.
+                entries: Array.from(panel.children).filter(c => !c.classList.contains('mep-menu-caption')).map(c => (c.getAttribute('role') === 'separator' ? '—' : `${c.querySelector('.mep-entry-label')?.textContent}|${c.querySelector('.mep-entry-detail')?.textContent ?? ''}`)),
                 samples: panel.querySelectorAll('.mep-sample').length,
                 expanded: document.querySelector(faceSelector)?.getAttribute('aria-expanded'),
                 right: Math.round(p.right - face.right),
@@ -280,16 +281,17 @@ suite('Editor toolbar: Export (e2e)', () => {
         await page.click(FACE);
         await page.click(`${PANEL} [data-export="html"]`);
         await delay(80);
-        const reason = 'Exporting HTML — the other formats wait for it';
+        const reason = 'One export at a time — HTML is running';
         assert.deepStrictEqual(await face(), { label: 'Exporting HTML…', busy: 'true', disabled: 'false', title: `Exporting HTML…\n${reason}` });
         assert.ok(await page.$(`${FACE} > .mep-face-icon > .codicon-loading.codicon-modifier-spin`), 'the face spins');
         await page.click(FACE);
         await page.waitForSelector(`${PANEL}:not([hidden])`);
         assert.deepStrictEqual(await entries(), [
             { id: 'html', disabled: 'true', title: 'Exporting HTML…' },
-            ...['pdf', 'png', 'jpg'].map(id => ({ id, disabled: 'true', title: reason })),
+            ...[['pdf', 'PDF'], ['png', 'PNG image'], ['jpg', 'JPEG image']].map(([id, label]) => ({ id, disabled: 'true', title: `${label} waits for HTML — choose it again when HTML is done.` })),
             { id: 'settings', disabled: null, title: '' },
         ]);
+        assert.strictEqual(await page.$eval(`${PANEL} .mep-menu-caption`, el => el.textContent), reason, 'said once atop the menu');
         assert.deepStrictEqual(await page.$eval(`${PANEL} [data-export="html"]`, el => [el.querySelector(':scope > .mep-entry-busy > .codicon-modifier-spin') !== null, el.querySelector('.mep-entry-detail')?.textContent]), [true, 'exporting…'], 'the running format spins');
         await shot(page, 'export-5-busy-light.png');
         await page.click(`${PANEL} [data-export="pdf"]`);
@@ -330,7 +332,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         await (editor as EditorPage).send({ type: 'exportDone', outcome: 'refused' });
         await delay(80);
         assert.deepStrictEqual(await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden })),
-            { text: 'Not exported: this format is not offered.', shown: true });
+            { text: 'Not exported — this format isn\'t available. Choose one from Export.', shown: true });
         assert.strictEqual(await page.$eval(`${FACE} .mep-face-label`, el => el.textContent), 'Export');
     });
 

@@ -24,6 +24,7 @@
  * No ProseMirror and no DOM here: the host side (`schema.ts`) and the objects'
  * refusals (`webview/objects.ts`) quote the verbs' names from `VERB`.
  */
+import type { Said } from './tips';
 
 /** Where a verb stands on its bar. */
 export type Slot = 'open' | 'edit' | 'type' | 'attributes' | 'source' | 'actions' | 'destroy';
@@ -34,8 +35,8 @@ export const SLOT_ORDER: readonly Slot[] = ['open', 'edit', 'type', 'attributes'
 /** What the model needs of a verb. */
 export interface Slotted {
     slot: Slot;
-    /** Why it cannot be chosen here; `null` or absent when it can. */
-    refusal?: string | null;
+    /** Why it cannot be chosen here (words, or parts naming a value: `tips.ts` `Said`); `null` or absent when it can. */
+    refusal?: Said | null;
     /** Drawn after a divider. */
     separated?: boolean;
     /** It opens something in place — a field, a choice, a menu, a source box — rather than acting at once or elsewhere. */
@@ -169,6 +170,11 @@ export const VERB = {
     /** As the emoji's bar words it (`wording`): the notes' and the emoji's refusals name it as a way out. */
     deleteEmoji: wording({ verb: 'Delete', noun: 'emoji' }).label,
 } as const;
+
+/** A verb's label as a message names it, in quotes, so it reads as the button it is: `"Show in text editor"` (#10 build critique). */
+export function quotedVerb(label: string): string {
+    return `"${label}"`;
+}
 
 /**
  * What `Alt+Enter` says where there is nothing to act on: the key is taken,

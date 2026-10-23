@@ -37,7 +37,7 @@ import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, placeCard, placeMenu, rangeAnchor } from '../placement';
-import { showHint } from '../hint';
+import { dismissRefusal, showHint, showRefusal } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
 import { chevronNode, lensLabelNodes } from '../lenses';
@@ -47,7 +47,7 @@ import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
-    applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction,
+    applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLinkTransaction,
     insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLockReason,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
@@ -59,9 +59,9 @@ import {
 } from './actions';
 import { buildMoreEntry, fitWithMore, holdFocus, moreControl, moreName, overflows, setMoreEntryState } from '../overflow';
 import { ariaKeyshortcuts, keyLabel } from '../../keys';
-import { Tip, TipPart, plainTip } from '../../tips';
+import { Said, Tip, TipPart, plainTip, saidParts, saidText } from '../../tips';
 import { macKeys } from '../hint';
-import { Tooltips, describeAs } from '../tooltip';
+import { Tooltips, describeAs, partNode } from '../tooltip';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertPropertiesTransaction, insertSourceTransaction, insertWrapperTransaction, isCurrent,
     markActive, markRefusal, toggleMarkup, wrapSourceTransaction,
@@ -131,9 +131,15 @@ export function exportBusyLabel(format: ExportFormatName, room: 'full' | 'short'
     return room === 'full' ? `Exporting ${formatLabel(format)}…` : `${formatLabel(format)}…`;
 }
 
-/** Why the other formats are refused while an export of `format` runs: the face's note and their description. */
+/** Why the other formats are refused while an export of `format` runs: the caption atop Export's menu and the face's note (#10 L4a). */
 export function exportBusyNote(format: ExportFormatName): string {
-    return `Exporting ${formatLabel(format)} — the other formats wait for it`;
+    return `One export at a time — ${formatLabel(format)} is running`;
+}
+
+/** What a waiting format says — its description, and at it when pressed — while `running` runs: when to choose it again (#10 L4b). */
+export function exportWaitNote(format: ExportFormatName, running: ExportFormatName): string {
+    const run = formatLabel(running);
+    return `${formatLabel(format)} waits for ${run} — choose it again when ${run} is done.`;
 }
 
 /** What the running format's entry says in place of how it is made. */
@@ -159,6 +165,13 @@ const LOCK_FLASH_MS = 900;
 
 /** On the row while the lock's reason stands in the refused tools' place: they give way to it (`layoutRow`, `editor.css`). */
 const LOCK_INROW_CLASS = 'mep-row-lock-inrow';
+
+/**
+ * Below this row width a button's lock (the quiet lock) shows no note: the
+ * tools only dim, a press says the short reason under them (Daniel,
+ * 2026-10-20: "Outside the text" at ≈600–880 px, dimmed only below that).
+ */
+const QUIET_LOCK_NOTE_MIN = 600;
 
 /** On the row while even "…" with every tool in it and Export as its icon leave it too narrow: Block type shortens its label (`layoutRow`, `editor.css`). */
 const ROW_TIGHT_CLASS = 'mep-row-tight';
@@ -286,8 +299,8 @@ function div(className: string): HTMLElement {
 export interface ActionState {
     enabled: boolean;
     active: boolean;
-    /** Why a disabled action is disabled, when there is something to say. */
-    reason: string | null;
+    /** Why a disabled action is disabled, when there is something to say: in its tooltip, and at it when pressed (#10). */
+    reason: Said | null;
     /**
      * What the selection names the action (`Attributes of Paragraph…`, `Attributes of Code…`):
      * its sample's text and its tooltip's name, where the action's own label is only the resting form.
@@ -477,6 +490,11 @@ class ToolbarView implements PluginView {
     private lockRole: ControlRole | null = null;
     /** Why the row's selection tools are refused now (`update`), `null` while they are offered: "…"'s face follows it, whoever laid the row out. */
     private refusal: string | null = null;
+    /** Why each refused control is refused now (`update`): a tool, a face, a menu's entry in "…" — what a press on it says at it (#10). */
+    private readonly reasonOf = new Map<HTMLElement, Said>();
+    /** The caption atop Export's menu while an export runs, and the format running as the face last showed it. */
+    private exportCaption: HTMLElement | null = null;
+    private exportRunning: ExportFormatName | null = null;
     private flashTimer: ReturnType<typeof setTimeout> | undefined;
     /** A pointer button is down: a selection it draws shows its bubble at the release (`bubbleReleased`). */
     private pointerHeld = false;
@@ -668,9 +686,13 @@ class ToolbarView implements PluginView {
             return s;
         };
         const mac = macKeys();
+        this.reasonOf.clear();
         for (const tool of this.tools) {
             const s = stateOf(tool.action);
             const note = s.enabled ? null : s.reason;
+            if (note !== null) {
+                this.reasonOf.set(tool.el, note);
+            }
             if (tool.el.classList.contains('mep-menu-item')) {
                 // A menu entry shows its word and syntax, and its card the construct and the refusal: no hover.
                 // A refused one says why to a screen reader. A mark's entry in "…" is checked as its button is pressed.
@@ -737,8 +759,9 @@ class ToolbarView implements PluginView {
      * - else, for a button, its short form ("Outside the text") beside the
      *   tools where that fits, else the refused tools give way into "…"
      *   (disabled meanwhile) until it fits; where even that leaves it no
-     *   room, no note: the tools only dim, the reason their tooltips and the
-     *   row's description. The whole reason is the note's hover wherever the
+     *   room — or on a row narrower than `QUIET_LOCK_NOTE_MIN` — no note: the
+     *   tools only dim, the reason their tooltips, the row's description and
+     *   a press's hint. The whole reason is the note's hover wherever the
      *   short form shows.
      *
      * Measured, not set by a width, so it holds for any font and label; and
@@ -801,14 +824,17 @@ class ToolbarView implements PluginView {
                 if (role === 'button') {
                     // The short form beside the tools where it fits; else the refused tools give way into "…"
                     // (disabled under the lock) until it does; where even all of them gone leaves it no room, no
-                    // note — the tools only dim, the reason in their tooltips and the row's description.
+                    // note — the tools only dim, the reason in their tooltips and the row's description. Below
+                    // `QUIET_LOCK_NOTE_MIN` that is so at once: the tools stay where they are, dimmed.
                     text.textContent = forms.short;
-                    if (!whole() && !this.exportIcon) {
+                    if (this.row.clientWidth < QUIET_LOCK_NOTE_MIN) {
+                        note.hidden = true;
+                    } else if (!whole() && !this.exportIcon) {
                         moved = fitWithMore(ROW_OVERFLOW, () => overflows(this.row) || overflows(note), c => this.showInRow(c), c => this.moveToMore(c), shown => {
                             this.moreGroup.hidden = !shown;
                         });
                     }
-                    if (!whole()) {
+                    if (!note.hidden && !whole()) {
                         note.hidden = true;
                         moved = fitTools();
                     }
@@ -957,6 +983,25 @@ class ToolbarView implements PluginView {
         }
     }
 
+    /**
+     * A refused control was pressed — a tool, a face, a menu's entry, "…": why,
+     * at it (#10), under the row or beside the menu it stands in, the hover and
+     * the card put away so the reason is not said twice side by side. While the
+     * row is locked, what to do to get it back (`lockForms().press`), and the
+     * lock note at the row's end flashes as before.
+     */
+    private refuseAt(el: HTMLElement): void {
+        this.flashLock();
+        this.tips.hide();
+        this.hideCard();
+        const message = this.lockRole !== null ? lockForms(this.lockRole).press : this.reasonOf.get(el);
+        if (message === undefined || saidText(message) === '') {
+            return;
+        }
+        const menu = el.closest('.mep-menu');
+        showRefusal(this.view, message, menu instanceof HTMLElement ? { at: 'menu-entry', el, menu } : { at: 'control', el });
+    }
+
     /** A refused tool was pressed while the row is locked: its reason is pointed at for a moment, not a silent nothing. */
     private flashLock(): void {
         if (this.lockNote.hidden) {
@@ -1047,6 +1092,14 @@ class ToolbarView implements PluginView {
     private exportFace(): HTMLElement {
         const menu = this.newMenu('export', EXPORT_LABEL, 'document');
         menu.alignEnd = true;
+        // While an export runs: why the other formats wait, once atop them at full contrast (a waiting entry is
+        // dimmed); not focusable and not read — each waiting entry's description says it (#10).
+        const caption = div('mep-menu-caption');
+        caption.setAttribute('role', 'presentation');
+        caption.setAttribute('aria-hidden', 'true');
+        caption.hidden = true;
+        menu.panel.append(caption);
+        this.exportCaption = caption;
         for (const entry of EXPORT_ENTRIES) {
             if (entry.separated) {
                 menu.panel.append(separator());
@@ -1290,7 +1343,7 @@ class ToolbarView implements PluginView {
         item.addEventListener('click', e => {
             e.preventDefault();
             if (isDisabled(item)) {
-                this.flashLock();
+                this.refuseAt(item);
                 return;
             }
             this.openMenu(menu, false);
@@ -1347,7 +1400,7 @@ class ToolbarView implements PluginView {
         const face = menu.face as HTMLElement;
         const all = [...menu.tools, ...menu.children.flatMap(c => c.tools)];
         let label = MENU_LABELS[menu.id];
-        let reason: string | null = null;
+        let reason: Said | null = null;
         let enabled: boolean;
         if (menu.id === 'block-type') {
             // Named also while locked: a requirement heading is still a heading.
@@ -1370,6 +1423,13 @@ class ToolbarView implements PluginView {
         const title = menu.id === 'block-type' && label !== MENU_LABELS[menu.id] ? `${MENU_LABELS[menu.id]}: ${label}` : label;
         this.tipOfControl.set(face, plainTip(title, reason));
         this.tips.refresh(face);
+        if (reason !== null) {
+            // What a press on the face, or on its entry in "…", says at it (#10).
+            this.reasonOf.set(face, reason);
+            if (menu.opener) {
+                this.reasonOf.set(menu.opener, reason);
+            }
+        }
         if (!enabled && !menu.panel.hidden) {
             this.closeAll();
         }
@@ -1397,11 +1457,20 @@ class ToolbarView implements PluginView {
         face.setAttribute('aria-busy', String(running !== null));
         this.tipOfControl.set(face, running === null ? plainTip(EXPORT_LABEL, refusal ?? note) : plainTip(exportBusyLabel(running, 'full'), refusal ?? exportBusyNote(running)));
         this.tips.refresh(face);
-        // A menu entry has no hover; a refused one says why to a screen reader.
+        if (this.exportCaption !== null) {
+            this.exportCaption.hidden = running === null;
+            this.exportCaption.textContent = running === null ? '' : exportBusyNote(running);
+        }
+        if (running === null && this.exportRunning !== null) {
+            // Done: what was said at a waiting format is over.
+            dismissRefusal(this.view, menu.panel);
+        }
+        this.exportRunning = running;
+        // A menu entry has no hover; a refused one says why to a screen reader, and when pressed at it (`runCommand`).
         for (const item of this.formatItems) {
             const mine = running !== null && item.dataset.export === running;
             setState(item, running === null, false);
-            describeAs(item, running === null ? null : mine ? exportBusyLabel(running, 'full') : exportBusyNote(running));
+            describeAs(item, running === null ? null : mine ? exportBusyLabel(running, 'full') : exportWaitNote(item.dataset.export as ExportFormatName, running));
             // As the face's icon is: drawn only when whether it spins changes, so the animation runs on through every update.
             const spinning = item.querySelector(':scope > .mep-entry-busy');
             if (mine && spinning === null) {
@@ -1655,11 +1724,12 @@ class ToolbarView implements PluginView {
 
     private openMenu(menu: Menu, focusFirst: boolean): void {
         if (!menu.parent && menu.face && isDisabled(menu.face)) {
-            this.flashLock();
+            this.refuseAt(menu.face);
             return;
         }
         if (menu.parent === this.more && menu.opener && isDisabled(menu.opener)) {
-            // A menu moved into "…" is refused by its entry as it was by its face.
+            // A menu moved into "…" is refused by its entry as it was by its face, saying why at the entry.
+            this.refuseAt(menu.opener);
             return;
         }
         if (menu.parent) {
@@ -1690,6 +1760,8 @@ class ToolbarView implements PluginView {
         }
         if (!menu.panel.hidden) {
             menu.panel.hidden = true;
+            // A refusal said at one of its entries goes with it.
+            dismissRefusal(this.view, menu.panel);
             // Both: a menu moved into "…" or back while open has had either.
             menu.face?.setAttribute('aria-expanded', 'false');
             menu.opener?.setAttribute('aria-expanded', 'false');
@@ -1809,7 +1881,7 @@ class ToolbarView implements PluginView {
         // A disabled entry says why where the eye already is, not only in its tooltip.
         if (!now.enabled && now.reason) {
             const why = div('mep-preview-refusal');
-            why.textContent = now.reason;
+            why.replaceChildren(...saidParts(now.reason).map(partNode));
             this.card.append(why);
         }
         this.card.dataset.action = action.id;
@@ -1834,7 +1906,7 @@ class ToolbarView implements PluginView {
 
     private activate(tool: Tool): void {
         if (isDisabled(tool.el)) {
-            this.flashLock();
+            this.refuseAt(tool.el);
             return;
         }
         this.closeAll();
@@ -1847,7 +1919,16 @@ class ToolbarView implements PluginView {
      */
     private runCommand(menu: Menu, item: HTMLElement): void {
         const command = menu.commands.get(item);
-        if (!command || isDisabled(item)) {
+        if (!command) {
+            return;
+        }
+        if (isDisabled(item)) {
+            // A format waiting for the one running: refused, not queued (Daniel, 2026-10-22) — said at it, the menu open.
+            const running = this.host.exporting();
+            if (running !== null && this.formatItems.includes(item)) {
+                this.tips.hide();
+                showRefusal(this.view, exportWaitNote(item.dataset.export as ExportFormatName, running), { at: 'menu-entry', el: item, menu: menu.panel });
+            }
             return;
         }
         const held = menu.panel.contains(document.activeElement);
@@ -2058,7 +2139,7 @@ class ToolbarView implements PluginView {
                 }
                 const tr = insertLinkTransaction(view.state, text, href);
                 if (tr === null) {
-                    showHint(view, 'The link cannot be made here: the note around it could not be written back with it.', 'refusal');
+                    showHint(view, 'No link made — the note around it wouldn\'t be saved as shown. Link text outside the note.', 'refusal');
                     return;
                 }
                 view.dispatch(tr);
@@ -2083,7 +2164,7 @@ class ToolbarView implements PluginView {
         }
         const tr = insertFilesTransaction(view.state, files);
         if (tr === null) {
-            showHint(view, insertLockReason(view.state, IMAGE_LOCK) ?? 'The image cannot be inserted here.', 'refusal');
+            showHint(view, insertLockReason(view.state, IMAGE_LOCK) ?? IMAGE_PLACE_REFUSAL, 'refusal');
             return;
         }
         view.dispatch(tr);

@@ -20,6 +20,7 @@ import { plainWikiEmbed } from '../../../src/syntax/markers';
 import { EMBED_WAY_BACK } from '../../../src/editor/verbs';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
+import { saidText } from '../../../src/editor/tips';
 import { attrsReadAt } from '../../../src/editor/attrs';
 import { PAGE_PLUGINS } from '../../../src/plugin/inlinePlugins';
 import { FakeNode, fakeDocument } from './fakeDom';
@@ -322,7 +323,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             for (const mark of [schema.marks.code, schema.marks.sup, schema.marks.sub]) {
                 const tr = state.tr.addMark(at, at + 1, mark.create());
                 // The order the filters run in (`editorPlugins`): the notes' first, then the tables'.
-                assert.match(noteRefusal(tr) ?? tableRefusal(tr) ?? '', /wiki embed/, `${mark.name} in a ${doc.firstChild!.type.name}`);
+                assert.match(saidText(noteRefusal(tr) ?? tableRefusal(tr) ?? ''), /wiki embed/, `${mark.name} in a ${doc.firstChild!.type.name}`);
                 assert.strictEqual(state.apply(tr).doc, state.doc, `${mark.name} in a ${doc.firstChild!.type.name}: the filter refuses it`);
             }
             assert.notStrictEqual(state.apply(state.tr.addMark(at, at + 1, schema.marks.em.create())).doc, state.doc, 'emphasis is let through');
@@ -680,12 +681,12 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         };
         for (const [source, literal] of [['X $![[x]]$ y.\n', '{title="p$q"}'], ['X @![[x]]@ y.\n', '{title="p@q"}'], ['X ++ref|![[x]]++ y.\n', '{title="p|q"}']]) {
             const state = spanned(source, literal);
-            assert.ok(noteRefusal(asText(state))?.includes('attribute span'), source);
+            assert.match(saidText(noteRefusal(asText(state)) ?? ''), /the attributes .* hold a note marker/, source);
             const [at] = embedPositions(state.doc);
             assert.strictEqual(noteRefusal(state.tr.delete(at, at + 1)), null, `the atom alone is removable: ${source}`);
         }
         const inCell = spanned('| a |\n| - |\n| ![[x]] |\n', '{title="p|q"}');
-        assert.ok(tableRefusal(asText(inCell))?.includes('attribute span'));
+        assert.match(saidText(tableRefusal(asText(inCell)) ?? ''), /the attributes .* hold a "\|" or a backtick/);
         // No span, no refusal.
         for (const source of ['X $![[x]]$ y.\n', '| a |\n| - |\n| ![[x]] |\n', 'Plain ![[x]].\n']) {
             const state = EditorState.create({ doc: parseDocument(md, source).doc });
@@ -706,20 +707,21 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             const [at] = embedPositions(start.doc);
             return start.apply(start.tr.addMark(from(at), from(at) + 1, schema.marks.attr_span.create({ literal })));
         };
-        const marker = 'An attribute span in a note cannot hold {title="p$q"}';
+        const marker = 'Not applied: the attributes {title="p$q"} hold a note marker';
 
         // The span over the atom itself: its text would be unwritable, the atom's removal leaves no span.
         const over = spanned('X $![[x]]$ y.\n', '{title="p$q"}', at => at);
         const [asText, remove] = bar(over);
         assert.deepStrictEqual([asText.id, remove.id], ['convert-embed-to-text', 'delete-embed']);
-        assert.ok(asText.refusal?.startsWith(marker), `Convert to text: ${asText.refusal}`);
+        const asTextRefusal = asText.refusal ? saidText(asText.refusal) : null;
+        assert.ok(asTextRefusal?.startsWith(marker), `Convert to text: ${asTextRefusal}`);
         const [at] = embedPositions(over.doc);
         assert.strictEqual(noteRefusal(over.tr.delete(at, at + 1)), null, 'the filters let the atom go');
         assert.strictEqual(remove.refusal, null, 'Delete embed is offered');
 
         // The span over the text beside it, in a note the filters would refuse a change to: both verbs carry the reason.
         const beside = spanned('X $a![[x]]$ y.\n', '{title="p$q"}', at => at - 1);
-        assert.deepStrictEqual(bar(beside).map(v => v.refusal?.startsWith(marker)), [true, true], 'both disabled with the reason');
+        assert.deepStrictEqual(bar(beside).map(v => (v.refusal ? saidText(v.refusal) : null)?.startsWith(marker)), [true, true], 'both disabled with the reason');
 
         for (const source of ['X $![[x]]$ y.\n', 'Plain ![[x]].\n', '| a |\n| - |\n| ![[x]] |\n']) {
             assert.deepStrictEqual(bar(EditorState.create({ doc: parseDocument(md, source).doc })).map(v => v.refusal), [null, null], source);

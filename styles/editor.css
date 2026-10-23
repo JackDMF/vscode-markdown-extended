@@ -15,6 +15,14 @@
  * no rules of their own.
  */
 
+/*
+ * A refusal's mark (#10), one definition for every place it is drawn — the
+ * hint's bar, the field's reason, the row's lock flash: the theme's warning
+ * amber drawn a third towards its text colour, ≥3:1 in Light Modern, where
+ * the amber alone is 2.5:1.
+ */
+html { --mep-refusal-bar: color-mix(in srgb, var(--vscode-editorWarning-foreground, #bf8803) 70%, var(--vscode-foreground, CanvasText)); }
+
 .mep-editor .ProseMirror {
     outline: none;
     min-height: 80vh;
@@ -843,6 +851,9 @@ img.mep-pending-range {
     align-items: center;
     gap: 2px;
     box-sizing: border-box;
+    /* As wide as what it holds up to the room `fit` gives it — not the mount's width, which a user stylesheet may
+       narrow (Styles.petrol.css at 520 px left a field's bar 85 px wide). */
+    width: max-content;
     max-width: 100%;
     padding: 2px;
     font-family: var(--vscode-font-family, sans-serif);
@@ -890,7 +901,9 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     font-family: var(--vscode-editor-font-family, monospace);
 }
 
-/* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through. */
+/* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through.
+   The hint stands in the overlay on <html>, outside the mount, and takes no hit anyway (`.mep-hint`); this reaches
+   it only as a row inside a menu (`data-at="menu-row"`), which is in the mount. */
 .mep-probing .mep-layer,
 .mep-probing .mep-toolbar-layer,
 .mep-probing .mep-language-card,
@@ -1043,8 +1056,10 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     box-sizing: border-box;
     max-width: 80ch;
     padding: 1px 0 1px 8px;
-    border-left: 2px solid var(--vscode-editorWarning-foreground, #bf8803);
+    border-left: 3px solid var(--mep-refusal-bar);
 }
+/* The refusal component's bar in a field (#10): 3 px, High Contrast 4 px double, as at the caret. */
+.vscode-high-contrast .mep-field-refusal-text { border-left-width: 4px; border-left-style: double; }
 .mep-field-bar.mep-narrow > .mep-field-keys {
     flex-basis: 100%;
     margin: 0 4px 2px 6px;
@@ -1177,15 +1192,34 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 
 /*
- * The caret hint: why an edit was refused (a warning's accent), or what a verb
- * did ("Note removed — Ctrl+Z", neutral), beside the caret for a moment.
+ * The hint: why something was refused (#10: an amber bar, what happened, then
+ * what to do), or what a verb did ("Note removed — Ctrl+Z", neutral), for a
+ * moment beside the caret, under a pressed control or beside a pressed menu
+ * entry. Above every layer (#9: the menus stand at 30): it never takes the
+ * pointer, so what it covers can still be pressed. The chrome's font, not
+ * the document's (a user stylesheet setting the body's font `!important`).
+ * It stands in the editor's overlay (`editorOverlay`), beside the body, not
+ * in it: a user stylesheet that narrows the body (Styles.petrol.css at 520
+ * px) gives it neither its width nor its type. The window's width at the
+ * page's origin; it scrolls with the text.
  */
+.mep-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 0;
+    z-index: 35;
+    pointer-events: none;
+}
 .mep-hint {
     position: absolute;
-    z-index: 20;
+    z-index: 35;
     max-width: 36em;
     padding: 4px 8px;
+    font-family: var(--vscode-font-family, sans-serif);
     font-size: 12px;
+    line-height: 16px;
     color: var(--vscode-editorHoverWidget-foreground, inherit);
     background: var(--vscode-editorHoverWidget-background, #f3f3f3);
     border: 1px solid var(--vscode-editorHoverWidget-border, #c8c8c8);
@@ -1193,20 +1227,85 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     pointer-events: none;
 }
 .mep-hint[hidden] { display: none; }
+/* At a pressed control or menu entry: in the row's coordinates, so it stays with the row (and the menus) on scroll. */
+.mep-hint[data-fixed] { position: fixed; }
 /* A neutral hint is one short line (what was done, or that Alt+Enter has nothing to act on): it keeps to one where the window has the room. */
-.mep-hint[data-tone="neutral"] { max-width: 48em; }
-.mep-hint[data-tone="refusal"] { border-left: 3px solid var(--vscode-editorWarning-foreground, #bf8803); }
-/* Said to a screen reader only (`announceHint`): what the page already shows, read out, drawn nowhere. */
-.mep-hint[data-quiet] {
-    position: fixed;
+.mep-hint[data-tone="neutral"] { max-width: min(48em, calc(100vw - 32px)); }
+/*
+ * One refusal component: the bar's amber drawn a third towards the text colour (Light Modern's own #bf8803 is 2.5:1
+ * on the surface; this ≥3:1). As wide as its text, at most 44 characters or the window less a 16 px gutter each side
+ * (#10 build critique), its lines balanced.
+ */
+.mep-hint[data-tone="refusal"] {
+    width: max-content;
+    max-width: min(44ch, calc(100vw - 32px));
+    padding: 4px 10px 4px 8px;
+    border-left: 3px solid var(--mep-refusal-bar);
+    text-wrap: balance;
+}
+/* No room beside the menu (520 px and less): a row in the menu, right under the refused entry, the menu's width. */
+.mep-hint[data-at="menu-row"] {
+    position: static;
+    width: auto;
+    max-width: none;
+    margin: 2px 0 4px;
+}
+/* A value the message names: plain muted mono, as in the field (#13 build critique) — no chip. */
+.mep-hint code {
+    padding: 0;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, GrayText);
+    background: none;
+    border: none;
+}
+/* High Contrast: the bar changes form as well as colour, as the refused field's frame does. */
+/* The body's theme class, read from the root: the hint stands beside the body (`.mep-overlay`). */
+:root:has(> body.vscode-high-contrast) .mep-hint[data-tone="refusal"] { border-left-width: 4px; border-left-style: double; }
+/*
+ * The source box's buttons (#10): under the box, at its right end, the workbench's button colours; each
+ * names its key. A press never blurs the textarea first (blur applies): pointerdown is prevented on them.
+ */
+.mep-raw-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 4px;
+}
+.mep-raw-actions > button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 8px;
+    font: 12px/20px var(--vscode-font-family, sans-serif);
+    border: 1px solid var(--vscode-button-border, transparent);
+    border-radius: 2px;
+    cursor: pointer;
+}
+.mep-raw-actions > .mep-raw-apply { color: var(--vscode-button-foreground, inherit); background: var(--vscode-button-background, transparent); }
+.mep-raw-actions > .mep-raw-cancel { color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, transparent); }
+.mep-raw-actions .mep-raw-key { font-size: 11px; }
+
+/* Busy Export (#10): why the other formats wait, said once above them at full contrast — a waiting entry is
+   dimmed to 0.4, where a reason in its detail column would not be readable. Not focusable; each waiting
+   entry's aria-description says the same. */
+.mep-menu-caption {
+    padding: 2px 10px 4px 10px;
+    font-size: 12px;
+    line-height: 16px;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
+.mep-menu-caption[hidden] { display: none; }
+/* What a screen reader hears: one region, always in the page, drawn nowhere. */
+.mep-live {
+    position: absolute;
     width: 1px;
     height: 1px;
-    padding: 0;
-    margin: -1px;
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-    border: 0;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1814,10 +1913,10 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 }
 /* Two pixels, the amber drawn a third towards the text colour: Light Modern's own amber stands at 2.5:1 on the tint, this at 3.6:1 (5.8 dark, 16 high contrast). */
 .mep-row-lock.mep-row-lock-flash > .mep-row-lock-text {
-    outline: 2px solid color-mix(in srgb, var(--vscode-editorWarning-foreground, #bf8803) 70%, var(--vscode-foreground, CanvasText));
+    outline: 2px solid var(--mep-refusal-bar);
     /* Inside the note: the reason's box clips what stands out of it. */
     outline-offset: -2px;
-    box-shadow: inset 4px 0 0 color-mix(in srgb, var(--vscode-editorWarning-foreground, #bf8803) 70%, var(--vscode-foreground, CanvasText));
+    box-shadow: inset 4px 0 0 var(--mep-refusal-bar);
 }
 
 .mep-diag-count {

@@ -787,10 +787,37 @@ hand the drawing to one row (`FieldRow`, `webview/fieldRow.ts`): the keys line s
 reason goes on a line of its own under the field, the input `aria-invalid` and described by
 the reason — read once as the focus enters the field shown again, so no `role="alert"`
 besides — framed in `inputValidation-warningBorder` (thicker and dashed in High Contrast),
-the caret at the end of what was typed; the next edit clears it all. The refusal is asked before the focus goes back to the
+the caret at the end of what was typed; the next edit clears it all. The reason is the
+refusal component's (#10): a `Said` (`tips.ts`) drawn with the values it names in muted
+mono, under the same 3 px amber bar as the hint (`--mep-refusal-bar`; 4 px double in High
+Contrast). The refusal is asked before the focus goes back to the
 text; the transaction is built after, since that may commit a source box. Every
-attributes field answers so; a caret hint for a refusal would close the field and lose what
-was typed.
+attributes field answers so — a container's Classes field too (C24); a caret hint for a
+refusal would close the field and lose what was typed.
+
+**One refusal component** (`webview/hint.ts`, #10): why something was not done, then what
+to do, in four placements — at the caret (or at an element there: a property row, a
+selected block), under a pressed control (a row tool, a face, "…", a bar's verb: under the
+row or the bar, fixed with the row), beside a pressed menu entry (right of the menu, else
+left, else above it — never at the window's floor), and in a field (the field's own line,
+above). `showRefusal(view, message, place)`; `showHint(…, 'refusal', near)` is the caret
+placement. A refusal goes at the next caret move (`Selection.eq` in the plugin's `update`,
+O(1)), pointer press, focus moving out of the text, a control's focus leaving (a source box
+applied or cancelled), a closing menu (`dismissRefusal(view, panel)`), a resize (fixed
+placements) or a document from the host (`showDocument`) — all only once *armed*, a frame
+after it shows, so the gesture that caused it does not end it. Otherwise it stays
+`refusalMs` (2 s + 50 ms a character, 3.5–10 s; `refusal.ts`). The same refusal again is
+placed, timed and said anew, except the same text at the same place within a second (a
+held key). The drawn hint is `aria-hidden`; one persistent visually hidden `.mep-live`
+region (`role=status`, polite) is emptied and set on the next frame, so a repeat is heard;
+`announceHint` writes it alone. The row keeps each refused control's reason (`reasonOf`);
+a press says it at the control (`refuseAt`), and while a control has the focus what gets
+the row back (`lockForms().press`), the lock note at the row's end still flashing. A bar's
+refused verb or entry (`choose`, `pick`) and a waiting Export format (`runCommand`: refused,
+not queued; the menu's caption "One export at a time — PDF is running") say why the same
+way. Wording: `<what happened> — <remedy>` or two sentences, no internals, values as
+`value()` parts, a single character quoted, keys from the bindings (`applyKey`, `undoKey`),
+the text editor named as its verb "Show in text editor" — held by `refusalWording.test.ts`.
 
 **A block's literal carries where it stood** (`attrsPlacement`, `AttrsPlacement` in
 `blocks.ts`): `end` — after a space at the end of the last line (a paragraph's
@@ -884,8 +911,9 @@ Ctrl+Z*; an empty field removes it (*Attributes removed — Ctrl+Z*); `Esc` chan
 so does `Enter` in a field left as it was shown (`attributesField`'s `unchanged`: a literal the
 author wrote as `{ .a }` is not rewritten, nothing is said to be set). A refusal names the
 literal as the field shows it, without its braces (`literalRefusal`; the code block's
-opening line, whose text holds them, has it named whole), the values it names in the code
-font (`refusalParts`) and its line kept to about 80 characters. The braces a paste or a
+opening line, whose text holds them, has it named whole), the values it names carried as
+code parts (`said`/`value`, never recovered from the prose) and its line kept to about 80
+characters. The braces a paste or a
 typed `}` brings in are stripped as an edit of the input's own undo history, not while an IME
 composes (`InlineField.changed`). A literal markdown-it-attrs would not read
 back whole is refused with the reason beside the field, which stays open with it

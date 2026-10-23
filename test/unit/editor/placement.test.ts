@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { Frame, GAP, HideReason, LayerClaim, LayerSlot, Rect, moved, placeBeside, placeMenuAt, placeStacked, probeBand, rekeyed } from '../../../src/editor/webview/placement';
+import { Frame, GAP, HideReason, LayerClaim, LayerSlot, Rect, moved, placeAtControl, placeAtEntry, placeBeside, placeMenuAt, placeStacked, probeBand, rekeyed } from '../../../src/editor/webview/placement';
 
 /**
  * The one placement policy every floating layer reads (`placement.ts`): below
@@ -174,6 +174,41 @@ suite('Editor placement: the policy', () => {
             }
         }
         assert.notDeepStrictEqual(Array.from(oneByOne).sort(), ['bar@link@14', 'bar@link@18', 'sel@3-5']);
+    });
+});
+
+/** Where a refusal stands at what was pressed (#10): under the control at the surface's bottom, beside a menu at the entry, else above the menu. */
+suite('Editor placement: a refusal at a control or a menu entry', () => {
+    const viewport: Frame = { columnLeft: 0, layerEdge: 1280, ceiling: 0, floor: 800 };
+    const rect = (left: number, top: number, right: number, bottom: number): Rect => ({ left, top, right, bottom });
+
+    test('under the pressed control at its left, GAP under the surface, keeping off no layer', () => {
+        const bold = rect(200, 4, 228, 28);
+        const row = rect(0, 0, 1280, 32);
+        assert.deepStrictEqual(placeAtControl({ width: 300, height: 24 }, bold, row, viewport), { x: 200, y: 32 + GAP, side: 'below' });
+        // At the window's right end it is clamped into the window, never past it.
+        assert.deepStrictEqual(placeAtControl({ width: 300, height: 24 }, rect(1250, 4, 1276, 28), row, viewport), { x: 980, y: 36, side: 'below' });
+        // A bar at the window's floor: above the control.
+        const verb = rect(100, 770, 160, 790);
+        assert.deepStrictEqual(placeAtControl({ width: 300, height: 24 }, verb, rect(90, 766, 400, 794), viewport), { x: 100, y: 770 - GAP - 24, side: 'above' });
+    });
+
+    test('beside the menu at the entry\'s top: right where there is room, else left', () => {
+        const size = { width: 260, height: 40 };
+        const menu = rect(300, 36, 500, 300);
+        const entry = rect(304, 120, 496, 142);
+        assert.deepStrictEqual(placeAtEntry(size, menu, entry, viewport), { x: 500 + GAP, y: 120, side: 'right' });
+        const exportMenu = rect(1080, 36, 1276, 200);
+        assert.deepStrictEqual(placeAtEntry(size, exportMenu, rect(1084, 80, 1272, 102), viewport), { x: 1080 - GAP - 260, y: 80, side: 'left' });
+    });
+
+    test('no room beside the menu: above it at its right end, never at the window\'s floor', () => {
+        const narrow: Frame = { columnLeft: 0, layerEdge: 520, ceiling: 0, floor: 800 };
+        const size = { width: 300, height: 40 };
+        const menu = rect(260, 60, 516, 300);
+        const p = placeAtEntry(size, menu, rect(264, 200, 512, 222), narrow);
+        assert.deepStrictEqual(p, { x: 516 - 300, y: 60 - GAP - 40, side: 'above' });
+        assert.ok(p.y + size.height <= menu.top, 'not over the menu');
     });
 });
 

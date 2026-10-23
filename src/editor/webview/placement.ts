@@ -208,6 +208,31 @@ export function placeBeside(size: Size, anchor: Rect, alignTop: number, frame: F
 }
 
 /**
+ * A refusal at a pressed control (#10): under the surface the control stands
+ * on — the row, the bubble, a bar — at the control's left, so it never covers
+ * the control or its neighbours' row; above the control where the window has
+ * no room below. It stands above every layer and keeps off none.
+ */
+export function placeAtControl(size: Size, control: Rect, surface: Rect, frame: Frame): Placement {
+    return placeStacked(size, { left: control.left, right: control.right, top: control.top, bottom: Math.max(control.bottom, surface.bottom) }, frame, { avoid: [] });
+}
+
+/**
+ * A refusal at a pressed menu entry (#10): beside the menu, right else left,
+ * top-aligned at the entry; where neither side has room, above the menu at
+ * its right end (over the row's right end) — never at the window's floor,
+ * away from the entry (ux-critic #10 (a)).
+ */
+export function placeAtEntry(size: Size, menu: Rect, entry: Rect, frame: Frame): Placement {
+    const beside = placeBeside(size, menu, entry.top, frame, {}, 'none');
+    if (beside.side !== 'none') {
+        return beside;
+    }
+    const x = Math.max(frame.columnLeft, Math.min(menu.right - size.width, frame.layerEdge - size.width));
+    return { x, y: Math.max(frame.ceiling, menu.top - GAP - size.height), side: 'above' };
+}
+
+/**
  * `keys` after each key in `moves` followed it to its new key — or ended, where
  * it maps to `null`. Built in one go from the old set, so a key that shifts
  * onto another one's old name takes nothing from it.

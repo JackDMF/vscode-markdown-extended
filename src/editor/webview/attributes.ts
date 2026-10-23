@@ -46,7 +46,8 @@ import { showChangeHint, undoHint } from './hint';
 import { wording } from '../verbs';
 import { FENCED_DONE } from '../fences';
 import { FieldAdorn, FieldStep, KeysLine, refusedStep } from './inlineField';
-import { ATTR_BRACES, ATTR_PLACEHOLDER, attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, refusalParts, stripOuterPair } from '../attributeLiteral';
+import { ATTR_BRACES, ATTR_PLACEHOLDER, attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, stripOuterPair } from '../attributeLiteral';
+import type { Said } from '../tips';
 import {
     AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, holderNames, literalObjectOf, literalOf,
     literalOfObject,
@@ -80,7 +81,7 @@ const ATTR_ADORN: FieldAdorn = { ...ATTR_BRACES, strip: stripOuterPair };
 export function attributesField(
     name: string,
     literal: string | null,
-    commit: (literal: string, refused: (reason: string) => FieldStep) => FieldStep | void,
+    commit: (literal: string, refused: (reason: Said) => FieldStep) => FieldStep | void,
     options: { removable?: boolean; unchanged?: () => void } = {},
 ): FieldStep {
     const removable = options.removable ?? true;
@@ -95,7 +96,6 @@ export function attributesField(
             return state.kind === 'removes' ? { parts: keysLine(state), removes: true } : keysLine(state);
         },
         adorn: ATTR_ADORN,
-        refusalParts,
         commit: typed => {
             if (options.unchanged !== undefined && shown.trim() !== '' && typed === shown) {
                 return options.unchanged();

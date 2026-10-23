@@ -97,59 +97,6 @@ export function keysLine(state: KeysState): readonly TipPart[] {
 }
 
 /**
- * What a refusal says before the spelling it suggests (`Write it as width=300.`): the one wording
- * the message (`literalRefusal`) and `refusalParts` share.
- */
-export const WRITE_IT_AS = 'Write it as ';
-
-/**
- * What a refusal says of the value it names, the words that follow it: the one list the messages
- * (`literalRefusal`) are built from and `refusalParts` recognises them by — a reason is `value ` and
- * one of these, never a sentence that happens to begin with the same letters.
- */
-export const VALUE_PREDICATE = {
-    openQuote: 'has an open quote',
-    notClosed: 'is not closed',
-    isText: 'is text, not an attribute list',
-    noList: 'is no attribute list',
-    innerBrace: 'holds a } inside a value',
-    ruleBrace: 'holds a { inside a value',
-    backtick: 'holds a backtick',
-    readBefore: 'holds what markdown-it reads before markdown-it-attrs here',
-    linkOwn: 'sets the link\'s href or title',
-} as const;
-
-const VALUE_PREDICATES: readonly string[] = Object.values(VALUE_PREDICATE);
-
-/**
- * A refusal's reason as the field draws it: the values it names — the one typed, which it begins
- * with (`value` and a `VALUE_PREDICATE`), and the one it suggests after `WRITE_IT_AS` — in the code
- * font, the sentence plain. The reason is read as the message is built (`literalRefusal`), not
- * re-worded: a reason that does not name the value, or suggests nothing, has no part to set apart.
- * `typed` is the field's value as it was, which the commit read as `literalFrom(typed)`.
- */
-export function refusalParts(reason: string, typed: string): readonly TipPart[] {
-    const value = innerOf(literalFrom(typed));
-    const parts: TipPart[] = [];
-    let rest = reason;
-    if (value !== '' && VALUE_PREDICATES.some(predicate => rest.startsWith(`${value} ${predicate}`))) {
-        parts.push({ code: value });
-        rest = rest.slice(value.length);
-    }
-    const at = rest.lastIndexOf(WRITE_IT_AS);
-    if (at >= 0 && rest.endsWith('.')) {
-        const before = rest.slice(0, at);
-        if (before !== '') {
-            parts.push(before);
-        }
-        parts.push(WRITE_IT_AS, { code: rest.slice(at + WRITE_IT_AS.length, -1) }, '.');
-    } else if (rest !== '') {
-        parts.push(rest);
-    }
-    return parts;
-}
-
-/**
  * The keys state for the field's `value` now, read from what Enter will commit (`literalFrom`): a
  * literal it had (`hadLiteral`) that commits as a removal — emptied, or only a stray brace left —
  * is removed by Enter; else Enter sets.

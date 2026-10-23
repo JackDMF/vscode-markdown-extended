@@ -27,7 +27,8 @@ import { EditorView } from 'prosemirror-view';
 import { HISTORY_META, PRESERVE_SOURCE_META } from '../fidelity';
 import { editorSchema } from '../schema';
 import { holdsConstruct } from '../sourceReason';
-import { announceHint, macKeys, showChangeHint, showHint, undoHint } from './hint';
+import { VERB, quotedVerb } from '../verbs';
+import { announceHint, macKeys, showChangeHint, showRefusal, undoHint } from './hint';
 
 /**
  * Set on a transaction a verb makes on purpose to a source block — the bar's
@@ -59,7 +60,7 @@ export function sourceRefusal(reason: string | null, kind: SourceKind): string {
         : holdsConstruct(reason) ? `This ${kind} holds ${reason.slice('has '.length)}`
         : /attributes$/.test(reason) ? `These ${reason} are source`
         : `This ${reason} is source`;
-    return `${clause} — Edit source to change it`;
+    return `${clause} — change it with ${quotedVerb(VERB.editSource)}`;
 }
 
 /** What selecting a source block says to a screen reader. */
@@ -76,7 +77,8 @@ function refuse(view: EditorView, sel: NodeSelection): true {
     // Not counting what another extension's renderer adds out of sight (a mermaid config span, `aria-hidden`).
     const rendered = Array.from(near?.querySelector(':scope > .mep-atom-content')?.children ?? []).filter(el => el.getAttribute('aria-hidden') !== 'true');
     const kind = rendered.length === 1 ? KINDS[rendered[0].tagName] ?? 'block' : 'block';
-    showHint(view, sourceRefusal(reasonOf(sel), kind), 'refusal', near);
+    // The one refusal component (#10), at the selected block.
+    showRefusal(view, sourceRefusal(reasonOf(sel), kind), { at: 'caret', near });
     return true;
 }
 

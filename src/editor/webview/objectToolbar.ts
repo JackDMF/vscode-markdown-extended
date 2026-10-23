@@ -57,8 +57,8 @@ import type { Completion } from '../completions';
 import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, languageOf, savedOpeningLine } from '../fences';
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
-import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
-import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
+import { HintTone, RefusalPlace, applyKey, dismissRefusal, showChangeHint, showHint, showRefusal, undoHint, undoKey } from './hint';
+import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, quotedVerb, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
 import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
@@ -87,7 +87,7 @@ import {
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
-import { Tip, plainTip, tipText } from '../tips';
+import { Said, Tip, plainTip, said, tipText, value } from '../tips';
 import { Tooltips } from './tooltip';
 import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, caretRect, placeMenu, rangeAnchor } from './placement';
 
@@ -183,8 +183,8 @@ export interface Verb {
     slot: Slot;
     /** A `run` verb that opens a source box in place (a source block's, a table's Edit source): it opens in place, as a field does. */
     box?: true;
-    /** Why it cannot be chosen here, shown in its tooltip; `null` when it can. */
-    refusal?: string | null;
+    /** Why it cannot be chosen here, shown in its tooltip and, pressed, at it (#10); `null` when it can. */
+    refusal?: Said | null;
     /** A verb that runs at once. */
     run?(): void;
     /** A verb that asks for a value first, in the inline field — and, when its commit names another step, for that one next. */
@@ -229,8 +229,8 @@ interface MenuEntry {
     keys?: string;
     /** For a choice of one value out of several: whether this is the current one, marked. */
     checked?: boolean;
-    /** Why it cannot be chosen here, in its tooltip; the entry is drawn disabled. */
-    refusal?: string | null;
+    /** Why it cannot be chosen here, in its tooltip and, pressed, beside it (#10); the entry is drawn disabled. */
+    refusal?: Said | null;
     /** Drawn after a divider: in a bar's "…", the verb that destroys, last. */
     separated?: boolean;
     /** It opens a menu of its own (a set-verb moved into "…"): drawn with the chevron right. */
@@ -362,16 +362,19 @@ function isSidebar(name: NoteNodeName): boolean {
     return name === 'left_sidebar' || name === 'right_sidebar';
 }
 
+/** Why a container's Classes field refuses a value ending in `{…}` (#10 C24): in the field, which stays open. */
+export const CONTAINER_TITLE_REFUSAL: Said = said`Not set: a container's title can't end in ${value('{…}')} — it would be read as attributes. Remove the ${value('{…}')} at its end.`;
+
 /**
  * A verb's refusal builds the whole transaction it would dispatch and asks the
  * filters' own check of it (`noteRefusal`, `tableRefusal`), and a bar is
  * presented on every refresh and hover: each is read once per state, by the
  * verb and the object's place (`key`), not once per presentation.
  */
-const refusals = new WeakMap<EditorState, Map<string, string | null>>();
+const refusals = new WeakMap<EditorState, Map<string, Said | null>>();
 
 /** The refusal `read` gives in `state`, remembered under `key` (`refusals`). */
-function refusalOnce(state: EditorState, key: string, read: () => string | null): string | null {
+function refusalOnce(state: EditorState, key: string, read: () => Said | null): Said | null {
     let byKey = refusals.get(state);
     if (byKey === undefined) {
         byKey = new Map();
@@ -389,7 +392,7 @@ function refusalOnce(state: EditorState, key: string, read: () => string | null)
  * disabled button instead of making the filter say it after the click — or `null`.
  * No transaction is no atom to act on: `none` says so.
  */
-function filterRefusal(tr: Transaction | null, none: string): string | null {
+function filterRefusal(tr: Transaction | null, none: string): Said | null {
     return tr === null ? none : noteRefusal(tr) ?? tableRefusal(tr);
 }
 
@@ -497,6 +500,10 @@ interface BarEvents {
     fieldDropped(): void;
     /** A verb's menu opened or closed, or its button took or lost the focus or the pointer: what it drives (a table's row or column tint) is drawn anew (`activeVerb`). */
     verbActive(): void;
+    /** A refused verb or entry was pressed: why, at it (#10). */
+    refuse(message: Said, place: RefusalPlace): void;
+    /** A menu closed: a refusal said at one of its entries goes with it. */
+    menuClosed(panel: HTMLElement): void;
 }
 
 /** One bar: a label and verbs, or a label and the inline field. */
@@ -864,7 +871,7 @@ class ObjectBar {
             }
             el.addEventListener('click', e => {
                 e.preventDefault();
-                this.choose(verb);
+                this.choose(verb, el);
             });
             // Open, focused or hovered: the verb is active, and a table draws what it acts on (`activeVerb`).
             el.addEventListener('pointerenter', () => this.verbHovered(verb.id, true));
@@ -940,8 +947,13 @@ class ObjectBar {
         }
     }
 
-    private choose(verb: Verb): void {
+    /** `verb` chosen — pressed at `el`, where a refused one says why (#10): under the bar, never a silent nothing. */
+    private choose(verb: Verb, el?: HTMLElement): void {
         if (verb.refusal) {
+            if (el) {
+                this.tips.hide();
+                this.events.refuse(verb.refusal, { at: 'control', el });
+            }
             return;
         }
         if (verb.menu) {
@@ -1005,7 +1017,7 @@ class ObjectBar {
             }
             el.addEventListener('click', e => {
                 e.preventDefault();
-                this.pick(entry);
+                this.pick(entry, el);
             });
             el.addEventListener('mouseenter', () => {
                 followPointer(panel, el);
@@ -1046,14 +1058,22 @@ class ObjectBar {
         menu.button.setAttribute('aria-expanded', 'false');
         // An entry's hover goes with its menu: once the panel is out of the bar, `hide(this.el)` finds it no more.
         this.tips.hide(menu.panel);
+        // So does a refusal said at one of its entries.
+        this.events.menuClosed(menu.panel);
         menu.panel.remove();
         if (focusButton) {
             menu.button.focus({ preventScroll: true });
         }
     }
 
-    private pick(entry: MenuEntry): void {
+    /** `entry` picked — pressed at `el`, where a refused one says why beside the menu, which stays open (#10). */
+    private pick(entry: MenuEntry, el?: HTMLElement): void {
         if (entry.refusal) {
+            const panel = this.menu?.panel;
+            if (el && panel) {
+                this.tips.hide(panel);
+                this.events.refuse(entry.refusal, { at: 'menu-entry', el, menu: panel });
+            }
             return;
         }
         this.closeMenu(false);
@@ -1333,6 +1353,8 @@ class ObjectToolbarView implements PluginView {
                 }, 0);
             },
             verbActive: () => this.syncDecorations(),
+            refuse: (message, place) => showRefusal(this.view, message, place),
+            menuClosed: panel => dismissRefusal(this.view, panel),
         };
         const bar: ObjectBar = new ObjectBar(trigger, events, this.tips);
         return bar;
@@ -2008,7 +2030,7 @@ class ObjectToolbarView implements PluginView {
                 label: item.title,
                 title: `${item.tooltip ?? label} (from another extension)`,
                 slot: 'actions',
-                refusal: id === undefined ? 'The extension that shows it gave it no command.' : null,
+                refusal: id === undefined ? 'The extension that shows it gave it no action to run.' : null,
                 run: () => {
                     if (id !== undefined) {
                         run(id);
@@ -2087,7 +2109,7 @@ class ObjectToolbarView implements PluginView {
                             label: VERB.editSource,
                             title: `Edit ${source} as Markdown (Enter to apply, Esc to cancel).`,
                             slot: 'source',
-                            refusal: source.includes('\n') ? 'It holds a line break, which a one-line field cannot show: edit it in the text editor.' : null,
+                            refusal: source.includes('\n') ? `It holds a line break, which a one-line field can't show — use ${quotedVerb(VERB.showInTextEditor)}.` : null,
                             field: { value: source, label: 'Markdown', commit: value => this.commitNoteSource(object, source, value) },
                         },
                     ],
@@ -2277,6 +2299,17 @@ class ObjectToolbarView implements PluginView {
                 const name = object.node.attrs.name as string;
                 const info = object.node.attrs.info as string;
                 const remove = wording({ verb: 'Remove', noun: 'container', keeps: ', keep content' });
+                const classes: FieldStep = {
+                    value: `${name}${info}`,
+                    label: 'Classes',
+                    commit: value => {
+                        if (containerNameOf(value) === null) {
+                            // Refused in the field (#10 C24): it stays open with what was typed, the reason under it.
+                            return refusedStep(classes, value, CONTAINER_TITLE_REFUSAL);
+                        }
+                        this.apply(object, current => changeContainerTransaction(view.state, current.from, value));
+                    },
+                };
                 return {
                     label: name === '' ? 'Container' : `Container ${name}`,
                     title: `A block with the class "${containerClass(name, info)}".`,
@@ -2287,18 +2320,7 @@ class ObjectToolbarView implements PluginView {
                             label: VERB.editClasses,
                             title: 'What follows ::: — its name and info, the classes the block gets (Enter to apply, Esc to cancel).',
                             slot: 'edit',
-                            field: {
-                                value: `${name}${info}`,
-                                label: 'Classes',
-                                commit: value => {
-                                    if (containerNameOf(value) === null) {
-                                        this.view.focus();
-                                        this.say('A container\'s name and info are one line, and cannot end in {…}: markdown-it-attrs would take that as attributes.', 'refusal');
-                                        return;
-                                    }
-                                    this.apply(object, current => changeContainerTransaction(view.state, current.from, value));
-                                },
-                            },
+                            field: classes,
                         },
                         this.attributesVerb(object),
                         {
@@ -2679,7 +2701,7 @@ class ObjectToolbarView implements PluginView {
         step: FieldStep,
         object: CodeBlockObject,
         value: string,
-        make: (state: EditorState, block: CodeBlockObject, value: string) => { tr: Transaction; fenced: boolean } | { refusal: string } | null,
+        make: (state: EditorState, block: CodeBlockObject, value: string) => { tr: Transaction; fenced: boolean } | { refusal: Said } | null,
     ): FieldStep | void {
         const state = this.view.state;
         // The node `currentObject` finds is the one the pass reads: no second lookup by position.
@@ -2772,7 +2794,7 @@ class ObjectToolbarView implements PluginView {
         }
         const tr = inlineSourceTransaction(this.view.state, current.from, current.to, value, current.node.marks, this.host.sourceContext());
         if (tr === null) {
-            this.say('This note cannot be written as source here.', 'refusal');
+            this.say(`Not applied: this note can't be saved as typed here. Change it with ${quotedVerb(VERB.showInTextEditor)}.`, 'refusal');
             return;
         }
         this.view.dispatch(tr);

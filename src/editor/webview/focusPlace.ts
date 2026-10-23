@@ -176,16 +176,26 @@ export interface LockForms {
     full: string;
     /** The floor the row shows where `full` does not fit: it never cuts a key (Daniel, 2026-10-19). */
     short: string;
+    /** What a press on a refused tool says at that tool (#10): what is off, then how to get it back. */
+    press: string;
 }
 
-/** `controlLock`'s reason in both the forms the row may show it in. */
+/** `controlLock`'s reason in the forms the row may show it in, and what a press on a refused tool says. */
 export function lockForms(role: ControlRole): LockForms {
     switch (role) {
         case 'source':
-            return { full: `Editing source · ${applyKey()} apply · Esc cancel`, short: `Source · ${applyKey()} · Esc` };
+            return {
+                full: `Editing source · ${applyKey()} apply · Esc cancel`,
+                short: `Source · ${applyKey()} · Esc`,
+                press: `Formatting is off while editing source — ${applyKey()} applies`,
+            };
         case 'property':
-            return { full: 'Editing a property · Enter apply · Esc cancel', short: 'Property · Enter · Esc' };
+            return { full: 'Editing a property · Enter apply · Esc cancel', short: 'Property · Enter · Esc', press: 'Formatting is off while editing a property — Enter applies' };
         case 'button':
-            return { full: 'Focus is outside the text · Esc or click into the text', short: 'Outside the text' };
+            return {
+                full: 'Focus is outside the text · Esc or click into the text',
+                short: 'Outside the text',
+                press: 'Formatting is off outside the text — click into the text or press Esc.',
+            };
     }
 }

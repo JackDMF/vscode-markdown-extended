@@ -45,7 +45,7 @@
 import { ADMONITION_FAMILIES, ADMONITION_MARKER, INLINE_MARKERS, KBD_MARKERS, MARKER_NAMES, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
 import { holderNamed, namesOf } from '../../inlineLiterals';
 import { keyLabel } from '../../keys';
-import { Tip, TipPart } from '../../tips';
+import { Said, Tip, TipPart } from '../../tips';
 import { NOTE_LABELS, NoteNodeName } from '../notes';
 
 /** The menus of the row, left to right after the marks' group. */
@@ -268,7 +268,7 @@ export interface TipState {
     /** Its name where the selection names it (`Attributes of Paragraph…`); its own otherwise. */
     label?: string;
     /** Why it is refused here: the tip's second line. */
-    reason?: string | null;
+    reason?: Said | null;
     /** Keys named as on macOS (`macKeys`). */
     mac?: boolean;
 }
@@ -430,7 +430,7 @@ const BLOCK_ATTRIBUTES = {
 
 
 /** Why Attributes of Code… is disabled: nothing inline at the caret carries a {…}. */
-export const INLINE_ATTRS_LOCK = 'Put the caret in code, a key, a link, emphasis, superscript, subscript, a highlight or a span, or select an image. Alt+Enter opens its bar.';
+export const INLINE_ATTRS_LOCK = 'Plain text takes no attributes — put the caret in formatted text, a link or a span, or select an image.';
 
 const formatting: ToolbarAction[] = [
     formatAction('mark', 'mark', M.mark, M.mark, el('mark', 'mark'), el('mark', 'ab'),
@@ -578,7 +578,7 @@ export const INCLUDE_SYNTAX = 'a snippet line, as its extension offers it';
 export const NO_INCLUDES_REFUSAL = 'No extension offers includes for this document.';
 
 /** Why **Insert → Properties** is off: a document has one front matter, and it is the panel at the top. */
-export const PROPERTIES_PRESENT_REFUSAL = 'The document has properties already: the panel at its top.';
+export const PROPERTIES_PRESENT_REFUSAL = 'This document has properties already — edit them in the panel at its top.';
 
 /** What **Insert → Properties** names: the front matter's fences, written at the top of the file. */
 export const PROPERTIES_SYNTAX = '---\nkey: value\n---';

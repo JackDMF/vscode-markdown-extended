@@ -18,6 +18,7 @@ import {
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { inlineSourceTransaction } from '../../../src/editor/webview/toolbar/commands';
 import { hostEngine } from './helpers';
+import { saidText } from '../../../src/editor/tips';
 
 function stateOf(text: string): EditorState {
     const { doc } = parseDocument(hostEngine(), text, {});
@@ -142,7 +143,7 @@ suite('Editor objects: a note\'s verbs', () => {
         // Code in a sidenote may hold `!!`; in a marginal note it would end the note.
         const state = caretAt(stateOf('A ++ref|see `a!!b` here++ b.\n'), 'ref');
         const reason = convertNoteRefusal(state, objectHere(state).from);
-        assert.ok(reason?.includes('"!!"'), String(reason));
+        assert.strictEqual(saidText(reason ?? ''), '!! can\'t go in inline code in a marginal note — it would end the note there. Type it outside the code.');
         // Superscript may hold `@` in either sidebar: in a right one it is written `\@`, which it unescapes.
         const raised = caretAt(stateOf('A $see ^a@b^ here$ b.\n'), 'see');
         assert.strictEqual(convertNoteRefusal(raised, objectHere(raised).from), null);
@@ -312,7 +313,7 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
 
     /** What Edit source does with `line` on the block the caret is in: the opening line's transaction, or why not. */
     const edit = (state: EditorState, line: string) => commitOpeningLine(state, blockHere(state), line);
-    const refusalOf = (done: ReturnType<typeof commitOpeningLine>) => done !== null && 'refusal' in done ? done.refusal : null;
+    const refusalOf = (done: ReturnType<typeof commitOpeningLine>) => done !== null && 'refusal' in done ? saidText(done.refusal) : null;
     const trOf = (done: ReturnType<typeof commitOpeningLine>) => done !== null && 'tr' in done ? done.tr : null;
     /** What Language… does with `word` on the block the caret is in. */
     const lang = (state: EditorState, word: string) => changeLanguageTransaction(state, blockHere(state), word);
@@ -344,7 +345,7 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
         assert.strictEqual(edit(state, '```js {.numbered}'), null, 'unchanged');
         assert.strictEqual(refusalOf(edit(state, 'js {.x}')), NO_FENCE_REFUSAL);
         assert.strictEqual(refusalOf(edit(state, '```a`b')), BACKTICK_INFO_REFUSAL);
-        assert.match(refusalOf(edit(state, '```js {.}')) ?? '', /\{\.\} is no attribute list/);
+        assert.match(refusalOf(edit(state, '```js {.}')) ?? '', /\{\.\} isn't an attribute\. Write \{\.class\}/);
         assert.strictEqual(trOf(edit(state, 'js')), null);
         const holding = caretAt(stateOf('````\na\n```\nb\n````\n'), 'a');
         assert.strictEqual(refusalOf(edit(holding, '```')), shortFenceRefusal('````'));
@@ -376,9 +377,9 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
 
     test('a brace pair typed now is read as a literal and refused for what it is', () => {
         const state = caretAt(stateOf('```js\ncode\n```\n'), 'code');
-        assert.match(refusalOf(edit(state, '```js {}')) ?? '', /no attribute list/);
-        assert.match(refusalOf(edit(state, '```js {.}')) ?? '', /\{\.\} is no attribute list/);
-        assert.match(refusalOf(edit(state, '```{r, echo = FALSE}')) ?? '', /is text, not an attribute list/);
+        assert.match(refusalOf(edit(state, '```js {}')) ?? '', /isn't an attribute/);
+        assert.match(refusalOf(edit(state, '```js {.}')) ?? '', /\{\.\} isn't an attribute/);
+        assert.match(refusalOf(edit(state, '```{r, echo = FALSE}')) ?? '', /has spaces around "=", so it would show as text/);
     });
 
     test('Edit source on an indented block: empty fences it with ```; a typed line fences it with that', () => {
@@ -484,7 +485,7 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
         const ts = lang(state, 'ts');
         assert.ok(ts !== null && 'tr' in ts);
         assert.strictEqual(text(state.apply(ts.tr)), '> ```ts\n> inner\n> ```\n');
-        assert.strictEqual(refusalOf(edit(state, '```js {.x}')), NESTED_CODE_ATTRS_REFUSAL);
+        assert.strictEqual(refusalOf(edit(state, '```js {.x}')), saidText(NESTED_CODE_ATTRS_REFUSAL));
     });
 
     test('a nested fence with a literal in its info string: Language… changes the word, emptying names the literal, the line typed back is unchanged', () => {
@@ -503,7 +504,7 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
             assert.deepStrictEqual(lang(state, ''), { refusal: LANGUAGE_LITERAL_REFUSAL }, 'a literal follows, not "other words"');
             assert.strictEqual(lang(state, 'py'), null, 'the same language');
             assert.strictEqual(edit(state, '~~~ py {.x}'), null, 'the line typed back');
-            assert.strictEqual(refusalOf(edit(state, '~~~ py {.y}')), NESTED_CODE_ATTRS_REFUSAL, 'a literal typed now is the nested refusal');
+            assert.strictEqual(refusalOf(edit(state, '~~~ py {.y}')), saidText(NESTED_CODE_ATTRS_REFUSAL), 'a literal typed now is the nested refusal');
         } finally {
             setInlineEngine(DEFAULT_INLINE_ENGINE);
         }

@@ -15,6 +15,8 @@ import {
     commitAttributes, containerNameOf, literalOf, literalRefusal, spanLockReason,
 } from '../../../src/editor/webview/objects';
 import { FieldStep, refusedStep } from '../../../src/editor/webview/inlineField';
+import { literalFrom } from '../../../src/editor/attributeLiteral';
+import { saidText } from '../../../src/editor/tips';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
 
@@ -47,20 +49,20 @@ function caretAt(state: EditorState, needle: string, offset = 0): EditorState {
 
 function targetAt(state: EditorState): AttributesTarget {
     const found = attributesTargetAt(state);
-    assert.ok(!('refusal' in found), 'refusal' in found ? found.refusal : '');
+    assert.ok(!('refusal' in found), 'refusal' in found ? saidText(found.refusal) : '');
     return found;
 }
 
 function refusalAt(state: EditorState): string {
     const found = attributesTargetAt(state);
     assert.ok('refusal' in found, `a refusal, not ${'name' in found ? found.name : ''}`);
-    return found.refusal;
+    return saidText(found.refusal);
 }
 
 /** The literal set through the one commit both surfaces use; the state after it. */
 function set(state: EditorState, literal: string): EditorState {
     const made = commitAttributes(state, targetAt(state), literal);
-    assert.ok(made !== null && 'tr' in made, made !== null && 'refusal' in made ? made.refusal : 'a transaction');
+    assert.ok(made !== null && 'tr' in made, made !== null && 'refusal' in made ? saidText(made.refusal) : 'a transaction');
     return state.apply(made.tr);
 }
 
@@ -236,40 +238,54 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
             return state.apply(state.tr.setSelection(NodeSelection.create(state.doc, pos)));
         };
         assert.match(refusalAt(at('raw_block')), /source block/);
-        assert.match(refusalAt(at('front_matter')), /front matter/);
+        assert.match(refusalAt(at('front_matter')), /Front matter is YAML/);
         assert.strictEqual(targetAt(at('horizontal_rule')).name, 'Rule');
     });
 
     test('a literal markdown-it-attrs would not read back is refused with the reason', () => {
         const state = caretAt(stateOf('Alpha beta.\n'), 'beta');
         const target = targetAt(state);
-        for (const [literal, reason] of [['{.}', /no attribute list/], ['.note', /no attribute list/], ['{.a', /is not closed/], ['{#}', /no attribute list/], ['{.a}\n{.b}', /no attribute list/]] as const) {
+        for (const [literal, reason] of [['{.}', /isn't an attribute/], ['.note', /isn't an attribute/], ['{.a', /isn't closed/], ['{#}', /isn't an attribute/], ['{.a}\n{.b}', /isn't an attribute/]] as const) {
             const made = commitAttributes(state, target, literal);
             assert.ok(made !== null && 'refusal' in made, `${JSON.stringify(literal)} is refused`);
-            assert.match(made.refusal, reason);
+            assert.match(saidText(made.refusal), reason);
         }
         const rule = stateOf('Text.\n\n---\n');
         const selected = rule.apply(rule.tr.setSelection(NodeSelection.create(rule.doc, rule.doc.child(0).nodeSize)));
         const made = commitAttributes(selected, targetAt(selected), '{title="x{y"}');
-        assert.ok(made !== null && 'refusal' in made && /last \{/.test(made.refusal));
+        assert.ok(made !== null && 'refusal' in made && /cut this rule's attributes off/.test(saidText(made.refusal)));
         assert.strictEqual(commitAttributes(state, target, '{}'), null, 'removing what is not there does nothing');
     });
 
     test('a refusal names the literal as the attributes field shows it, between its braces, and never asks for a brace', () => {
         const state = caretAt(stateOf('Alpha beta.\n'), 'beta');
         const target = targetAt(state);
-        const refusal = (literal: string) => {
+        const parts = (literal: string) => {
             const made = commitAttributes(state, target, literal);
             assert.ok(made !== null && 'refusal' in made, `${literal} is refused`);
             return made.refusal;
         };
-        assert.strictEqual(refusal('{title="a}'), 'title="a has an open quote: close it with ".');
+        const refusal = (literal: string) => saidText(parts(literal));
+        assert.strictEqual(refusal('{title="a}'), 'Not set: title="a has an open quote — close it with a double quote.');
         // The reading says it ended inside a quote — a quote the plugin opens anywhere a value is empty, not only after an `=`.
-        assert.strictEqual(refusal('{.a "b}'), '.a "b has an open quote: close it with ".');
-        const spaced = refusal('{width = 300}');
-        assert.ok(spaced.startsWith('width = 300 is text, not an attribute list'), spaced);
-        assert.ok(spaced.endsWith('Write it as width=300.'), spaced);
-        assert.ok(refusal('{.}').startsWith('. is no attribute list: write it as .class, #id or key="value"'), refusal('{.}'));
+        assert.strictEqual(refusal('{.a "b}'), 'Not set: .a "b has an open quote — close it with a double quote.');
+        assert.strictEqual(refusal('{width = 300}'), 'Not set: width = 300 has spaces around "=", so it would show as text. Write it as width=300.');
+        // The values are carried as parts (#10), never recovered from the prose: the typed one and the suggestion in the code font, a lone character quoted.
+        assert.deepStrictEqual(parts('{width = 300}'), ['Not set: ', { code: 'width = 300' }, ' has spaces around "', { code: '=' }, '", so it would show as text. Write it as ', { code: 'width=300' }, '.']);
+        assert.strictEqual(refusal('{.}'), 'Not set: "." isn\'t an attribute. Write .class, #id or key="value".');
+    });
+
+    test('F3: the attributes field, whose braces it draws, never reaches "isn\'t closed" — a stray brace is dropped, an open quote is named as one', () => {
+        const state = caretAt(stateOf('Alpha beta.\n'), 'beta');
+        const target = targetAt(state);
+        const said = (typed: string) => {
+            const made = commitAttributes(state, target, literalFrom(typed));
+            return made !== null && 'refusal' in made ? saidText(made.refusal) : null;
+        };
+        const reasons = ['.a {', '.a {.b', 'a="x', '.a { b', '{.a', '.a }{', '{', '.a {{'].map(said);
+        assert.ok(reasons.every(r => r === null || !r.includes('isn\'t closed')), JSON.stringify(reasons));
+        assert.strictEqual(said('a="x'), 'Not set: a="x has an open quote — close it with a double quote.');
+        assert.strictEqual(said('{.a'), null, 'a stray opening brace is dropped');
     });
 
     test('the literal is kept verbatim: parse(serialize(…)) gives it back as typed, for each construct', () => {
@@ -402,7 +418,7 @@ suite('Editor Attributes…: a fence\'s literal is read on its own fence, a head
         assert.deepStrictEqual(fenceAttrs(out), [['k', 'a`b']]);
         const backticks = caretAt(stateOf('```js\ncode\n```\n'), 'code');
         const refused = commitAttributes(backticks, targetAt(backticks), '{k=a`b}');
-        assert.ok(refused !== null && 'refusal' in refused && /backtick/.test(refused.refusal), 'a ``` fence refuses it, saying why');
+        assert.ok(refused !== null && 'refusal' in refused && /backtick/.test(saidText(refused.refusal)), 'a ``` fence refuses it, saying why');
         assert.strictEqual(withoutId('{title="a`b" #w}', 'code_block~'), '{title=a`b}', 'a copy on a ~~~ fence keeps it');
         assert.strictEqual(withoutId('{title="a`b" #w}', 'code_block'), null, 'on a ``` fence there is none to keep');
     });
@@ -442,8 +458,8 @@ suite('Editor Attributes…: where the engine reads no attributes, nothing offer
         assert.strictEqual(literalRefusal('{.x}'), null);
         setInlineEngine(inlineEngineDefinition(noAttrs));
         const off = EditorState.create({ doc: parseDocument(noAttrs, source, {}).doc, plugins: editorPlugins() });
-        assert.strictEqual(refusalAt(caretAt(off, 'beta')), NO_ATTRS_REFUSAL, 'Formatting → Attributes… and the block bar');
-        assert.strictEqual(refusalAt(caretAt(off, 'Title')), NO_ATTRS_REFUSAL, 'a heading\'s {#id}');
+        assert.strictEqual(refusalAt(caretAt(off, 'beta')), saidText(NO_ATTRS_REFUSAL), 'Formatting → Attributes… and the block bar');
+        assert.strictEqual(refusalAt(caretAt(off, 'Title')), saidText(NO_ATTRS_REFUSAL), 'a heading\'s {#id}');
         assert.strictEqual(spanLockReason(select(off)), NO_ATTRS_REFUSAL, 'Span with class');
         assert.strictEqual(literalRefusal('{.x}'), NO_ATTRS_REFUSAL, 'a span\'s Edit attributes');
     });

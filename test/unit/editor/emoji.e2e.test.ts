@@ -3,6 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { refusalMs } from '../../../src/editor/refusal';
 import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, MOD, UNDO } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
@@ -184,7 +185,7 @@ suite('Editor emoji atom (e2e)', () => {
         assert.strictEqual((await hint()).shown, false, 'the caret left the paragraph');
     });
 
-    test('the same refusal is not said again while it is shown', async function () {
+    test('the same refusal again restarts its time (#10: a repeat is re-placed, restarted and said again)', async function () {
         this.timeout(20000);
         // Typing into the code span of a note's reference that holds its marker is refused (`noteRefusal`).
         await showDocument('A ++ref `xy` w|body++ z.\n', 'A');
@@ -199,8 +200,11 @@ suite('Editor emoji atom (e2e)', () => {
         assert.strictEqual(first.shown, true);
         await delay(2500);
         await refuse();
+        const ms = refusalMs((await hint()).text ?? '');
+        await delay(ms - 1000);
+        assert.strictEqual((await hint()).shown, true, 'held up by the repeat: its time starts again');
         await delay(1500);
-        assert.strictEqual((await hint()).shown, false, 'gone at the first one\'s time, not held up by the repeat');
+        assert.strictEqual((await hint()).shown, false, 'gone at the repeat\'s time');
     });
 
     test('the hint goes with the next change: Ctrl+Z gives the emoji back and takes the hint away', async function () {
