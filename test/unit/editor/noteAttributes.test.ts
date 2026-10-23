@@ -7,8 +7,8 @@ import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import {
-    LiteralObject, attributeHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, convertNoteTransaction, crumbsAt, noteFieldRange,
-    noteLiteralMarkerRefusal, noteLiteralRemoveGlued, objectAtSelection,
+    LiteralObject, attributeHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, convertNoteRefusal, convertNoteTransaction, crumbsAt,
+    literalCellRefusal, noteFieldRange, noteLiteralConvertRefusal, noteLiteralMarkerRefusal, noteLiteralRemoveGlued, noteSource, objectAtSelection,
 } from '../../../src/editor/webview/objects';
 import { saidText } from '../../../src/editor/tips';
 import { unwrapNote } from '../../../src/editor/webview/notes';
@@ -299,10 +299,55 @@ suite('Editor note attributes: setting and removing a note\'s literal', () => {
         const state = stateOf('x $a${.l}5\n');
         const refusal = changeInlineLiteralRefusal(state, noteObject(state, 'left_sidebar'), '');
         assert.ok(refusal !== null);
-        assert.strictEqual(saidText(refusal), noteLiteralRemoveGlued('left sidebar'));
+        assert.strictEqual(saidText(refusal), saidText(noteLiteralRemoveGlued('left sidebar', '5')));
+        assert.strictEqual(saidText(refusal), 'Not removed: without its attributes, the left sidebar would run into the "5" after it and stop being a sidebar. Type a space after the sidebar first.');
         assert.strictEqual(changeInlineLiteralTransaction(state, noteObject(state, 'left_sidebar'), ''), null);
         // With a space after it, the removal goes through.
         const spaced = stateOf('x $a${.l} 5\n');
         assert.strictEqual(changeInlineLiteralRefusal(spaced, noteObject(spaced, 'left_sidebar'), ''), null);
+    });
+
+    test('R2 names the character that breaks the read-back, not the first marker in the literal', () => {
+        // Review 1: `{title="a+b" data-x="@"}` was refused naming "+", which reads fine.
+        const state = stateOf('x @a@ and @c@\n');
+        const refusal = changeInlineLiteralRefusal(state, noteObject(state, 'right_sidebar'), '{title="a+b" data-x="@"}');
+        assert.strictEqual(saidText(refusal ?? ''), saidText(noteLiteralMarkerRefusal('right sidebar', '@')));
+    });
+
+    test('R6: in a table cell a | in a sidebar\'s literal is refused with the table\'s words', () => {
+        const state = stateOf('| a   | b |\n| --- | - |\n| $x$ | y |\n');
+        const refusal = changeInlineLiteralRefusal(state, noteObject(state, 'left_sidebar'), '{title="a|b"}');
+        assert.strictEqual(saidText(refusal ?? ''), saidText(literalCellRefusal('|')));
+        assert.ok(!saidText(refusal ?? '').includes('sidebar'), saidText(refusal ?? ''));
+    });
+});
+
+suite('Editor note attributes: Convert, Edit source and the note\'s source', () => {
+    test('fail-first: Move to right names the "@" of the kept literal that would pair with a later right sidebar', () => {
+        // Review 1 (blocker): Convert carried the literal past its read-back; written, `x @a@{title="@"} y @b@`
+        // reads as other sidebars. The file `x $a${title="@"} y @b@` itself reads `@"} y @` as the sidebar, so
+        // the page is built as a model: `@b@` put after the literal. Before the fix the refusal was the line's
+        // generic "its attributes {title="@"} wouldn't stay attributes", naming no character.
+        const start = stateOf('x $a${title="@"} y \n');
+        assert.deepStrictEqual(notesOf(start.doc), [['left_sidebar', '{title="@"}']]);
+        const right = noteAt(stateOf('@b@\n'), 'right_sidebar').node;
+        const end = start.doc.child(0).nodeSize - 1;
+        const tr = start.tr.insert(end, [editorSchema.text(' '), right]).setNodeMarkup(0, undefined, { ...start.doc.child(0).attrs, src: null });
+        const state = EditorState.create({ doc: tr.doc, plugins: editorPlugins() });
+        assert.deepStrictEqual(notesOf(state.doc), [['left_sidebar', '{title="@"}'], ['right_sidebar', null]]);
+        const at = noteAt(state, 'left_sidebar').pos;
+        const refusal = convertNoteRefusal(state, at);
+        assert.ok(refusal !== null, 'refused');
+        assert.strictEqual(saidText(refusal), saidText(noteLiteralConvertRefusal('right sidebar', '@')));
+        // Without the later sidebar it moves, its literal kept.
+        const alone = stateOf('x $a${title="@"} y\n');
+        assert.strictEqual(convertNoteRefusal(alone, noteAt(alone, 'left_sidebar').pos), null);
+    });
+
+    test('Edit source of a note shows its literal, glued to the marker, the marks around it left out', () => {
+        const marginal = stateOf('a **x !!r *b*|c **d**!!{.tipp} y** z\n');
+        assert.strictEqual(noteSource(noteAt(marginal).node), '!!r *b*|c **d**!!{.tipp}');
+        const sidebar = stateOf('a $x${#i .l} b\n');
+        assert.strictEqual(noteSource(noteAt(sidebar, 'left_sidebar').node), '$x${#i .l}');
     });
 });

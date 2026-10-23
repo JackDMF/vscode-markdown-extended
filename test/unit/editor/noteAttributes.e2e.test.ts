@@ -383,7 +383,7 @@ suite('Editor note attributes: menu, bubble and refusals (e2e)', () => {
         await page.click(verb);
         await delay(100);
         const hint = await page.$eval('.mep-hint', el => ({ text: el.textContent, at: (el as HTMLElement).dataset.at, hidden: (el as HTMLElement).hidden }));
-        assert.deepStrictEqual(hint, { text: 'Not removed: without its attributes the left sidebar would touch the character after it and stop being a sidebar. Put a space after it first.', at: 'control', hidden: false });
+        assert.deepStrictEqual(hint, { text: 'Not removed: without its attributes, the left sidebar would run into the "5" after it and stop being a sidebar. Type a space after the sidebar first.', at: 'control', hidden: false });
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing posted');
     });
 });
