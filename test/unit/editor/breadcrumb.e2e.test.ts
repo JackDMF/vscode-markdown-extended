@@ -170,6 +170,8 @@ suite('Editor breadcrumb: the bar (e2e)', () => {
         // Before, the bar was anchored at the admonition and stood under its last line.
         this.timeout(15000);
         await b.show(CRUMBS_DOC);
+        // Out of the heading the last test's Esc dismissed its bar in.
+        await b.clickAt('The last paragraph', 2);
         await b.restAt('Sync rules', 2);
         await page.waitForSelector(CRUMBS, { visible: true, timeout: 2000 });
         const bar = await rectOf(page, BAR);
@@ -717,6 +719,8 @@ suite('Editor breadcrumb: the fit at narrow widths (e2e)', () => {
         this.timeout(20000);
         await page.setViewport({ width: 420, height: 900 });
         await b.show(NARROW_DOC);
+        // Out of the item the last test's Esc dismissed its bar in.
+        await b.clickAt('The last paragraph', 2);
         await b.restAt('Queue the edit', 2);
         await page.waitForSelector(CRUMBS, { visible: true, timeout: 2000 });
         await delay(250);
