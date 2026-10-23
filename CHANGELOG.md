@@ -41,6 +41,7 @@
 - An admonition's bar for its heading stands at the heading's line, not under the whole box.
 - A list inside a quote with attributes shows "Quote › List item"; a list item starting with a heading keeps its bar.
 - Block changed elsewhere: an open attributes field refuses Enter, keeping your text; block deleted: it closes, saying so.
+- A change elsewhere beside the field's item or heading keeps the field and caret; Enter sets it as asked.
 - Remove ▾ says what stays for each part ("item stays"); tooltips name the part and say "Enter to set".
 - Fields keep a readable width beside a user stylesheet's narrow column or margin.
 - Inline fields opened from a bar open above when text is on both sides, like the bar.

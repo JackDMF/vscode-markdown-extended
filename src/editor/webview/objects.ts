@@ -38,7 +38,7 @@
  * bar shows only when there are some.
  */
 import { ReplaceAroundStep, Step, StepMap, liftTarget } from 'prosemirror-transform';
-import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
+import { Fragment, Mark, Node, NodeType, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
@@ -335,10 +335,11 @@ interface NodeAt {
  */
 function nestedHeadingOf(state: EditorState): NodeAt | null {
     const sel = state.selection;
-    if (sel instanceof NodeSelection) {
-        return null;
-    }
-    const { $from, $to } = sel;
+    return sel instanceof NodeSelection ? null : nestedHeadingIn(sel.$from, sel.$to);
+}
+
+/** `nestedHeadingOf` for the range `$from`–`$to`. */
+function nestedHeadingIn($from: ResolvedPos, $to: ResolvedPos): NodeAt | null {
     if ($from.depth < 2 || $from.parent.type !== nodes.heading || !$from.sameParent($to)) {
         return null;
     }
@@ -353,10 +354,11 @@ function nestedHeadingOf(state: EditorState): NodeAt | null {
 /** The innermost list item holding both ends of the selection, and its depth. */
 function innermostItemOf(state: EditorState): (NodeAt & { depth: number }) | null {
     const sel = state.selection;
-    if (sel instanceof NodeSelection) {
-        return null;
-    }
-    const { $from, $to } = sel;
+    return sel instanceof NodeSelection ? null : innermostItemIn(sel.$from, sel.$to);
+}
+
+/** `innermostItemOf` for the range `$from`–`$to`. */
+function innermostItemIn($from: ResolvedPos, $to: ResolvedPos): (NodeAt & { depth: number }) | null {
     for (let d = $from.depth; d > 1; d--) {
         const node = $from.node(d);
         if (node.type === nodes.list_item && $to.depth >= d && $to.node(d) === node) {
@@ -1445,7 +1447,11 @@ export type Followed = AttributesTarget | EditorObject | LiteralObject | { from:
  * step deleted from its start on (a resync replacing it: what then stands at
  * the place is its neighbour, never followed onto, #8 review 1), or where no
  * node of their type stands at the mapped place, decided on the new document;
- * a run whose end met its start. A step that only sets a node's markup at its
+ * a run whose end met its start. A step that swaps a block node's top-level
+ * block whole for one of the same type — a resync, whenever anything in the
+ * block differs — follows it to the same place inside (`followSwap`, #8
+ * review 2): a sibling's change keeps it; its own change the field's commit
+ * refuses. A step that only sets a node's markup at its
  * own place (a resync's `setNodeMarkup`, the fidelity repair) keeps it: its
  * literal may have changed, which the field's commit refuses
  * (`attributesStep`). Positions only: O(items × steps), never per key.
@@ -1459,14 +1465,23 @@ export function followAll(items: Iterable<Followed>, transactions: readonly Tran
         let to = 'pos' in item ? item.pos + item.node.nodeSize : item.to;
         let across = false;
         let after = false;
+        // A block node is followed through a swap of its top-level block (`followSwap`).
+        const block = ('pos' in item || 'node' in item) && item.node.isBlock ? item.node.type : null;
         for (const tr of transactions) {
             tr.steps.forEach((step, i) => {
                 const map = tr.mapping.maps[i];
                 if (!markupAt(step, from)) {
                     const start = map.mapResult(from, 1);
-                    across = across || start.deletedAcross;
                     // `deletedAfter` alone is also set by an insertion at the place: only a range that removes something counts.
-                    after = after || (start.deletedAfter && deletesFrom(map, from));
+                    const removes = start.deletedAfter && deletesFrom(map, from);
+                    const swapped = block !== null && !across && !after && (start.deletedAcross || removes)
+                        ? followSwap(map, tr.docs[i], tr.docs[i + 1] ?? tr.doc, from, block) : null;
+                    if (swapped !== null) {
+                        from = left = to = swapped;
+                        return;
+                    }
+                    across = across || start.deletedAcross;
+                    after = after || removes;
                     from = start.pos;
                 }
                 left = map.map(left, -1);
@@ -1502,6 +1517,53 @@ export function followAll(items: Iterable<Followed>, transactions: readonly Tran
         }
     }
     return gone;
+}
+
+/**
+ * Where the block node at `pos` in `before` stands after `map` (to `after`)
+ * swapped its top-level block whole for one block of the same type — a
+ * resync replaces a block whenever anything in it differs (#8 review 2): the
+ * node of `type` at the same index path inside the new block, or `null`. A
+ * parent on the path whose child count changed (an item inserted or removed)
+ * gives `null` too: what stands at the place may be a neighbour.
+ */
+function followSwap(map: StepMap, before: Node, after: Node, pos: number, type: NodeType): number | null {
+    if (pos >= before.content.size) {
+        return null;
+    }
+    const $pos = before.resolve(pos);
+    const blockFrom = $pos.depth === 0 ? pos : $pos.before(1);
+    const old = before.nodeAt(blockFrom);
+    if (old === null) {
+        return null;
+    }
+    let swap: { from: number; to: number } | null = null;
+    map.forEach((oldStart, oldEnd, newStart, newEnd) => {
+        if (oldStart === blockFrom && oldEnd === blockFrom + old.nodeSize) {
+            swap = { from: newStart, to: newEnd };
+        }
+    });
+    const range = swap as { from: number; to: number } | null;
+    const fresh = range === null ? null : after.nodeAt(range.from);
+    if (range === null || fresh === null || fresh.type !== old.type || range.from + fresh.nodeSize !== range.to) {
+        return null;
+    }
+    let was: Node = old;
+    let now: Node = fresh;
+    let at = range.from;
+    for (let d = 1; d <= $pos.depth; d++) {
+        const index = $pos.index(d);
+        if (was.childCount !== now.childCount || index >= now.childCount) {
+            return null;
+        }
+        at += 1;
+        for (let k = 0; k < index; k++) {
+            at += now.child(k).nodeSize;
+        }
+        was = was.child(index);
+        now = now.child(index);
+    }
+    return now.type === type ? at : null;
 }
 
 /** Whether `map` removes a range starting at `pos`. */
@@ -1585,17 +1647,14 @@ function blockPart(role: CrumbPart['role'], node: Node, pos: number, nested: boo
  *   refused part (F3) — unless the list stands in a quote carrying a literal:
  *   then the Quote (#8 review 1).
  * - Else the top-level block alone (refused in a wrapper, as the menu says).
+ *
+ * Read from the range `$from`–`$to`: a selection's, or a selected image's place.
  */
-function blockCrumbsOf(state: EditorState): Crumbs | null {
-    const sel = state.selection;
-    if (sel instanceof NodeSelection) {
-        return null;
-    }
-    const { $from, $to } = sel;
+function blockCrumbsOf($from: ResolvedPos, $to: ResolvedPos): Crumbs | null {
     if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1)) {
         return null;
     }
-    const heading = nestedHeadingOf(state);
+    const heading = nestedHeadingIn($from, $to);
     if (heading !== null) {
         const current = blockPart('current', heading.node, heading.pos, true);
         for (let d = $from.depth - 1; d >= 1; d--) {
@@ -1612,7 +1671,7 @@ function blockCrumbsOf(state: EditorState): Crumbs | null {
         const quote = $from.node(1);
         return { current, outer: literalOf(quote) === null ? null : blockPart('outer', quote, $from.before(1), false) };
     }
-    const item = innermostItemOf(state);
+    const item = innermostItemIn($from, $to);
     if (item !== null) {
         const current = blockPart('current', item.node, item.pos, true);
         const top = $from.node(1);
@@ -1665,7 +1724,7 @@ export function crumbsAt(state: EditorState): Crumbs | null {
         : null;
     // A selected image's blocks are those of the caret at it (#8 review 1: List item › Image, Quote › Image).
     const blocks = inline !== null && state.selection instanceof NodeSelection && state.selection.node.isInline
-        ? blockCrumbsOf(state.apply(state.tr.setSelection(TextSelection.create(state.doc, state.selection.from))))
+        ? blockCrumbsOf(state.selection.$from, state.selection.$from)
         : blockCrumbsAt(state);
     let value: Crumbs | null = blocks;
     if (inline !== null) {
@@ -1688,7 +1747,8 @@ function blockCrumbsAt(state: EditorState): Crumbs | null {
     if (known !== undefined && known.definition === definition) {
         return known.value;
     }
-    const value = blockCrumbsOf(state);
+    const sel = state.selection;
+    const value = sel instanceof NodeSelection ? null : blockCrumbsOf(sel.$from, sel.$to);
     blockCrumbCache.set(state, { definition, value });
     return value;
 }

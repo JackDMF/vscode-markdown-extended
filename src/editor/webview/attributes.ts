@@ -46,6 +46,7 @@
  * item's at any depth.
  */
 import { EditorView } from 'prosemirror-view';
+import { Mark, Node } from 'prosemirror-model';
 import { showChangeHint, undoHint } from './hint';
 import { wording } from '../verbs';
 import { FENCED_DONE } from '../fences';
@@ -123,12 +124,26 @@ export function attributesRemovedHint(name: string): string {
 }
 
 /**
- * What an open attributes field says on Enter when the literal of the element
- * called `name` changed elsewhere since it opened (#8 review 1): refused in
+ * What an open attributes field says on Enter when the element called `name`
+ * — a block by its name, an inline element by its noun ("bold text") — or its
+ * literal changed elsewhere since it opened (#8 reviews 1 and 2): refused in
  * the field, what was typed kept, nothing written over the other change.
  */
 export function staleFieldRefusal(name: string): string {
     return `This ${name.toLowerCase()} changed meanwhile — press Esc and open its attributes again to see the new ones.`;
+}
+
+/** The source bookkeeping a top-level node carries (`sourceAttrs`): set by the host and the fidelity repair, not a change of the node. */
+const BOOKKEEPING: ReadonlySet<string> = new Set(['src', 'gap']);
+
+/** Whether `now` is the node an open field was opened on: type, marks, content and attributes, the source bookkeeping aside. */
+function sameAsOpened(now: Node, opened: Node): boolean {
+    if (now === opened) {
+        return true;
+    }
+    return now.type === opened.type && Mark.sameSet(now.marks, opened.marks) && now.content.eq(opened.content)
+        && Object.keys(now.attrs).every(key => BOOKKEEPING.has(key) || now.attrs[key] === opened.attrs[key]
+            || JSON.stringify(now.attrs[key]) === JSON.stringify(opened.attrs[key]));
 }
 
 /**
@@ -154,10 +169,12 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
     // `target` is followed in place while the field is open (`FieldStep.followed`, #8 F7): a caller sharing it — a bar's
     // anchor for the field — sees it move with it; one that must not, passes a copy.
     const opened = literalOf(target.node);
+    const openedNode = target.node;
     return attributesField(target.name, opened, (value, refused) => {
-        // Changed elsewhere since the field opened (#8 review 1): never written over the other change.
+        // Changed elsewhere since the field opened — its literal or anything else in it (#8 reviews 1 and 2): never
+        // written over the other change. A change beside it (a sibling item) leaves it equal: written as asked.
         const now = currentTarget(view.state, target);
-        if (now !== null && literalOf(now.node) !== opened) {
+        if (now !== null && !sameAsOpened(now.node, openedNode)) {
             return refused(staleFieldRefusal(target.name));
         }
         // Asked first, so a refusal keeps the field open with what was typed; the
@@ -205,7 +222,7 @@ export function holderAttributesStep(view: EditorView, at: InlineHolderAt): Fiel
         }
         // Changed elsewhere since the field opened (#8 review 1): never written over the other change.
         if (literalOfObject(current) !== opened) {
-            return refused(staleFieldRefusal(holderNames(at).label));
+            return refused(staleFieldRefusal(holderNames(at).noun));
         }
         const refusal = changeInlineLiteralRefusal(view.state, current, value);
         if (refusal !== null) {

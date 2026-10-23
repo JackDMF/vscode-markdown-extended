@@ -865,7 +865,8 @@ class ObjectBar {
             sep.hidden = false;
         }
         // Never past the window, whatever the room (#8 review 1: at 380 px the bar ran off it): its "…" stays inside.
-        this.el.style.maxWidth = `${Math.floor(Math.min(room, window.innerWidth - BAR_WINDOW_GUTTER))}px`;
+        // The window's width less a scrollbar, as the placement clamps with (`placement.ts`).
+        this.el.style.maxWidth = `${Math.floor(Math.min(room, document.documentElement.clientWidth - BAR_WINDOW_GUTTER))}px`;
         const left = this.el.style.left;
         this.el.style.left = '0px';
         const more = this.more;

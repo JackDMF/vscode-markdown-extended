@@ -880,6 +880,83 @@ suite('Editor breadcrumb: an open field through a host resync (e2e)', () => {
         const edits = await (editor as EditorPage).edits();
         assert.ok(edits.slice(before).every(e => !e.text.includes('.mine')), 'nothing written');
     });
+
+    /**
+     * A resync replaces a whole top-level block whenever anything in it
+     * differs (#8 review 2): the field follows its target into the new block
+     * at the same place. A change beside the target keeps the field and Enter
+     * writes to it; a change of the target itself refuses in the field; only
+     * where no node of its kind stands at the place does the field close.
+     */
+    const LIST = (one: string, two: string) => `- ${one}\n- ${two}\n\n{.steps}\n\nThe last paragraph.\n`;
+    const ADMONITION = (body: string) => `!!! warning\n    ## Sync rules {#sync-rules}\n\n    ${body}\n\nThe last paragraph.\n`;
+    const openPart = async (text: string, needle: string, part: 'current' | 'outer', typed: string) => {
+        await b.show(text);
+        await b.clickAt(needle, 2);
+        await b.pressAlt('Enter');
+        await page.click(`${CRUMBS} [data-part="${part}"]`);
+        await page.waitForSelector(FIELD, { visible: true, timeout: 2000 });
+        await delay(100);
+        await page.keyboard.type(typed);
+    };
+    const refusalText = () => page.$eval('.mep-object-toolbar .mep-field-refusal-text', el => el.textContent ?? '').catch(() => '');
+
+    for (const [what, text, needle, part, after, written] of [
+        ['a sibling item\'s text changed: the List item field', LIST('one', 'two'), 'one', 'current', LIST('one', 'two changed'), '- one {.mine}\n- two changed\n'],
+        ['the admonition\'s body changed: the Heading field', ADMONITION('Body text.'), 'Sync rules', 'current', ADMONITION('Body text changed.'), '    ## Sync rules {.mine}\n'],
+    ] as const) {
+        test(`fail-first: ${what} stays open with what was typed; Enter writes to the same node`, async function () {
+            // Before the fix the resync replaced the block, the field closed ("…changed or removed elsewhere") and the typing was lost.
+            this.timeout(20000);
+            await openPart(text, needle, part, '.mine');
+            await b.resync(after);
+            await delay(150);
+            assert.ok(await page.$(FIELD), 'the field is still open');
+            assert.strictEqual(await page.$eval(FIELD, el => (el as HTMLInputElement).value), '.mine');
+            await page.keyboard.press('Enter');
+            await settle();
+            const now = (await b.lastEdit())?.text ?? '';
+            assert.ok(now.includes(written), now);
+        });
+    }
+
+    for (const [what, text, needle, part, after, said] of [
+        ['the item\'s own text changed', LIST('one', 'two'), 'one', 'current', LIST('one more', 'two'), /This list item changed meanwhile/],
+        ['the item\'s own literal changed', LIST('one {.i}', 'two'), 'one', 'current', LIST('one {.j}', 'two'), /This list item changed meanwhile/],
+        ['an item of the list changed: the List field', LIST('one', 'two'), 'one', 'outer', LIST('one', 'two changed'), /This list changed meanwhile/],
+    ] as const) {
+        test(`fail-first: ${what} — Enter refuses in the field, what was typed kept, nothing written`, async function () {
+            // Before the fix the field closed and the typing was lost.
+            this.timeout(20000);
+            await openPart(text, needle, part, '.mine');
+            const typed = await page.$eval(FIELD, el => (el as HTMLInputElement).value);
+            const before = (await (editor as EditorPage).edits()).length;
+            await b.resync(after);
+            await delay(150);
+            assert.ok(await page.$(FIELD), 'the field is still open');
+            await page.keyboard.press('Enter');
+            await settle();
+            assert.ok(await page.$(FIELD), 'the field stays open');
+            assert.strictEqual(await page.$eval(FIELD, el => (el as HTMLInputElement).value), typed);
+            assert.match(await refusalText(), said);
+            const edits = await (editor as EditorPage).edits();
+            assert.ok(edits.slice(before).every(e => !e.text.includes('.mine')), 'nothing written');
+        });
+    }
+
+    test('the item removed elsewhere while its field is open: the field closes with the hint, nothing written', async function () {
+        this.timeout(20000);
+        await openPart(LIST('one', 'two'), 'one', 'current', '.mine');
+        const before = (await (editor as EditorPage).edits()).length;
+        await b.resync('- two\n\n{.steps}\n\nThe last paragraph.\n');
+        await delay(150);
+        assert.strictEqual(await page.$(FIELD), null, 'the field is gone');
+        assert.match(await b.hint(), /This list item was changed or removed elsewhere/);
+        await page.keyboard.press('Enter');
+        await settle();
+        const edits = await (editor as EditorPage).edits();
+        assert.ok(edits.slice(before).every(e => !e.text.includes('.mine')), 'nothing written');
+    });
 });
 
 /**

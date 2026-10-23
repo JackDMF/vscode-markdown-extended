@@ -1,6 +1,33 @@
 import { Mark, Node } from 'prosemirror-model';
-import { EditorState, Transaction } from 'prosemirror-state';
+import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { PRESERVE_SOURCE_META } from '../fidelity';
+
+/**
+ * `pos` inside the top-level block at `oldFrom` in `old`, at the same place
+ * inside the block at `newFrom` in `next` (#8 review 2): the same index path,
+ * every node on it of the same type with as many children, and the same
+ * offset in a textblock that has room for it; else `null`.
+ */
+function samePlace(old: Node, pos: number, next: Node, newFrom: number): number | null {
+    const $pos = old.resolve(pos);
+    let node = next.nodeAt(newFrom);
+    if ($pos.depth < 1 || node === null || node.type !== $pos.node(1).type) {
+        return null;
+    }
+    let at = newFrom;
+    for (let d = 2; d <= $pos.depth; d++) {
+        const index = $pos.index(d - 1);
+        if (node.childCount !== $pos.node(d - 1).childCount || node.child(index).type !== $pos.node(d).type) {
+            return null;
+        }
+        at += 1;
+        for (let k = 0; k < index; k++) {
+            at += node.child(k).nodeSize;
+        }
+        node = node.child(index);
+    }
+    return node.inlineContent && $pos.parentOffset <= node.content.size ? at + 1 + $pos.parentOffset : null;
+}
 
 /** Same type, marks and content — the node may still differ in its attributes. */
 function sameContent(a: Node, b: Node): boolean {
@@ -20,6 +47,9 @@ function sameContent(a: Node, b: Node): boolean {
  * content positions, so a history step inside it still maps. A single
  * whole-document replace would be simpler and would lose the history: a step
  * whose position a replace deleted cannot be mapped, and undo drops it.
+ *
+ * A caret inside a block replaced by one block of its type keeps its place
+ * in it (`samePlace`); elsewhere the selection is mapped.
  *
  * The result equals `next` node for node. The transaction is kept out of the
  * history (it is not the person's edit, and undo must not revert another
@@ -56,6 +86,18 @@ export function resyncTransaction(state: EditorState, next: Node): Transaction {
     }
     if (from !== to || middle.length > 0) {
         tr.replaceWith(from, to, middle);
+        // One block swapped for one of its type (anything in it differs: a sibling item's text): a caret in it
+        // stays at its place there (#8 review 2), so its bar and an open field stay with it — mapped, it would
+        // leave the block.
+        const sel = state.selection;
+        if (middle.length === 1 && oldCount - head - tail === 1 && sel instanceof TextSelection
+            && sel.from > from && sel.to < to) {
+            const anchor = samePlace(doc, sel.anchor, tr.doc, from);
+            const caret = samePlace(doc, sel.head, tr.doc, from);
+            if (anchor !== null && caret !== null) {
+                tr.setSelection(TextSelection.create(tr.doc, anchor, caret));
+            }
+        }
     }
 
     // `setNodeMarkup` never changes a node's size, so offsets in `next` are
