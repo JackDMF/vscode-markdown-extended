@@ -46,6 +46,12 @@
 - Fields keep a readable width beside a user stylesheet's narrow column or margin.
 - Inline fields opened from a bar open above when text is on both sides, like the bar.
 - A source block made by an admonition title's or a quote paragraph's {…} names it and says what it does.
+- Sidenotes, marginal notes and sidebars keep a {…} after their closing marker, e.g. !!Tempo|…!!{.tipp}, and open as rich text.
+- Note and sidebar bars show the literal, e.g. "Marginal note {.tipp}", with Attributes… and "Remove attributes, keep note".
+- A note's attributes field opens at its reference, never at the text in the margin.
+- Formatting's attributes entry rests as "Inline attributes…" and names a note at the caret, e.g. "Attributes of Marginal note…".
+- Convert to sidenote or marginal note keeps the note's attributes.
+- Source blocks name a holder's attributes they cannot keep, e.g. "has a marginal note with attributes".
 
 ## v4.9.0 — Layers That Keep Their Place
 
