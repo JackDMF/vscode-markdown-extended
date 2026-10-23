@@ -1660,10 +1660,13 @@ export function crumbsAt(state: EditorState): Crumbs | null {
     if (known !== undefined && known.definition === definition) {
         return known.value;
     }
-    const blocks = blockCrumbsAt(state);
     const inline = state.selection instanceof TextSelection || state.selection instanceof NodeSelection
         ? holderRunAt(state, INLINE_LITERAL_HOLDERS, true)
         : null;
+    // A selected image's blocks are those of the caret at it (#8 review 1: List item › Image, Quote › Image).
+    const blocks = inline !== null && state.selection instanceof NodeSelection && state.selection.node.isInline
+        ? blockCrumbsOf(state.apply(state.tr.setSelection(TextSelection.create(state.doc, state.selection.from))))
+        : blockCrumbsAt(state);
     let value: Crumbs | null = blocks;
     if (inline !== null) {
         const block = blocks?.current ?? null;

@@ -16,7 +16,7 @@ const INLINE_DOC = [
     '> See the [sync guide](guide.md){.ref} before you merge anything.',
     '> {.tip}',
     '',
-    '- ![diagram](diagram.png){.wide} The flow of a sync {.figure}',
+    '- The flow of a sync: ![diagram](diagram.png){.wide} {.figure}',
     '- The second step',
     '',
     'The last paragraph.',
@@ -114,7 +114,7 @@ const SCENES: { name: string; doc?: string; step: Step }[] = [
     { name: 'bar-link', doc: INLINE_DOC, step: (_, b) => b.restAt('sync guide', 3) },
     {
         name: 'bar-image', doc: INLINE_DOC, step: async page => {
-            await page.click('.ProseMirror img[src*="diagram"], .ProseMirror [data-src*="diagram"]');
+            await page.click('.ProseMirror img[alt="diagram"]');
             await delay(900);
         },
     },

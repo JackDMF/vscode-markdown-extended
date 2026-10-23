@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { Node, ResolvedPos } from 'prosemirror-model';
-import { EditorState, TextSelection } from 'prosemirror-state';
+import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
 import { saidText } from '../../../src/editor/tips';
 import {
@@ -144,6 +144,15 @@ suite('Editor breadcrumb: one resolver for the bar and the menu (#8 step 2)', ()
             assert.deepStrictEqual(shape(crumbs.outer), f.outer(state), 'outer');
         });
     }
+
+    test('fail-first, #8 review 1: a selected image in a list item carrying one — List item › Image', () => {
+        // Before, a node selection had no block parts: the image's bar stood alone, the item's literal unreachable.
+        const state = stateOf('- The flow: ![d](d.png){.wide} {.figure}\n- b\n');
+        const pos = nodePos(state, 'image');
+        const selected = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, pos)));
+        const crumbs = crumbsAt(selected);
+        assert.deepStrictEqual([crumbs?.current.name, crumbs?.current.literal, crumbs?.outer?.name, crumbs?.outer?.literal], ['Image', '{.wide}', 'List item', '{.figure}']);
+    });
 
     test('fail-first: the bar and the menu agree — the bar\'s object is the menu\'s target, or holds it', () => {
         // Before #8, at `- a {.i}` under a list carrying `{.l}`, the bar was the list's ("List attributes")
