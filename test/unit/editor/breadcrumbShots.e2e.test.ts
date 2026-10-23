@@ -9,6 +9,20 @@ import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes'
 /** A user stylesheet loaded as `markdown.styles` loads it (Daniel's petrol one): read, never copied; that set is skipped without it. */
 const USER_STYLESHEET = process.env.MEP_USER_STYLESHEET;
 
+/** Two-part bars on inline parts (#8 review 1): Quote › Link, List item › Image. */
+const INLINE_DOC = [
+    'Inline parts.',
+    '',
+    '> See the [sync guide](guide.md){.ref} before you merge anything.',
+    '> {.tip}',
+    '',
+    '- ![diagram](diagram.png){.wide} The flow of a sync {.figure}',
+    '- The second step',
+    '',
+    'The last paragraph.',
+    '',
+].join('\n');
+
 const DOC = [
     'Sync behaviour, as the team agreed it.',
     '',
@@ -96,7 +110,16 @@ const SCENES: { name: string; doc?: string; step: Step }[] = [
     { name: 'bar-quote-heading', step: (_, b) => b.restAt('Sync rules', 2) },
     { name: 'bar-admonition-heading', step: (_, b) => b.restAt('Before you merge', 2) },
     { name: 'bar-single', step: (_, b) => b.restAt('Conflicts are', 3) },
+    // #8 review 1: Link › Quote and Image › List item, two-part bars on inline parts.
+    { name: 'bar-link', doc: INLINE_DOC, step: (_, b) => b.restAt('sync guide', 3) },
+    {
+        name: 'bar-image', doc: INLINE_DOC, step: async page => {
+            await page.click('.ProseMirror img[src*="diagram"], .ProseMirror [data-src*="diagram"]');
+            await delay(900);
+        },
+    },
     { name: 'focus-first', step: async (_, b) => { await b.clickAt('Queue the edit', 2); await b.pressAlt('Enter'); } },
+    { name: 'focus-first-admonition', step: async (_, b) => { await b.clickAt('Before you merge', 2); await b.pressAlt('Enter'); } },
     {
         name: 'focus-part-outer', step: async (page, b) => {
             await b.clickAt('Queue the edit', 2);
@@ -157,7 +180,33 @@ const SCENES: { name: string; doc?: string; step: Step }[] = [
 
 const slug = (theme: Theme) => theme.name.toLowerCase().replace(/\s+/g, '-');
 
-/** What the bar measures: the parts' colours against the bar's ground, the current name's weight, a focused control's ring. */
+/** A computed colour as [r, g, b, a] (`rgb(…)`, `rgba(…)`, `color(srgb r g b / a)`); `null` where it is none of them. */
+function rgbaOf(c: string): [number, number, number, number] | null {
+    const srgb = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?/.exec(c);
+    if (srgb) {
+        return [Number(srgb[1]) * 255, Number(srgb[2]) * 255, Number(srgb[3]) * 255, srgb[4] === undefined ? 1 : Number(srgb[4])];
+    }
+    const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/.exec(c);
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])] : null;
+}
+
+/** `fg` with its alpha (times `opacity`, the element's own) laid over the opaque `bg`, as the eye sees it (#8 review 1: HC's colours carry alpha). */
+function composite(fg: string, bg: string, opacity = 1): string {
+    const f = rgbaOf(fg);
+    const b = rgbaOf(bg);
+    if (f === null || b === null) {
+        return fg;
+    }
+    const a = f[3] * opacity;
+    const mix = [0, 1, 2].map(k => Math.round(f[k] * a + b[k] * (1 - a)));
+    return `rgb(${mix.join(', ')})`;
+}
+
+/**
+ * What the bar measures: the parts' colours against the bar's ground — each
+ * alpha composited, the ground over the page's, a part's colour (and its
+ * opacity) over the ground — the current name's weight, a focused control's ring.
+ */
 async function measure(page: puppeteer.Page): Promise<Record<string, unknown>> {
     const m = await page.evaluate(sel => {
         const bar = document.querySelector(sel) as HTMLElement | null;
@@ -165,28 +214,42 @@ async function measure(page: puppeteer.Page): Promise<Record<string, unknown>> {
             return null;
         }
         const back = getComputedStyle(bar).backgroundColor;
+        const page = getComputedStyle(document.body).backgroundColor;
+        const opacityOf = (el: HTMLElement) => {
+            let o = 1;
+            for (let at: HTMLElement | null = el; at !== null && at !== bar; at = at.parentElement) {
+                o *= Number(getComputedStyle(at).opacity);
+            }
+            return o;
+        };
         const colour = (q: string) => {
             const el = bar.querySelector(q) as HTMLElement | null;
-            return el === null || el.offsetParent === null ? null : getComputedStyle(el).color;
+            return el === null || el.offsetParent === null ? null : { color: getComputedStyle(el).color, opacity: opacityOf(el) };
         };
         const focused = document.activeElement instanceof HTMLElement && bar.contains(document.activeElement) && document.activeElement !== bar ? getComputedStyle(document.activeElement) : null;
         return {
             back,
+            page,
             outer: colour('[data-part="outer"] .mep-crumb-name'),
             current: colour('[data-part="current"] .mep-crumb-name'),
             weight: (() => {
                 const el = bar.querySelector('[data-part="current"] .mep-crumb-name');
                 return el === null ? null : getComputedStyle(el).fontWeight;
             })(),
-            ring: focused === null ? null : focused.outlineColor,
+            ring: focused === null ? null : { color: focused.outlineColor, opacity: 1 },
             hoverOutline: getComputedStyle(document.body).getPropertyValue('--vscode-toolbar-hoverOutline').trim() || null,
         };
     }, BAR);
     if (m === null) {
         return { bar: 'none' };
     }
-    const ratio = (c: string | null) => (c === null || m.back === 'rgba(0, 0, 0, 0)' ? null : Number(contrastOf(c, m.back).toFixed(2)));
-    return { ...m, outerContrast: ratio(m.outer), currentContrast: ratio(m.current), ringContrast: ratio(m.ring) };
+    // The ground as drawn: the bar's colour over the page's (itself over white where the page sets none).
+    const ground = composite(m.back, composite(m.page, 'rgb(255, 255, 255)'));
+    const ratio = (c: { color: string; opacity: number } | null) => (c === null ? null : Number(contrastOf(composite(c.color, ground, c.opacity), ground).toFixed(2)));
+    return {
+        ...m, ground, outer: m.outer?.color ?? null, current: m.current?.color ?? null, ring: m.ring?.color ?? null,
+        outerContrast: ratio(m.outer), currentContrast: ratio(m.current), ringContrast: ratio(m.ring),
+    };
 }
 
 /**
