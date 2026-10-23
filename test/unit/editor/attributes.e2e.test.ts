@@ -385,6 +385,14 @@ suite('Editor Attributes… (e2e)', () => {
         await page.hover(ENTRY);
         await page.waitForSelector('.mep-preview-card[data-action="block-attributes"]:not([hidden]) .mep-preview-refusal', { timeout: 2000 });
         assert.strictEqual(await page.$eval('.mep-preview-card .mep-preview-refusal', el => el.textContent), saidText(CONTAINER_ATTRS_REFUSAL));
+        // A reader's stylesheet sets the document's font on `body`; the card's own words keep the editor's.
+        await page.addStyleTag({ content: 'body { font-family: Georgia, serif; line-height: 1.9; }' });
+        const said = await page.$eval('.mep-preview-card .mep-preview-refusal', el => {
+            const s = getComputedStyle(el);
+            return { font: s.fontFamily, ratio: parseFloat(s.lineHeight) / parseFloat(s.fontSize) };
+        });
+        assert.ok(!/Georgia/.test(said.font), `the reason keeps the editor's font: ${said.font}`);
+        assert.ok(said.ratio < 1.5, `the reason keeps the editor's line height: ${said.ratio}`);
         await shot('05-disabled-entry-reason.png');
         await page.click(ENTRY);
         await delay(100);
