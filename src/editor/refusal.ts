@@ -9,7 +9,7 @@
  * No DOM here; ProseMirror's model only to read nodes.
  */
 import { Mark, Node } from 'prosemirror-model';
-import { holderOfCarrier, namesOf } from './inlineLiterals';
+import { NOTE_NAMES, holderOfCarrier, namesOf } from './inlineLiterals';
 
 /** The time a hint stays at least, and at most: a reason is read, and a long one is given longer. */
 const REFUSAL_MIN_MS = 3_500;
@@ -23,13 +23,8 @@ export function refusalMs(text: string): number {
 /** A refusal said again at the same place within this time (a held key) restarts its time but is not announced again. */
 export const REANNOUNCE_GAP_MS = 1_000;
 
-/** What each note is called — on its bar, in the Annotation menu, and (lowercase) in a refusal. */
-export const NOTE_LABELS = {
-    sidenote: 'Sidenote',
-    marginal_note: 'Marginal note',
-    left_sidebar: 'Left sidebar',
-    right_sidebar: 'Right sidebar',
-} as const;
+/** What each note is called — on its bar, in the Annotation menu, and (lowercase) in a refusal (`NOTE_NAMES`, `inlineLiterals.ts`). */
+export const NOTE_LABELS = NOTE_NAMES;
 
 /** A note's name mid-sentence (`sidenote`, `left sidebar`); `note` for anything else. */
 export function noteNoun(node: Node | string): string {

@@ -291,7 +291,8 @@ export const NOTE_CLOSE_TOKENS: ReadonlySet<string> = new Set(['sidenote_close',
  * slot for. Anything beyond them came from a `{…}` literal (`markdown-it-attrs`):
  * the editor keeps that literal where it can say where it was written — a span's
  * (`[text]{…}`), the one written after emphasis, a link, inline code, an image,
- * superscript, subscript or a key (`_x_{…}`, `[x](u){…}`, the inline holders of
+ * superscript, subscript, a key, a note or a sidebar (`_x_{…}`, `[x](u){…}`,
+ * `!!r|b!!{…}`, the inline holders of
  * `inlineLiterals.ts`, whose `own` attributes are theirs: a link's `href`, an
  * image's `src`), a top-level block's (`recoverBlockAttrs`), a list item's, a
  * heading's — and leaves any other element carrying one (a nested paragraph) a
@@ -315,8 +316,8 @@ function attrsAllowed(token: Token): boolean {
 /**
  * Whether an inline token is one whose mark or node carries a literal
  * (`literal`, `recoverInlineLiterals`): every attribute span, and emphasis, a
- * link, inline code, an image, superscript, subscript or a key
- * markdown-it-attrs gave attributes (`holderOfToken`, `inlineLiterals.ts`).
+ * link, inline code, an image, superscript, subscript, a key, a note or a
+ * sidebar markdown-it-attrs gave attributes (`holderOfToken`, `inlineLiterals.ts`).
  */
 export function carriesInlineLiteral(token: Token): boolean {
     return holderOfToken(token.type) !== undefined && (token.type === 'span_open' || literalAttrs(token).length > 0);

@@ -480,7 +480,7 @@ function selectionKept(state: EditorState, tr: Transaction, pos: number, size: n
 
 /**
  * The note at `pos` converted to its counterpart (`NOTE_CONVERSION`), its
- * reference, body and marks kept as they are, the selection where it was — the
+ * reference, body, marks and literal kept as they are, the selection where it was — the
  * two have the same structure, so every position inside means the same. One
  * step: one undo converts it back. `null` where there is no note.
  */
@@ -490,13 +490,15 @@ export function convertNoteTransaction(state: EditorState, pos: number): Transac
         return null;
     }
     const target = NOTE_CONVERSION[node.type.name as NoteNodeName];
+    // Its attributes stay (Daniel, F6): `{.tipp}` styles `mn-ref` and `sn-ref` alike.
+    const attrs = { literal: node.attrs.literal as string | null };
     let next: Node;
     if (target === 'sidenote' || target === 'marginal_note') {
         const body = (target === 'sidenote' ? nodes.sidenote_body : nodes.marginal_note_body).create(null, node.child(1).content);
         // The reference is made again: its anchor class is the target's.
-        next = nodes[target].create(null, [noteRef(target, node.child(0).content), body], node.marks);
+        next = nodes[target].create(attrs, [noteRef(target, node.child(0).content), body], node.marks);
     } else {
-        next = nodes[target].create(null, node.content, node.marks);
+        next = nodes[target].create(attrs, node.content, node.marks);
     }
     const tr = state.tr.replaceWith(pos, pos + node.nodeSize, next);
     return tr.setSelection(selectionKept(state, tr, pos, node.nodeSize)).scrollIntoView();

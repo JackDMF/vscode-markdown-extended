@@ -510,15 +510,16 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
         sup: { mark: 'sup', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
         sub: { mark: 'sub', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
         kbd: { mark: 'kbd', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
-        // A note's `_ref_` and `_content_` pairs are its two child nodes.
-        sidenote: { block: 'sidenote' },
+        // A note's `_ref_` and `_content_` pairs are its two child nodes. A `{…}`
+        // glued to its closing marker is the note's `literal`, as the source spells it.
+        sidenote: { block: 'sidenote', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
         sidenote_ref: { block: 'note_ref', getAttrs: () => ({ anchor: NOTE_SYNTAX.sidenote.anchorClass }) },
         sidenote_content: { block: 'sidenote_body' },
-        marginal_note: { block: 'marginal_note' },
+        marginal_note: { block: 'marginal_note', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
         marginal_note_ref: { block: 'note_ref', getAttrs: () => ({ anchor: NOTE_SYNTAX.marginalNote.anchorClass }) },
         marginal_note_content: { block: 'marginal_note_body' },
-        left_sidebar: { block: 'left_sidebar' },
-        right_sidebar: { block: 'right_sidebar' },
+        left_sidebar: { block: 'left_sidebar', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
+        right_sidebar: { block: 'right_sidebar', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
     };
 
     // The tokenizer MarkdownParser is given is a stand-in returning the

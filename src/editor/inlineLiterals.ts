@@ -10,15 +10,33 @@
  * plugin gives it to, which characters it follows in the source and the
  * smallest source in which the plugin reads one on it.
  *
+ * Notes and sidebars are holders too (`++r|b++{.x}`, `!!r|b!!{.x}`, `$b${.x}`,
+ * `@b@{.x}`): the notes plugin's outer span takes a `{…}` glued to the
+ * closing marker. Each is a node carrying the literal, as an image is; a `{…}`
+ * after a space or on the next line is the paragraph's, heading's or item's.
+ *
  * No ProseMirror and no DOM here, so every module can read it.
  * `attrs.test.ts` holds each entry to the engine: the literal written after
  * its `source` is given to its `token`, and the cut is right after it.
  */
+import { NOTE_SYNTAX } from '../syntax/markers';
+
+/**
+ * What each note is called — on its bar, in the Annotation menu, and (lowercase)
+ * in a refusal. The one source of the four names: `refusal.ts` and
+ * `webview/notes.ts` give them out as `NOTE_LABELS`, the registry reads them.
+ */
+export const NOTE_NAMES = {
+    sidenote: 'Sidenote',
+    marginal_note: 'Marginal note',
+    left_sidebar: 'Left sidebar',
+    right_sidebar: 'Right sidebar',
+} as const;
 
 export interface InlineLiteralHolder {
     /** The holder's key, what `attrsReadAt` and a `LiteralPlace` know it by: `span`, `em`, `link`, `code`, `image` … */
     holder: string;
-    /** What carries `literal` in the schema: a mark, or the node for an image. */
+    /** What carries `literal` in the schema: a mark, or the node for an image, a note or a sidebar. */
     carrier: { mark: string } | { node: string };
     /** The token markdown-it-attrs gives the literal to: `em_open`, `span_open`, `code_inline`, `image` … */
     token: string;
@@ -48,7 +66,7 @@ export interface InlineLiteralHolder {
     markups?: Readonly<Record<string, HolderNames>>;
     /** `text` written as this element with `literal` after it (`markup` its delimiter, where it has a choice): what the menu's syntax column and card show. */
     example: (text: string, literal: string, markup?: string) => string;
-    /** The element the engine renders it as (`markup` its delimiter); none for an image, which has no text to show. */
+    /** The element the engine renders it as (`markup` its delimiter); none for an image, which has no text to show, nor a note (its card is drawn apart). */
     tag?: (markup?: string) => string;
 }
 
@@ -67,7 +85,8 @@ export function namesOf(holder: InlineLiteralHolder, markup?: unknown): HolderNa
 /**
  * Every holder, in the order "the holder at the caret" is looked for
  * (`objects.ts`): a link, a span, then the styled ones innermost first —
- * by schema rank, the mark drawn inside the others first — and an image last.
+ * by schema rank, the mark drawn inside the others first — an image, and the
+ * notes and sidebars last: a note holds every mark, so a mark inside it wins.
  */
 export const INLINE_LITERAL_HOLDERS: readonly InlineLiteralHolder[] = [
     {
@@ -130,7 +149,26 @@ export const INLINE_LITERAL_HOLDERS: readonly InlineLiteralHolder[] = [
         own: ['src', 'alt', 'title'], noun: 'image', subject: 'An image', label: 'Image', styled: false,
         example: (t, l) => `![${t}](u)${l}`,
     },
+    // Nodes, whose closing token carries no markup: the literal follows the
+    // marker's character. The `{…}` glued to it is the note's; after a space it is the block's.
+    noteHolder('sidenote', NOTE_SYNTAX.sidenote.marker, true),
+    noteHolder('marginal_note', NOTE_SYNTAX.marginalNote.marker, true),
+    noteHolder('left_sidebar', NOTE_SYNTAX.leftSidebar.marker, false),
+    noteHolder('right_sidebar', NOTE_SYNTAX.rightSidebar.marker, false),
 ];
+
+/** A note's or a sidebar's entry: `marker` written around it, a reference and a body for a note, one body for a sidebar. */
+function noteHolder(node: keyof typeof NOTE_NAMES, marker: string, note: boolean): InlineLiteralHolder {
+    const label = NOTE_NAMES[node];
+    const noun = label.toLowerCase();
+    const written = (text: string) => `${marker}${note ? `${text}|note` : text}${marker}`;
+    return {
+        holder: node, carrier: { node }, token: `${node}_open`, closing: marker.charAt(0),
+        source: l => `x ${marker}${note ? 'x|y' : 'y'}${marker}${l}`,
+        own: [], noun, subject: `A ${noun}`, label, styled: false,
+        example: (t, l) => `${written(t)}${l}`,
+    };
+}
 
 /** The name of what carries the holder's literal: its mark's or its node's. */
 export function carrierName(holder: InlineLiteralHolder): string {
