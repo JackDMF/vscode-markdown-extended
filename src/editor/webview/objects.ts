@@ -1582,7 +1582,8 @@ function blockPart(role: CrumbPart['role'], node: Node, pos: number, nested: boo
  *   wrapper keeps no literal here; its bar names it).
  * - A list item: the item, and always a List — the top-level list, the only one
  *   the file can give a literal to (F2); for a list not at the top level a
- *   refused part (F3).
+ *   refused part (F3) — unless the list stands in a quote carrying a literal:
+ *   then the Quote (#8 review 1).
  * - Else the top-level block alone (refused in a wrapper, as the menu says).
  */
 function blockCrumbsOf(state: EditorState): Crumbs | null {
@@ -1616,6 +1617,10 @@ function blockCrumbsOf(state: EditorState): Crumbs | null {
         const current = blockPart('current', item.node, item.pos, true);
         const top = $from.node(1);
         if (LIST_NODES.has(top.type.name)) {
+            return { current, outer: blockPart('outer', top, $from.before(1), false) };
+        }
+        // A quote carrying a literal keeps its part (#8 review 1): Quote › List item, two parts — the list in it takes none anyway.
+        if (top.type === nodes.blockquote && literalOf(top) !== null) {
             return { current, outer: blockPart('outer', top, $from.before(1), false) };
         }
         // Drawn always, and refused (F3): a list inside a quote, an admonition or a container keeps no literal here.

@@ -2461,17 +2461,20 @@ class ObjectToolbarView implements PluginView {
      */
     private removePart(object: EditorObject, part: CrumbPart): void {
         const done = attributesRemovedHint(part.name);
+        // Every refusal stands at the Remove control that was pressed (#8 review 1), never silent.
+        const refuse = (message: Said) => {
+            const el = this.selectionBar.el.querySelector<HTMLElement>('[data-verb="remove-attributes"], [data-verb="remove-menu"]');
+            if (el !== null && !el.hidden) {
+                showRefusal(this.view, message, { at: 'control', el });
+            } else {
+                showRefusal(this.view, message);
+            }
+        };
         this.act(object, () => {
             const crumbs = crumbsAt(this.view.state);
             const now = crumbs === null ? null : part.role === 'current' ? crumbs.current : crumbs.outer;
             if (now === null || now.name !== part.name || now.literal !== part.literal || now.target === null) {
-                const el = this.selectionBar.el.querySelector<HTMLElement>('[data-verb="remove-attributes"], [data-verb="remove-menu"]');
-                const message = `Not removed: the ${part.name.toLowerCase()}'s attributes changed meanwhile — choose Remove again.`;
-                if (el !== null && !el.hidden) {
-                    showRefusal(this.view, message, { at: 'control', el });
-                } else {
-                    showRefusal(this.view, message);
-                }
+                refuse(`Not removed: the ${part.name.toLowerCase()}'s attributes changed meanwhile — choose Remove again.`);
                 return false;
             }
             const target = now.target;
@@ -2481,7 +2484,7 @@ class ObjectToolbarView implements PluginView {
                     return false;
                 }
                 if ('refusal' in made) {
-                    showRefusal(this.view, made.refusal);
+                    refuse(made.refusal);
                     return false;
                 }
                 this.view.dispatch(made.tr);
@@ -2490,6 +2493,8 @@ class ObjectToolbarView implements PluginView {
             const run = literalObjectOf(currentObject(this.view.state, target.object));
             const tr = run === null ? null : run.kind === 'span' ? removeSpanTransaction(this.view.state, run as Extract<EditorObject, { kind: 'span' }>) : changeInlineLiteralTransaction(this.view.state, run, '');
             if (tr === null) {
+                const why = run === null || run.kind === 'span' ? null : changeInlineLiteralRefusal(this.view.state, run, '');
+                refuse(why ?? `Not removed: the ${part.name.toLowerCase()}'s attributes changed meanwhile — choose Remove again.`);
                 return false;
             }
             this.view.dispatch(tr);

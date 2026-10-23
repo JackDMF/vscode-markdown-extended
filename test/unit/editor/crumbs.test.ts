@@ -88,6 +88,11 @@ const FIXTURES: Fixture[] = [
         outer: () => part('outer', 'List', null, null, 'block', saidText(NESTED_LIST_ATTRS_REFUSAL)),
     },
     {
+        // #8 review 1: before, the quote's literal was unreachable from its list (the refused List part stood outer).
+        what: 'fail-first: a list inside a quote carrying one: Quote › List item, two parts', source: '> Intro\n>\n> - a\n> - b\n>\n> Outro\n> {.q}\n', needle: 'a',
+        current: s => part('current', 'List item', null, nodePos(s, 'list_item', 'a'), 'line'), outer: () => part('outer', 'Quote', '{.q}', 0, 'block'),
+    },
+    {
         what: 'Quote › Heading, the quote carrying one', source: '> ## Sync rules {#sync-rules}\n> Text\n> {.warning}\n', needle: 'Sync',
         current: s => part('current', 'Heading', '{#sync-rules}', nodePos(s, 'heading'), 'line'), outer: () => part('outer', 'Quote', '{.warning}', 0, 'block'),
     },

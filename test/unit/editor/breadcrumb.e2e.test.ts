@@ -1,7 +1,9 @@
 import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
+import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { EditorPage, UNDO, closeEditorPage, delay, openEditorPage, settle } from './pageHarness';
+import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
+import { EXTENSION_ID, EditorPage, UNDO, closeEditorPage, delay, openEditorPage, settle } from './pageHarness';
 import { BAR, CRUMBS, ROW_FIELD, blockRect, breadcrumbPage, rectOf } from './breadcrumbPage';
 
 /** The constructs the breadcrumb is drawn for (#8), and one it is not. */
@@ -499,6 +501,40 @@ suite('Editor breadcrumb: Remove and the first focus (e2e)', () => {
         await settle();
         const text = (await b.lastEdit())?.text ?? '';
         assert.ok(!text.includes('{.other}') && !text.includes('{.steps}') && text.includes('{.lead}'), text);
+    });
+
+    test('an entry picked after a resync changed its part: refused at Remove, nothing removed (the re-resolve path)', async function () {
+        this.timeout(20000);
+        await b.show(REMOVE_DOC);
+        await b.restAt('Queue the edit', 2);
+        await openRemove();
+        const before = (await (editor as EditorPage).edits()).length;
+        await b.resync(REMOVE_DOC.replace('{.steps}', '{.other}'));
+        await page.waitForSelector(MENU, { visible: true, timeout: 2000 });
+        // The open menu follows a resync (its entries name {.other} now, the test above): the change must come
+        // between the press and the verb — the host's document dispatched from the press itself, before the entry sees it.
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const json = parsedDocumentToJSON(parseDocument(md, REMOVE_DOC.replace('{.steps}', '{.third}'), {}));
+        await page.evaluate(m => {
+            document.addEventListener('click', () => window.dispatchEvent(new MessageEvent('message', { data: m })), { capture: true, once: true });
+        }, { type: 'document', json, version: 9999, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE } as unknown as Record<string, unknown>);
+        await page.click(`${MENU} [data-entry="remove-outer"]`);
+        await settle();
+        assert.match(await b.hint(), /^Not removed: the list's attributes changed meanwhile/);
+        const rect = await page.$eval('.mep-hint', el => (el as HTMLElement).dataset.at ?? '');
+        assert.strictEqual(rect, 'control', 'at the Remove control');
+        const edits = await (editor as EditorPage).edits();
+        assert.strictEqual(edits.length, before, 'nothing written');
+    });
+
+    test('a list inside a quote carrying one: Quote {.q} › List item; Remove attributes of Quote', async function () {
+        this.timeout(15000);
+        await b.show('> Intro\n>\n> - Item alpha\n> - Item beta\n>\n> Outro\n> {.q}\n\nThe last paragraph.\n');
+        await b.restAt('Item alpha', 2);
+        await page.waitForSelector(CRUMBS, { visible: true, timeout: 2000 });
+        const parts = await page.$$eval(`${CRUMBS} .mep-crumb`, els => els.map(p => [(p as HTMLElement).dataset.part, p.querySelector('.mep-crumb-name')?.textContent, p.querySelector('.mep-crumb-code')?.textContent || null]));
+        assert.deepStrictEqual(parts, [['outer', 'Quote', '{.q}'], ['current', 'List item', null]]);
+        assert.strictEqual(await page.$eval(REMOVE, el => el.textContent), 'Remove attributes of Quote');
     });
 });
 
