@@ -432,7 +432,7 @@ const BLOCK_ATTRIBUTES = {
 
 
 /** Why Attributes of Code… is disabled: nothing inline at the caret carries a {…}. */
-export const INLINE_ATTRS_LOCK = 'Plain text takes no attributes — put the caret in formatted text, a link or a span, or select an image.';
+export const INLINE_ATTRS_LOCK = 'Plain text takes no attributes — put the caret in formatted text, a link, a span or a note, or select an image.';
 
 const formatting: ToolbarAction[] = [
     formatAction('mark', 'mark', M.mark, M.mark, el('mark', 'mark'), el('mark', 'ab'),
@@ -454,8 +454,8 @@ const formatting: ToolbarAction[] = [
     },
     {
         // markdown-it-attrs on the inline element at the caret: written right after it. Named
-        // by the element (`Attributes of Link…`); the label here is its resting form.
-        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Element…', syntax: `…${CLASS_LITERAL}`, glyph: { text: '{…}' },
+        // by the element (`Attributes of Link…`); the label here is its resting form (#15 F8, Daniel: "Inline attributes…").
+        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Inline attributes…', syntax: `…${CLASS_LITERAL}`, glyph: { text: '{…}' },
         sample: el('code.x', 'Attributes…'), apply: { kind: 'inline-attrs' }, example: `\`Attributes…\`${BLOCK_LITERAL_EXAMPLE}`,
         preview: {
             markdown: 'Run `--flag`{.k} to skip the cache.',
@@ -588,6 +588,27 @@ function sidebarPreview(marker: string, cssClass: string): ActionPreview {
     return {
         markdown: `${marker}Context that runs alongside.${marker} The main text carries on.`,
         nodes: [el('p', el(`span.${cssClass}`, 'Context that runs alongside.'), ' The main text carries on.')],
+    };
+}
+
+/**
+ * The Annotation menu's sample of `node`, its `{.cls}` written glued to the
+ * closing marker and drawn on the outer span after the plugin's class
+ * (`mn-ref tipp`): the card of Attributes of Marginal note… (#15).
+ */
+export function notePreviewWithClass(node: NoteNodeName, cls: string): ActionPreview {
+    const literal = `{.${cls}}`;
+    if (node === 'left_sidebar' || node === 'right_sidebar') {
+        const { marker, cssClass } = node === 'left_sidebar' ? LS : RS;
+        return {
+            markdown: `${marker}Context that runs alongside.${marker}${literal} The main text carries on.`,
+            nodes: [el('p', el(`span.${cssClass}.${cls}`, 'Context that runs alongside.'), ' The main text carries on.')],
+        };
+    }
+    const { marker, refClass, anchorClass, noteClass } = node === 'sidenote' ? SN : MN;
+    return {
+        markdown: `Main text with ${marker}a reference${NOTE_SEPARATOR}The note that goes with it.${marker}${literal} that carries on.`,
+        nodes: [el('p', 'Main text with ', el(`span.${refClass}.${cls}`, el(`span.${anchorClass}`, 'a reference'), el(`span.${noteClass}`, 'The note that goes with it.')), ' that carries on.')],
     };
 }
 

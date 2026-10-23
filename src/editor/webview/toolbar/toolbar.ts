@@ -45,10 +45,11 @@ import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { ControlRole, FocusPlace, RowScope, focusPlace, lockForms, placeOfElement, rowLock } from '../focusPlace';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
-import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
+import { NoteNodeName, inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
     applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLinkTransaction,
     insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, NO_BLOCK_ATTRS_REFUSAL, objectAtSelection, spanLockReason, blockPartsAt, AttributesTarget, Followed, followAll,
+    noteFieldRange,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
 import { attributesField, attributesStep, goneFieldHint, holderAttributesStep } from '../attributes';
@@ -56,6 +57,7 @@ import { insertTableTransaction } from '../tables';
 import {
     ActionPreview, BLOCK_CARDS, BUBBLE_OVERFLOW, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
     TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, isRowMark, menuOf, moreOrder, submenuOf, tipOf,
+    notePreviewWithClass,
 } from './actions';
 import { buildMoreEntry, fitWithMore, holdFocus, moreControl, moreName, overflows, setMoreEntryState } from '../overflow';
 import { ariaKeyshortcuts, keyLabel } from '../../keys';
@@ -253,6 +255,10 @@ function inlineEntry(inline: InlineHolderAt): { label: string; syntax: string; p
     const label = `Attributes of ${holderNames(inline).label}…`;
     const markup = holderMarkup(inline);
     const holder = inline.holder;
+    if (inline.object.kind === 'note') {
+        // A note's or a sidebar's card is the Annotation menu's sample with a class on its outer span (#15).
+        return { label, syntax: holder.example('text', CLASS_LITERAL), preview: notePreviewWithClass(inline.object.node.type.name as NoteNodeName, 'tipp') };
+    }
     const tag = holder.tag?.(markup);
     const text = holder.holder === 'code' ? 'code' : holder.holder === 'image' ? 'alt' : 'text';
     return {
@@ -2157,7 +2163,9 @@ class ToolbarView implements PluginView {
         }
         // A copy, followed while the field is open (#8 F7): the run it edits and stands at.
         const at = { holder: found.holder, object: { ...found.object } };
-        this.openFieldBar(at.holder.holder, holderNames(at).label, 'inline-attributes', holderAttributesStep(this.view, at), at.object);
+        // A note's field stands at its reference, never at the body in the margin (#15 F4), as from its bar.
+        const range = at.object.kind === 'note' ? noteFieldRange(at.object) : at.object;
+        this.openFieldBar(at.holder.holder, holderNames(at).label, 'inline-attributes', holderAttributesStep(this.view, at), range);
     }
 
     // -- links and images ------------------------------------------------------

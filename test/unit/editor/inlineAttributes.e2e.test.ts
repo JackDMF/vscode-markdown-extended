@@ -155,7 +155,7 @@ suite('Editor inline attributes (e2e)', () => {
         await page.keyboard.press('Escape');
         await clickText(page, 'plain', 2);
         await open();
-        assert.deepStrictEqual((await entries())[1], ['inline-attributes', 'Attributes of Element…', 'true']);
+        assert.deepStrictEqual((await entries())[1], ['inline-attributes', 'Inline attributes…', 'true']);
         await page.hover('.mep-menu [data-action="inline-attributes"]');
         await delay(700);
         await shot(page, 'inline-attrs-07-menu-disabled.png');

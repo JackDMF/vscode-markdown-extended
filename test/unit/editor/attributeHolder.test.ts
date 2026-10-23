@@ -143,7 +143,7 @@ suite('Editor attribute holder: one rule for what at the selection carries a {�
         assert.deepStrictEqual([inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'e', 0)).label, drawn(inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'e', 0)))], ['Attributes of Emphasis…', 'em']);
         assert.strictEqual(inline(at(stateOf('A x^2^ b.\n'), '2', 0)).syntax, '^text^{.class}');
         assert.strictEqual(inline(at(stateOf('See [a link](u).\n'), 'link', 1)).label, 'Attributes of Link…');
-        assert.deepStrictEqual(inline(at(stateOf('Plain text.\n'), 'text', 1)), { enabled: false, active: false, reason: INLINE_ATTRS_LOCK, label: 'Attributes of Element…' });
+        assert.deepStrictEqual(inline(at(stateOf('Plain text.\n'), 'text', 1)), { enabled: false, active: false, reason: INLINE_ATTRS_LOCK, label: 'Inline attributes…' });
     });
 });
 

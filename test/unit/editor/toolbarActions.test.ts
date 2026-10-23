@@ -9,6 +9,7 @@ import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
     BLOCK_CARDS, BUBBLE_OVERFLOW, INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, ROW_OVERFLOW, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, moreOrder, submenuOf, tipOf,
+    notePreviewWithClass,
 } from '../../../src/editor/webview/toolbar/actions';
 import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
 import { tipText } from '../../../src/editor/tips';
@@ -227,6 +228,22 @@ suite('Editor toolbar: every action makes the element it shows', () => {
             }
         });
     }
+
+    for (const node of ['sidenote', 'marginal_note', 'left_sidebar', 'right_sidebar'] as const) {
+        test(`Attributes of ${node}…: its card shows the note with its class on the outer span, as the engine renders it (#15)`, () => {
+            const card = notePreviewWithClass(node, 'tipp');
+            assert.ok(card.markdown.includes('{.tipp}'), card.markdown);
+            const html = md.render(card.markdown);
+            for (const sample of card.nodes) {
+                assertRendersSample(html, sample, `${node} card`);
+            }
+            assert.ok(/<span class="(sn-ref|mn-ref|left-sidebar|right-sidebar) tipp"/.test(html), html);
+        });
+    }
+
+    test('Formatting\'s inline entry rests as "Inline attributes…" (#15 F8)', () => {
+        assert.strictEqual(TOOLBAR_ACTIONS.find(a => a.id === 'inline-attributes')?.label, 'Inline attributes…');
+    });
 
     test('the row holds the five native marks; every other action is a menu entry with a preview, but the bubble\'s own {…}', () => {
         assert.deepStrictEqual(TOOLBAR_ACTIONS.filter(inRow).map(a => a.id), ['italic', 'emphasis', 'bold', 'strong', 'code']);

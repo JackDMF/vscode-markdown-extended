@@ -4,6 +4,7 @@ import { EditorPage, UNDO, closeEditorPage, delay, describedTip, leaveObjects, o
 import { BAR, BreadcrumbPage, CRUMBS, breadcrumbPage, rectOf } from './breadcrumbPage';
 import { TEMPO } from './noteSample';
 import { hostEngine } from './helpers';
+import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 
@@ -224,5 +225,165 @@ suite('Editor note attributes: the note bar (e2e)', () => {
         const text = (await b.lastEdit())?.text ?? '';
         assert.ok(text.includes('- Eintrag !!Hinweis|eine kurze Notiz!! {.i}'), text);
         assert.strictEqual(await b.hint(), `Marginal note attributes removed — ${UNDO}`);
+    });
+});
+
+/**
+ * Formatting, the bubble and the refusals for notes (#15 steps 4–5): the
+ * menu names the note at a caret in it; plain text rests on "Inline
+ * attributes…", disabled with its reason; the bubble's {…} over words of a
+ * note's body targets the note (F2); R2 in the field, R4 at the control.
+ */
+suite('Editor note attributes: menu, bubble and refusals (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    const b = notePage(() => editor as EditorPage);
+    const ENTRY = '.mep-menu[data-menu="formatting"] [data-action="inline-attributes"]';
+    const BUBBLE_TOOL = '.mep-bubble:not([hidden]) [data-action="attrs-bubble"]';
+    const FIELD_BAR = '.mep-object-toolbar:has(.mep-inline-field)';
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    teardown(async () => {
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await leaveObjects(page);
+        await page.mouse.click(1270, 890);
+    });
+
+    const selectText = async (needle: string) => {
+        await page.focus('.ProseMirror');
+        await page.evaluate(n => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const at = (node.textContent ?? '').indexOf(n);
+                if (at >= 0) {
+                    (document.getSelection() as Selection).setBaseAndExtent(node, at, node, at + n.length);
+                    return;
+                }
+            }
+            throw new Error(`no "${n}" in the document`);
+        }, needle);
+        await delay(300);
+    };
+
+    /** The caret at character `k` of `needle` — a sidebar floated into the margin, where a click is a person's aim, not the test's — and the rest that brings its bar. */
+    const caretIn = async (needle: string, k: number) => {
+        await page.focus('.ProseMirror');
+        await page.evaluate((n, i) => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const at = (node.textContent ?? '').indexOf(n);
+                if (at >= 0) {
+                    (document.getSelection() as Selection).collapse(node, at + i);
+                    return;
+                }
+            }
+            throw new Error(`no "${n}" in the document`);
+        }, needle, k);
+        await delay(INLINE_DELAY_MS + 250);
+    };
+
+    test('Formatting at a caret in a note: "Attributes of Marginal note…", written !!text|note!!{.class}; its field writes the note\'s literal', async function () {
+        this.timeout(20000);
+        await b.show(NOTES_DOC);
+        await b.clickAt('abrupt', 2);
+        await b.openMenu('formatting');
+        const entry = await page.$eval(ENTRY, el => ({
+            label: el.querySelector('.mep-entry-label')?.textContent,
+            syntax: el.querySelector('.mep-entry-syntax')?.textContent,
+            disabled: el.getAttribute('aria-disabled'),
+        }));
+        assert.deepStrictEqual(entry, { label: 'Attributes of Marginal note…', syntax: '!!text|note!!{.class}', disabled: 'false' });
+        await page.click(ENTRY);
+        await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-object-label`, el => el.textContent), 'Marginal note · Attributes');
+        assert.strictEqual(await page.$eval(`${FIELD_BAR} input`, el => (el as HTMLInputElement).value), '.tipp');
+    });
+
+    test('in plain text the entry rests as "Inline attributes…", disabled, and says why on press (R5)', async function () {
+        this.timeout(20000);
+        await b.show(NOTES_DOC);
+        await b.clickAt('last paragraph', 3);
+        await b.openMenu('formatting');
+        const entry = await page.$eval(ENTRY, el => ({
+            label: el.querySelector('.mep-entry-label')?.textContent,
+            disabled: el.getAttribute('aria-disabled'),
+            reason: el.getAttribute('aria-description') ?? '',
+        }));
+        assert.strictEqual(entry.label, 'Inline attributes…');
+        assert.strictEqual(entry.disabled, 'true');
+        const lock = 'Plain text takes no attributes — put the caret in formatted text, a link, a span or a note, or select an image.';
+        assert.ok(entry.reason.includes(lock), entry.reason);
+        await page.click(ENTRY);
+        await delay(150);
+        const said = await page.evaluate(() => Array.from(document.querySelectorAll('.mep-hint, .mep-menu-hint, [data-at="menu-row"]')).map(el => el.textContent ?? '').join(' | '));
+        assert.ok(said.includes(lock), said);
+    });
+
+    test('the bubble\'s {…} over words of a note\'s body names the marginal note (F2), and its field sets the note\'s literal', async function () {
+        this.timeout(20000);
+        await b.show(NOTES_DOC);
+        await selectText('abrupt');
+        await page.waitForSelector(BUBBLE_TOOL, { timeout: 3000 });
+        const tip = await describedTip(page, BUBBLE_TOOL);
+        assert.strictEqual(tip, 'Attributes of Marginal note… — !!text|note!!{.class}\nOver plain text: Span with class… — [text]{.class}');
+        await delay(400);
+        await page.click(BUBBLE_TOOL);
+        await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-object-label`, el => el.textContent), 'Marginal note · Attributes');
+        await page.keyboard.press('End');
+        await page.keyboard.type(' .y');
+        await page.keyboard.press('Enter');
+        await settle();
+        const text = (await b.lastEdit())?.text ?? '';
+        assert.ok(text.includes('schnell!!{.tipp .y}') && !text.includes('[abrupt]'), text);
+    });
+
+    test('R2 in the field: a literal whose "@" would pair with a later sidebar is refused there, aria-invalid, nothing written', async function () {
+        this.timeout(20000);
+        await b.show('Times @Owner Mia@ and @b@ here.\n\nThe last paragraph.\n');
+        await caretIn('Owner', 2);
+        await page.waitForSelector(`${BAR} [data-verb="note-attributes"]`, { visible: true, timeout: 2000 });
+        await page.click(`${BAR} [data-verb="note-attributes"]`);
+        await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+        const before = (await (editor as EditorPage).edits()).length;
+        await page.keyboard.type('data-x="@"');
+        await page.keyboard.press('Enter');
+        await delay(150);
+        const field = await page.evaluate(sel => {
+            const el = document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null;
+            return { invalid: el?.getAttribute('aria-invalid') ?? null, reason: document.querySelector(`${sel} .mep-field-refusal-text`)?.textContent ?? null };
+        }, FIELD_BAR);
+        assert.deepStrictEqual(field, { invalid: 'true', reason: 'Not set: "@" in these attributes would end the right sidebar early or start another one. Remove it.' });
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
+    });
+
+    test('R4 at the control: removing the literal that keeps a left sidebar apart from a digit says why at Remove', async function () {
+        this.timeout(20000);
+        await b.show('Price $Status${.l}5 here.\n\nThe last paragraph.\n');
+        await caretIn('Status', 2);
+        const verb = `${BAR} [data-verb="remove-attributes"]`;
+        await page.waitForSelector(verb, { visible: true, timeout: 2000 });
+        assert.strictEqual(await page.$eval(verb, el => el.getAttribute('aria-disabled')), 'true');
+        const before = (await (editor as EditorPage).edits()).length;
+        await page.click(verb);
+        await delay(100);
+        const hint = await page.$eval('.mep-hint', el => ({ text: el.textContent, at: (el as HTMLElement).dataset.at, hidden: (el as HTMLElement).hidden }));
+        assert.deepStrictEqual(hint, { text: 'Not removed: without its attributes the left sidebar would touch the character after it and stop being a sidebar. Put a space after it first.', at: 'control', hidden: false });
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing posted');
     });
 });
