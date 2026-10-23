@@ -55,10 +55,18 @@ export interface Slotted {
  * gives: before the first other extension's verb when a verb of the object's
  * own precedes it, and before the verb that destroys when any verb precedes
  * it. A divider the presentation set itself (a table's, before Attributes…)
- * stays; every other is the rule's.
+ * stays; every other is the rule's. On a two-part bar (#8 review 1, Daniel)
+ * the verbs acting on the outer part (`outer`) stand after the current part's
+ * own, in slot order among themselves, before other extensions' and the one
+ * that destroys: "Attributes of Heading… · Edit title… · Type▾ · Remove▾".
  */
-export function arrange<V extends Pick<Slotted, 'slot' | 'separated'>>(verbs: readonly V[]): V[] {
-    const rank = (v: V) => SLOT_ORDER.indexOf(v.slot);
+export function arrange<V extends Pick<Slotted, 'slot' | 'separated' | 'outer'>>(verbs: readonly V[]): V[] {
+    // An outer verb ranks between the object's last own slot (`source`) and other extensions' (`actions`).
+    const source = SLOT_ORDER.indexOf('source');
+    const rank = (v: V) => {
+        const at = SLOT_ORDER.indexOf(v.slot);
+        return v.outer && at <= source ? source + 0.5 + at / (2 * SLOT_ORDER.length) : at;
+    };
     const sorted = verbs.map((v, k) => ({ v, k })).sort((a, b) => rank(a.v) - rank(b.v) || a.k - b.k).map(x => x.v);
     const firstAction = sorted.findIndex(v => v.slot === 'actions');
     const firstDestroy = sorted.findIndex(v => v.slot === 'destroy');

@@ -69,6 +69,13 @@ suite('Editor object bars: the verbs\' model', () => {
             assert.deepStrictEqual(dividers(arranged), ['remove-link']);
         });
 
+        test('fail-first, #8 review 1: on a two-part bar the current part\'s verbs come first, then the outer part\'s, then the divider and Remove▾', () => {
+            // Before, slot order put the admonition's Edit title… and Type▾ before Attributes of Heading….
+            const arranged = arrange([v('edit-title', 'edit', true, { outer: true }), v('change-type', 'type', true, { outer: true }), v('block-attributes', 'attributes', true), v('remove-menu', 'destroy', true)]);
+            assert.deepStrictEqual(ids(arranged), ['block-attributes', 'edit-title', 'change-type', 'remove-menu']);
+            assert.deepStrictEqual(dividers(arranged), ['remove-menu']);
+        });
+
         test('a Delete alone gets no divider: nothing stands before it but the title', () => {
             assert.deepStrictEqual(dividers(arrange([v('delete-block', 'destroy', false)])), []);
         });
