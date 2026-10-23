@@ -154,6 +154,171 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         assert.strictEqual(await shown(), false, 'gone with the change of the document');
     });
 
+    const BLOCK_TYPE = '.mep-menu[data-menu="block-type"]';
+
+    /** At 420 px the Block type menu of the table cell `one` is open: a refusal there stands as a row inside the menu. */
+    const openNarrowBlockType = async () => {
+        await page.setViewport({ width: 420, height: 800 });
+        await fresh();
+        await delay(500);
+        await clickText(page, 'one', 1);
+        await delay(300);
+        await page.click(`${ROW} .mep-menu-face[data-menu="block-type"]`);
+        await page.waitForSelector(`${BLOCK_TYPE}:not([hidden])`);
+        await delay(400);
+    };
+    /** A press on the face closes the menu, as in D4e. */
+    const closeBlockType = async () => {
+        await page.click(`${ROW} .mep-menu-face[data-menu="block-type"]`);
+    };
+    const entryTop = (action: string) => page.$eval(`${BLOCK_TYPE} [data-action="${action}"]`, el => Math.round(el.getBoundingClientRect().top));
+    const entryCentre = (action: string) => page.$eval(`${BLOCK_TYPE} [data-action="${action}"]`, el => {
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    const hintRow = () => page.$eval('.mep-hint', el => ({
+        shown: !(el as HTMLElement).hidden, at: (el as HTMLElement).dataset.at, after: (el.previousElementSibling as HTMLElement | null)?.dataset.action,
+    }));
+
+    test('D14: a refusal standing as a row in a menu has no time — entries never move under a resting pointer; it ends with the menu', async function () {
+        this.timeout(40000);
+        try {
+            await openNarrowBlockType();
+            const before = await entryTop('block-type-attributes');
+            const h1 = await entryCentre('heading-1');
+            await page.mouse.click(h1.x, h1.y);
+            await delay(300);
+            assert.deepStrictEqual(await hintRow(), { shown: true, at: 'menu-row', after: 'heading-1' }, 'the refusal is a row under the entry');
+            const withRow = await entryTop('block-type-attributes');
+            assert.ok(withRow > before, `the row pushed the entries below it down: ${before} -> ${withRow}`);
+            // The pointer rests on the entry below the row for longer than any refusal's time.
+            await page.mouse.move(h1.x, withRow + 10);
+            await delay(Math.max(6000, refusalMs((await hint()).text) + 600));
+            assert.deepStrictEqual(await hintRow(), { shown: true, at: 'menu-row', after: 'heading-1' }, 'still there after its time');
+            assert.strictEqual(await entryTop('block-type-attributes'), withRow, 'the entries did not move');
+            await closeBlockType();
+            await delay(150);
+            assert.strictEqual(await page.$(`${BLOCK_TYPE}:not([hidden])`), null, 'the menu closed');
+            assert.strictEqual(await shown(), false, 'gone with the menu');
+        } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+            await delay(300);
+        }
+    });
+
+    test('D15: a press ends a row in a menu once it is up — a refused entry below it still gets its click, an enabled one runs', async function () {
+        this.timeout(40000);
+        try {
+            for (const target of ['heading-3', 'block-type-attributes']) {
+                await openNarrowBlockType();
+                await page.evaluate(() => {
+                    const w = window as unknown as { clicks: string[]; counting?: boolean };
+                    w.clicks = [];
+                    if (!w.counting) {
+                        w.counting = true;
+                        document.addEventListener('click', e => {
+                            const entry = (e.target as Element).closest('[role^="menuitem"]') as HTMLElement | null;
+                            w.clicks.push(entry?.dataset.action ?? '');
+                        }, true);
+                    }
+                });
+                const h1 = await entryCentre('heading-1');
+                await page.mouse.click(h1.x, h1.y);
+                await delay(300);
+                assert.strictEqual((await hintRow()).after, 'heading-1');
+                await page.evaluate(() => {
+                    (window as unknown as { clicks: string[] }).clicks = [];
+                });
+                await delay(300);
+                const at = await entryCentre(target);
+                await page.mouse.move(at.x, at.y);
+                await page.mouse.down();
+                await delay(120);
+                assert.strictEqual((await hintRow()).shown, true, `${target}: the row stays while the press is down (nothing moves under it)`);
+                await page.mouse.up();
+                await delay(300);
+                assert.deepStrictEqual(await page.evaluate(() => (window as unknown as { clicks: string[] }).clicks), [target], `${target}: the click landed on the entry pressed`);
+                if (target === 'heading-3') {
+                    assert.deepStrictEqual(await hintRow(), { shown: true, at: 'menu-row', after: 'heading-3' }, 'its own refusal replaced the first');
+                } else {
+                    assert.strictEqual(await shown(), false, 'the enabled entry ran: no refusal is left');
+                }
+                await closeBlockType();
+            }
+        } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+            await delay(300);
+        }
+    });
+
+    test('D16: by keyboard, Enter on a refused entry shows the row; ArrowDown ends it and moves to the next reachable entry', async function () {
+        this.timeout(30000);
+        try {
+            await page.setViewport({ width: 420, height: 800 });
+            await fresh();
+            await delay(500);
+            await clickText(page, 'one', 1);
+            await delay(300);
+            await page.focus(`${ROW} .mep-menu-face[data-menu="block-type"]`);
+            await page.keyboard.press('ArrowDown');
+            await page.waitForSelector(`${BLOCK_TYPE}:not([hidden])`);
+            await delay(300);
+            const focused = () => page.evaluate(() => (document.activeElement as HTMLElement).dataset.action ?? '');
+            let first = await focused();
+            // The first entries are enabled in a table cell (Paragraph); walk to the first refused one.
+            for (let i = 0; i < 12 && await page.evaluate(() => (document.activeElement as HTMLElement).getAttribute('aria-disabled') !== 'true'); i++) {
+                await page.keyboard.press('ArrowDown');
+                await delay(60);
+            }
+            first = await focused();
+            assert.ok(first.startsWith('heading'), `focus is on a refused entry: ${first}`);
+            await page.keyboard.press('Enter');
+            await delay(300);
+            assert.deepStrictEqual(await hintRow(), { shown: true, at: 'menu-row', after: first }, 'Enter shows the row under the entry');
+            assert.strictEqual(await focused(), first, 'the focus stays on the entry');
+            await page.keyboard.press('ArrowDown');
+            await delay(300);
+            const next = await focused();
+            assert.notStrictEqual(next, first);
+            assert.ok(next !== '', 'the focus moved to another entry');
+            assert.strictEqual(await shown(), false, 'the row is gone with the focus move');
+            assert.strictEqual(await page.$eval(`${BLOCK_TYPE} [data-action="${first}"]`, el => el.nextElementSibling?.classList.contains('mep-hint') ?? false), false, 'and no longer in the menu');
+            await page.keyboard.press('Escape');
+        } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+            await delay(300);
+        }
+    });
+
+    test('D17: a rendering from the host is not the person\'s edit — a fresh source-block refusal stands through it', async function () {
+        this.timeout(30000);
+        await fresh('Plain top here.\n\nFirst para[^1] one.\n\nPlain bottom.\n\n[^1]: note one\n', 'Plain top');
+        const raw = await page.$eval('.mep-raw-block', el => { const r = el.getBoundingClientRect(); return { x: r.left + 40, y: r.top + r.height / 2 }; });
+        await page.mouse.click(raw.x, raw.y, { clickCount: 2 });
+        await page.waitForSelector('.mep-raw-editor', { timeout: 3000 });
+        await page.keyboard.press('End');
+        await page.keyboard.type(' more');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('Enter');
+        await page.keyboard.up(MOD);
+        await delay(300);
+        const request = (await (editor as EditorPage).posted()).filter(m => m.type === 'render').pop() as unknown as { requestId: number } | undefined;
+        assert.ok(request, 'the applied block asked the host for a rendering');
+        await delay(500);
+        const top = await pointAt(page, 'Plain top', 1);
+        await page.mouse.click(top.x, top.y);
+        await delay(300);
+        await page.keyboard.press('End');
+        await page.keyboard.press('ArrowDown');
+        await delay(300);
+        await page.keyboard.type('x');
+        await delay(250);
+        assert.deepStrictEqual([await shown(), (await hint()).tone], [true, 'refusal'], 'the keystroke over the selected source block is refused');
+        await (editor as EditorPage).send({ type: 'rendered', requestId: request.requestId, html: '<p>First para<sup>1</sup> one more.</p>' } as never);
+        await delay(200);
+        assert.deepStrictEqual([await shown(), (await hint()).tone], [true, 'refusal'], 'the host\'s rendering left it');
+    });
+
     test('D11: the refused keystroke itself does not end its refusal', async function () {
         this.timeout(15000);
         await fresh();
