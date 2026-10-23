@@ -4,8 +4,10 @@ import { EditorState, TextSelection } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
 import { saidText } from '../../../src/editor/tips';
 import {
-    ADMONITION_ATTRS_REFUSAL, CrumbPart, NESTED_LIST_ATTRS_REFUSAL, attributesTargetAt, blockPartsAt, crumbsAt, isMarkObject, objectAtSelection, sameObject,
+    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CrumbPart, NESTED_LIST_ATTRS_REFUSAL, attributesTargetAt, blockPartsAt, crumbsAt, followAll, isMarkObject, literalOf,
+    objectAtSelection, sameObject,
 } from '../../../src/editor/webview/objects';
+import { resyncTransaction } from '../../../src/editor/webview/resync';
 import { hostEngine } from './helpers';
 
 function stateOf(text: string): EditorState {
@@ -207,5 +209,45 @@ suite('Editor breadcrumb: one resolver for the bar and the menu (#8 step 2)', ()
         const again = count(small);
         assert.strictEqual(again.value, a.value, 'the same answer');
         assert.strictEqual(again.calls, 0, 'from the cache: no step at all');
+    });
+});
+
+/**
+ * An open field's target through a host resync (#8 review 1): a resync that
+ * replaces the target's block leaves its neighbour at the place, which is
+ * never followed onto; one that only sets its markup keeps it (its changed
+ * literal is the commit's to refuse); one that inserts above moves it.
+ */
+suite('Editor breadcrumb: a field\'s target through a resync (#8 review 1)', () => {
+    /** The top-level block at `pos` of `text` as a target, and `next` as the resync turns it into. */
+    const follow = (text: string, pos: number, next: string) => {
+        const state = stateOf(text);
+        const node = state.doc.nodeAt(pos) as Node;
+        const target: AttributesTarget = { pos, node, name: 'Block' };
+        const tr = resyncTransaction(state, stateOf(next).doc);
+        const gone = followAll([target], [tr], tr.doc);
+        return { gone: gone.has(target), target };
+    };
+
+    test('fail-first: a paragraph replaced by the resync is gone — the next paragraph is not followed onto', () => {
+        assert.strictEqual(follow('Alpha {.a}\n\nBeta\n\nGamma\n', 0, 'Beta\n\nGamma\n').gone, true);
+    });
+
+    test('fail-first: a list replaced by the resync is gone — the next list is not followed onto', () => {
+        assert.strictEqual(follow('- one\n- two\n\n{.steps}\n\n* three\n* four\n', 0, '* three\n* four\n').gone, true);
+    });
+
+    test('a markup-only change keeps the target, its node now carrying the other literal', () => {
+        const { gone, target } = follow('- one\n- two\n\n{.steps}\n', 0, '- one\n- two\n\n{.other}\n');
+        assert.strictEqual(gone, false);
+        assert.strictEqual(target.pos, 0);
+        assert.strictEqual(literalOf(target.node), '{.other}');
+    });
+
+    test('a paragraph inserted above moves the target; one inserted right at its place too', () => {
+        const above = follow('Intro\n\n- one\n- two\n', 7, 'New\n\nIntro\n\n- one\n- two\n');
+        assert.deepStrictEqual([above.gone, above.target.pos, above.target.node.type.name], [false, 12, 'bullet_list']);
+        const first = follow('- one\n- two\n', 0, 'New\n\n- one\n- two\n');
+        assert.deepStrictEqual([first.gone, first.target.pos, first.target.node.type.name], [false, 5, 'bullet_list']);
     });
 });

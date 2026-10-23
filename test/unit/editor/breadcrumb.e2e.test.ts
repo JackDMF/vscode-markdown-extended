@@ -689,6 +689,65 @@ suite('Editor breadcrumb: an open field through a host resync (e2e)', () => {
         const after = await (editor as EditorPage).edits();
         assert.ok(after.slice(before).every(e => !e.text.includes('.zzz')), 'nothing written');
     });
+
+    /** The field of `needle`'s block opened by `route`, `typed` typed into it. */
+    const openOn = async (text: string, needle: string, route: 'outer' | 'formatting' | 'block-type', typed: string) => {
+        await b.show(text);
+        await b.clickAt(needle, 1);
+        if (route === 'block-type') {
+            await b.openMenuByKeys('block-type');
+            await page.click('.mep-menu[data-menu="block-type"] [data-action="block-type-attributes"]');
+        } else if (route === 'formatting') {
+            await b.openMenuByKeys('formatting');
+            await page.click('.mep-menu[data-menu="formatting"] [data-action="block-attributes"]');
+        } else {
+            await b.pressAlt('Enter');
+            await page.click(`${CRUMBS} [data-part="outer"]`);
+        }
+        await page.waitForSelector(FIELD, { visible: true, timeout: 2000 });
+        await delay(100);
+        await page.keyboard.type(typed);
+    };
+
+    for (const [what, text, needle, route, after] of [
+        ['a paragraph', 'Alpha {.a}\n\nBeta\n\nGamma\n\nThe last paragraph.\n', 'Alpha', 'formatting', 'Beta\n\nGamma\n\nThe last paragraph.\n'],
+        ['a paragraph (Block type)', 'Alpha {.a}\n\nBeta\n\nGamma\n\nThe last paragraph.\n', 'Alpha', 'block-type', 'Beta\n\nGamma\n\nThe last paragraph.\n'],
+        ['a paragraph before one with a literal', 'Alpha {.a}\n\nBeta {.b}\n\nGamma\n\nThe last paragraph.\n', 'Alpha', 'formatting', 'Beta {.b}\n\nGamma\n\nThe last paragraph.\n'],
+        ['a list', '- one\n- two\n\n{.steps}\n\n* three\n* four\n\nThe last paragraph.\n', 'one', 'outer', '* three\n* four\n\nThe last paragraph.\n'],
+        ['a list before one with a literal', '- one\n- two\n\n{.steps}\n\n* three\n* four\n\n{.next}\n\nThe last paragraph.\n', 'one', 'outer', '* three\n* four\n\n{.next}\n\nThe last paragraph.\n'],
+    ] as const) {
+        test(`fail-first: ${what} deleted elsewhere while its field is open closes the field with a hint; the next block of its kind is never written`, async function () {
+            // Before the fix the field followed onto the next block of the same kind, and Enter gave it the typed literal.
+            this.timeout(20000);
+            await openOn(text, needle, route, '.typed');
+            const before = (await (editor as EditorPage).edits()).length;
+            await b.resync(after);
+            await delay(150);
+            assert.strictEqual(await page.$(FIELD), null, 'the field is gone');
+            assert.match(await b.hint(), /changed or removed elsewhere/);
+            await page.keyboard.press('Enter');
+            await settle();
+            const edits = await (editor as EditorPage).edits();
+            assert.ok(edits.slice(before).every(e => !e.text.includes('.typed')), 'nothing written');
+        });
+    }
+
+    test('fail-first: the list\'s literal changed elsewhere while its field is open — Enter refuses in the field, what was typed kept, nothing written', async function () {
+        // Before the fix Enter overwrote the other writer's {.other} with the typed literal.
+        this.timeout(20000);
+        await openOn('- one\n- two\n\n{.steps}\n\nThe last paragraph.\n', 'one', 'outer', '.mine');
+        const before = (await (editor as EditorPage).edits()).length;
+        await b.resync('- one\n- two\n\n{.other}\n\nThe last paragraph.\n');
+        assert.ok(await page.$(FIELD), 'the field is still open');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.ok(await page.$(FIELD), 'the field stays open');
+        assert.strictEqual(await page.$eval(FIELD, el => (el as HTMLInputElement).value), '.mine');
+        const refusal = await page.$eval('.mep-object-toolbar .mep-field-refusal-text', el => el.textContent ?? '').catch(() => '');
+        assert.match(refusal, /This list changed meanwhile/);
+        const edits = await (editor as EditorPage).edits();
+        assert.ok(edits.slice(before).every(e => !e.text.includes('.mine')), 'nothing written');
+    });
 });
 
 /**

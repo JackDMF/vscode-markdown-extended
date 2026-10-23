@@ -51,7 +51,7 @@ import {
     insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, NO_BLOCK_ATTRS_REFUSAL, objectAtSelection, spanLockReason, blockPartsAt, AttributesTarget, Followed, followAll,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
-import { attributesField, attributesStep, holderAttributesStep } from '../attributes';
+import { attributesField, attributesStep, goneFieldHint, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
     ActionPreview, BLOCK_CARDS, BUBBLE_OVERFLOW, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
@@ -712,7 +712,10 @@ class ToolbarView implements PluginView {
     update(view: EditorView): void {
         if (this.fieldTargetGone) {
             this.fieldTargetGone = false;
+            // Nothing written, and said so (#8 review 1).
+            const hint = goneFieldHint(this.fieldBar?.followed ?? []);
             this.closeFieldBar();
+            showHint(view, hint, 'neutral');
         }
         const state = view.state;
         const states = new Map<ToolbarAction, ActionState>();

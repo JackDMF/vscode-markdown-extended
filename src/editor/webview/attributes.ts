@@ -53,8 +53,8 @@ import { FieldAdorn, FieldStep, KeysLine, refusedStep } from './inlineField';
 import { ATTR_BRACES, ATTR_PLACEHOLDER, attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, stripOuterPair } from '../attributeLiteral';
 import type { Said } from '../tips';
 import {
-    AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, holderNames, literalObjectOf, literalOf,
-    literalOfObject,
+    AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, currentTarget, holderNames, literalObjectOf,
+    literalOf, literalOfObject,
 } from './objects';
 
 /** The field's own label — its accessible name; its heading names the element (`Paragraph · Attributes`, `attributesTitle`). */
@@ -123,6 +123,26 @@ export function attributesRemovedHint(name: string): string {
 }
 
 /**
+ * What an open attributes field says on Enter when the literal of the element
+ * called `name` changed elsewhere since it opened (#8 review 1): refused in
+ * the field, what was typed kept, nothing written over the other change.
+ */
+export function staleFieldRefusal(name: string): string {
+    return `This ${name.toLowerCase()} changed meanwhile — press Esc and open its attributes again to see the new ones.`;
+}
+
+/**
+ * What the caret hint says when an open field closes because what it was for
+ * — the first of what it follows: a block target by its name, else "element"
+ * — was replaced or deleted elsewhere (#8 review 1): nothing was written.
+ */
+export function goneFieldHint(followed: readonly object[]): string {
+    const first = followed[0] as Partial<AttributesTarget> | undefined;
+    const name = typeof first?.name === 'string' ? first.name : 'element';
+    return `This ${name.toLowerCase()} was changed or removed elsewhere — nothing set.`;
+}
+
+/**
  * The attributes field for `target` (`attributesField`), named by its block.
  * `Enter` commits: refused — the field kept open with what was typed and the
  * reason under it — when markdown-it-attrs would not read the literal back,
@@ -133,7 +153,13 @@ export function attributesRemovedHint(name: string): string {
 export function attributesStep(view: EditorView, target: AttributesTarget): FieldStep {
     // `target` is followed in place while the field is open (`FieldStep.followed`, #8 F7): a caller sharing it — a bar's
     // anchor for the field — sees it move with it; one that must not, passes a copy.
-    return attributesField(target.name, literalOf(target.node), (value, refused) => {
+    const opened = literalOf(target.node);
+    return attributesField(target.name, opened, (value, refused) => {
+        // Changed elsewhere since the field opened (#8 review 1): never written over the other change.
+        const now = currentTarget(view.state, target);
+        if (now !== null && literalOf(now.node) !== opened) {
+            return refused(staleFieldRefusal(target.name));
+        }
         // Asked first, so a refusal keeps the field open with what was typed; the
         // transaction is built after the focus is back, which may commit a source box.
         const asked = commitAttributes(view.state, target, value);
@@ -170,11 +196,16 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
  * open with what was typed and the reason.
  */
 export function holderAttributesStep(view: EditorView, at: InlineHolderAt): FieldStep {
-    return attributesField(holderNames(at).label, literalOfObject(at.object), (value, refused) => {
+    const opened = literalOfObject(at.object);
+    return attributesField(holderNames(at).label, opened, (value, refused) => {
         const current = literalObjectOf(currentObject(view.state, at.object));
         if (current === null) {
             view.focus();
             return;
+        }
+        // Changed elsewhere since the field opened (#8 review 1): never written over the other change.
+        if (literalOfObject(current) !== opened) {
+            return refused(staleFieldRefusal(holderNames(at).label));
         }
         const refusal = changeInlineLiteralRefusal(view.state, current, value);
         if (refusal !== null) {

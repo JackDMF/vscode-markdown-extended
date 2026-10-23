@@ -74,7 +74,7 @@ import {
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, literalOfObject, attributeHolderAt, holderInside,
     AttributesTarget, CrumbPart, Crumbs, Followed, attributesTargetAt, blockAttrsRefusal, commitAttributes, crumbsAt, followAll,
 } from './objects';
-import { attributesField, attributesRemovedHint, attributesStep, holderAttributesStep } from './attributes';
+import { attributesField, attributesRemovedHint, attributesStep, goneFieldHint, holderAttributesStep } from './attributes';
 import { attributesTyped } from '../attributeLiteral';
 import { currentReadsAttrs } from '../inlineEngine';
 import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
@@ -1709,9 +1709,11 @@ class ObjectToolbarView implements PluginView {
             this.typingHold = true;
             this.slot.typing();
         }
-        // A field whose target the change deleted (`followObjects`): it closes, nothing written.
+        // A field whose target the change deleted (`followObjects`): it closes, nothing written, and says so (#8 review 1).
         for (const bar of this.goneFields) {
+            const hint = goneFieldHint(bar.followed);
             this.hideBar(bar);
+            this.say(hint, 'neutral');
         }
         this.goneFields.clear();
         this.refresh();

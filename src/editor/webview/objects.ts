@@ -37,7 +37,7 @@
  * (`isTopLevelBlock`); a requirement heading has no verb of its own, and its
  * bar shows only when there are some.
  */
-import { liftTarget } from 'prosemirror-transform';
+import { ReplaceAroundStep, Step, StepMap, liftTarget } from 'prosemirror-transform';
 import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
@@ -1424,29 +1424,45 @@ export type Followed = AttributesTarget | EditorObject | LiteralObject | { from:
  * wave-2 follow-up): a host resync that inserts above a bar's object or an
  * open field's target moves them, it does not close the field. Each is
  * mapped once however often it is named. Returned: the ones that are gone —
- * a step deleted across their start, or (a block, a node object) no node of
- * their type stands at the mapped place, decided on the new document; a run
- * whose end met its start. Positions only: O(items × steps), never per key.
+ * a step deleted across their start; a block or a node object whose node a
+ * step deleted from its start on (a resync replacing it: what then stands at
+ * the place is its neighbour, never followed onto, #8 review 1), or where no
+ * node of their type stands at the mapped place, decided on the new document;
+ * a run whose end met its start. A step that only sets a node's markup at its
+ * own place (a resync's `setNodeMarkup`, the fidelity repair) keeps it: its
+ * literal may have changed, which the field's commit refuses
+ * (`attributesStep`). Positions only: O(items × steps), never per key.
  */
 export function followAll(items: Iterable<Followed>, transactions: readonly Transaction[], doc: Node): Set<Followed> {
     const gone = new Set<Followed>();
     for (const item of new Set(items)) {
         let from = 'pos' in item ? item.pos : item.from;
-        // A node's start also mapped leaning left: a step that replaces only the node's markup at its own place
-        // (a resync's `setNodeMarkup`) maps a right-leaning start into the node.
+        // A node's start also mapped leaning left, for a step that rewrites its markup other than in place.
         let left = from;
         let to = 'pos' in item ? item.pos + item.node.nodeSize : item.to;
         let across = false;
+        let after = false;
         for (const tr of transactions) {
-            const start = tr.mapping.mapResult(from, 1);
-            across = across || start.deletedAcross;
-            from = start.pos;
-            left = tr.mapping.map(left, -1);
-            to = tr.mapping.map(to, -1);
+            tr.steps.forEach((step, i) => {
+                const map = tr.mapping.maps[i];
+                if (!markupAt(step, from)) {
+                    const start = map.mapResult(from, 1);
+                    across = across || start.deletedAcross;
+                    // `deletedAfter` alone is also set by an insertion at the place: only a range that removes something counts.
+                    after = after || (start.deletedAfter && deletesFrom(map, from));
+                    from = start.pos;
+                }
+                left = map.map(left, -1);
+                to = map.map(to, -1);
+            });
         }
         if ('pos' in item || 'node' in item) {
             const was = item.node;
-            const at = (pos: number) => (!across && pos < doc.content.size ? doc.nodeAt(pos) : null);
+            if (after) {
+                gone.add(item);
+                continue;
+            }
+            const at =(pos: number) => (!across && pos < doc.content.size ? doc.nodeAt(pos) : null);
             from = at(from)?.type === was.type ? from : left;
             const node = at(from);
             if (node === null || node.type !== was.type) {
@@ -1469,6 +1485,21 @@ export function followAll(items: Iterable<Followed>, transactions: readonly Tran
         }
     }
     return gone;
+}
+
+/** Whether `map` removes a range starting at `pos`. */
+function deletesFrom(map: StepMap, pos: number): boolean {
+    let hit = false;
+    map.forEach((oldStart, oldEnd) => {
+        hit = hit || (oldStart === pos && oldEnd > oldStart);
+    });
+    return hit;
+}
+
+/** Whether `step` only sets the markup of the node at `pos` (`setNodeMarkup`): the node stays where it stands. */
+function markupAt(step: Step, pos: number): boolean {
+    return step instanceof ReplaceAroundStep && step.from === pos && step.gapFrom === pos + 1 && step.insert === 1
+        && step.slice.content.childCount === 1 && step.slice.openStart === 0 && step.slice.openEnd === 0;
 }
 
 // ---------------------------------------------------------------------------
