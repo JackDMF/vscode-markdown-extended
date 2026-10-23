@@ -47,6 +47,22 @@ suite('Editor source block reason', () => {
         });
     });
 
+    test('an attribute literal the editor cannot keep: the bar says where it is and, on a rest, what it does (#8 F12, sourceExplanation)', () => {
+        const blockOf = (src: string) => topChildren(parseDocument(hostEngine(), src).doc)[0];
+        const cases: [string, string, RegExp][] = [
+            ['!!! note {.x}\n    Body\n', 'Source · title attributes', /^The \{\.x\} on the !!! line styles the title, so with no title it draws an empty one\./],
+            ['!!! note "Title" {.x}\n    Body\n', 'Source · title attributes', /^The \{\.x\} on the !!! line styles the title, not the box\./],
+            ['> A quoted line {.x}\n','Source · paragraph attributes', /^A paragraph inside a quote can't keep its own \{\.x\} here/],
+        ];
+        for (const [src, label, title] of cases) {
+            const node = blockOf(src);
+            assert.strictEqual(node.type.name, 'raw_block', src);
+            const shown = rawBlockLabel(node.attrs.construct as string | null, node.attrs.src as string);
+            assert.strictEqual(shown.label, label, src);
+            assert.match(shown.title, title, src);
+        }
+    });
+
     test('the refusal names the block and why, as a clause', () => {
         assert.strictEqual(sourceRefusal('has a footnote', 'list'), 'This list holds a footnote — change it with "Edit source"');
         assert.strictEqual(sourceRefusal('definition list', 'block'), 'This definition list is source — change it with "Edit source"');

@@ -23,7 +23,8 @@
  * | `table` | A pipe table (`table`), the caret in a cell or cells selected | The node |
  * | `code_block` | A fenced or indented code block at any depth, the caret in its text; one with a literal stays a `code_block` | The node |
  * | `block_attrs` | A top-level block carrying an attribute literal (`attrsSuffix`), a quote's too; a table with one stays a `table` | The node |
- * | `heading` | A top-level heading that is no `block_attrs` — a requirement heading is one | The node |
+ * | `heading` | A top-level heading that is no `block_attrs` — a requirement heading is one; a heading in a quote whose quote or itself carries a literal (`block_attrs` then when it has one) | The node |
+ * | `list_item` | The innermost list item at the caret, at any depth, outside a container or an admonition | The node |
  * | `raw_block` | A source block | The node |
  * | `injected_block` | Injected content: an expansion, an atom, generated content | The node |
  * | `front_matter` | The front matter | The node |
@@ -36,18 +37,19 @@
  * (`isTopLevelBlock`); a requirement heading has no verb of its own, and its
  * bar shows only when there are some.
  */
-import { liftTarget } from 'prosemirror-transform';
-import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
+import { ReplaceAroundStep, Step, StepMap, liftTarget } from 'prosemirror-transform';
+import { Fragment, Mark, Node, NodeType, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { innerOf, isRemoval } from '../attributeLiteral';
 import { Said, TipPart, said, value } from '../tips';
+import { QUOTE_PARAGRAPH_ATTRIBUTES, TITLE_ATTRIBUTES } from '../sourceReason';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
-import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
+import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteLiteralHost, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 import { SOURCE_VERB_META } from './sourceBlock';
 import { VERB, quotedVerb, wording } from '../verbs';
@@ -55,7 +57,7 @@ import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_LITERAL_REFU
 
 const nodes = editorSchema.nodes;
 
-export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'code_block' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
+export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'code_block' | 'block_attrs' | 'heading' | 'list_item' | 'raw_block' | 'injected_block' | 'front_matter';
 
 /**
  * The objects that are a mark's run in its textblock rather than a node. A
@@ -82,7 +84,7 @@ export function isMarkObject(object: EditorObject): object is Extract<EditorObje
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
 
 /** The caret objects that are blocks: their bar sits at the block's right edge, as a block object's does. */
-const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'code_block', 'block_attrs', 'heading']);
+const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'code_block', 'block_attrs', 'heading', 'list_item']);
 
 export function isBlockObject(object: EditorObject): boolean {
     return BLOCK_OBJECTS.has(object.kind);
@@ -137,6 +139,8 @@ const NODE_KINDS: Readonly<Record<string, NodeObjectKind>> = {
     table: 'table',
     // Ahead of `carriesBlockAttrs`: a fence with a literal is a code block, whose bar offers Attributes… among its verbs.
     code_block: 'code_block',
+    // At any depth, with a literal or without: the breadcrumb's current part (#8), its List the outer one.
+    list_item: 'list_item',
     raw_block: 'raw_block',
     injected_block: 'injected_block',
     front_matter: 'front_matter',
@@ -315,6 +319,75 @@ function blockAttrsAt(state: EditorState): EditorObject | null {
     return carriesBlockAttrs(node) ? objectOfNode(node, $from.before(1)) : null;
 }
 
+/** The blocks a heading below the top level may stand in and still be given a literal (#8): the save writes a heading's at any depth. */
+const HEADING_HOSTS: ReadonlySet<string> = new Set(['blockquote', 'admonition', 'container']);
+
+/** A node at a position. */
+interface NodeAt {
+    node: Node;
+    pos: number;
+}
+
+/**
+ * The heading holding both ends of the selection below the top level whose
+ * every block around it is a quote, an admonition or a container (#8 rule 1):
+ * the innermost block holder there, its literal written where it stands.
+ */
+function nestedHeadingOf(state: EditorState): NodeAt | null {
+    const sel = state.selection;
+    return sel instanceof NodeSelection ? null : nestedHeadingIn(sel.$from, sel.$to);
+}
+
+/** `nestedHeadingOf` for the range `$from`–`$to`. */
+function nestedHeadingIn($from: ResolvedPos, $to: ResolvedPos): NodeAt | null {
+    if ($from.depth < 2 || $from.parent.type !== nodes.heading || !$from.sameParent($to)) {
+        return null;
+    }
+    for (let d = 1; d < $from.depth; d++) {
+        if (!HEADING_HOSTS.has($from.node(d).type.name)) {
+            return null;
+        }
+    }
+    return { node: $from.parent, pos: $from.before() };
+}
+
+/** The innermost list item holding both ends of the selection, and its depth. */
+function innermostItemOf(state: EditorState): (NodeAt & { depth: number }) | null {
+    const sel = state.selection;
+    return sel instanceof NodeSelection ? null : innermostItemIn(sel.$from, sel.$to);
+}
+
+/** `innermostItemOf` for the range `$from`–`$to`. */
+function innermostItemIn($from: ResolvedPos, $to: ResolvedPos): (NodeAt & { depth: number }) | null {
+    for (let d = $from.depth; d > 1; d--) {
+        const node = $from.node(d);
+        if (node.type === nodes.list_item && $to.depth >= d && $to.node(d) === node) {
+            return { node, pos: $from.before(d), depth: d };
+        }
+    }
+    return null;
+}
+
+/**
+ * A heading in a quote that is the bar's object (#8 Quote › Heading): when it
+ * or its quote carries a literal — the breadcrumb shows them; with neither,
+ * no bar. One in an admonition or a container is the wrapper's bar's.
+ */
+function nestedHeadingAt(state: EditorState): EditorObject | null {
+    const heading = nestedHeadingOf(state);
+    if (heading === null) {
+        return null;
+    }
+    const quote = state.selection.$from.node(1);
+    return literalOf(heading.node) !== null || literalOf(quote) !== null ? objectOfNode(heading.node, heading.pos) : null;
+}
+
+/** The innermost list item at the caret as the bar's object (#8): the current part, its List the outer one. */
+function listItemAt(state: EditorState): EditorObject | null {
+    const item = innermostItemOf(state);
+    return item === null ? null : objectOfNode(item.node, item.pos);
+}
+
 /** The top-level heading holding both ends of the selection that is no block with attributes. */
 function headingAt(state: EditorState): EditorObject | null {
     const { $from, $to } = state.selection;
@@ -328,8 +401,10 @@ function headingAt(state: EditorState): EditorObject | null {
  * The object the selection is on: a node selected as a whole, else — innermost
  * first, so a link inside a note inside an admonition is the link — the link
  * the selection is in, the attribute span, emphasis with a literal, the note both its ends are in, the
- * code block at any depth, the container or admonition, the table, the top-level block with an attribute
- * literal, and last the top-level heading. Cells selected across (a
+ * code block at any depth, the container or admonition, the table, a heading in a quote that shows a
+ * literal, the innermost list item, the top-level block with an attribute
+ * literal, and last the top-level heading — the bar's object is the
+ * breadcrumb's current part, the menu's target (`attributesTargetAt`, #8). Cells selected across (a
  * `CellSelection`) are their table. `null` in plain text.
  */
 export function objectAtSelection(state: EditorState): EditorObject | null {
@@ -352,7 +427,7 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     if (from !== null && to !== null && from.noteBefore === to.noteBefore) {
         return objectOfNode(from.note, from.noteBefore);
     }
-    return codeBlockAt(state) ?? wrapperAt(state) ?? tableObjectAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
+    return codeBlockAt(state) ?? wrapperAt(state) ?? tableObjectAt(state) ?? nestedHeadingAt(state) ?? listItemAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
 }
 
 /**
@@ -1080,8 +1155,19 @@ function newPlacement(node: Node): string {
     }
 }
 
-/** Why a quote cannot be given a literal: the plugin gives a `> {…}` line to the block it ends. */
-export const QUOTE_ATTRS_REFUSAL = 'A quote\'s {…} stands on a line under its last paragraph, and this quote ends in another block: markdown-it-attrs would give the literal to that block.';
+/**
+ * Why `quote` cannot be given a literal (#8, critique 13): a `> {…}` line under
+ * it goes to the block it ends in — a list, a table, a code block, a quote —
+ * named here, what happened first, then what to do.
+ */
+export function quoteAttrsRefusal(quote: Node): Said {
+    const host = quoteLiteralHost(quote);
+    if (host === null) {
+        return 'This quote has no text yet, so attributes here would have nothing to style. Write a paragraph in it first.';
+    }
+    const kind = (BLOCK_NAMES[host.type.name] ?? 'block').toLowerCase();
+    return `This quote ends in a ${kind}, so attributes here would style the ${kind}. End the quote with a paragraph to give it attributes.`;
+}
 
 /**
  * Why `node` cannot be given a literal, or `null` — the one rule the menu
@@ -1104,7 +1190,7 @@ export function literalHomeRefusal(node: Node): Said | null {
             // An indented one is fenced as it takes the literal (`blockAttrsTransaction`).
             return null;
         case 'blockquote':
-            return quoteTakesLiteral(node) ? null : QUOTE_ATTRS_REFUSAL;
+            return quoteTakesLiteral(node) ? null : quoteAttrsRefusal(node);
         case 'list_item':
             return itemTakesLiteral(node) ? null : ITEM_ATTRS_REFUSAL;
     }
@@ -1163,17 +1249,74 @@ export const BLOCK_NAMES: Readonly<Record<string, string>> = {
     code_block: 'Code block',
     horizontal_rule: 'Rule',
     table: 'Table',
+    // Never a target: a wrapper keeps no literal here. The breadcrumb's title part is called so (`blockCrumbsOf`).
+    admonition: 'Admonition',
+    container: 'Container',
 };
 
 /**
- * Why a container is given no literal here: the preview draws a `{…}` on its
- * `:::` line (`markdownItContainer.ts`), but the container node has no slot for
- * one, so a container written with one stays a source block (`blocks.ts`).
+ * Why a container is given no literal here (#8, critique 11): the preview draws
+ * a `{…}` on its `:::` line or on a line of its own just before the closing
+ * `:::` (`markdownItContainer.ts`, probe c3), but the container node has no
+ * slot for one, so a container written either way stays a source block
+ * (`blocks.ts`). Its classes here are its name and info.
  */
-export const CONTAINER_ATTRS_REFUSAL = `A container's {…} is not edited here: the preview gives a literal on its ::: line to the container, but the editor has no place for it — a container written with one is a source block, edited as Markdown. Its classes here are its name and info (${VERB.editClasses}).`;
+export const CONTAINER_ATTRS_REFUSAL: Said = said`A container's attributes can't be set here. Written in the file (on its ${value(':::')} line or just before the closing ${value(':::')}), they make it open as source. To add classes here, use ${VERB.editClasses}`;
 
-/** Why an admonition is given no literal: the plugin hands it to the title bar. */
-export const ADMONITION_ATTRS_REFUSAL = `An admonition takes no {…}: on its !!! line, {…} styles the title, not the box. Its class is its type — choose it under ${VERB.type}▾ on the admonition's bar.`;
+/**
+ * Why an admonition is given no literal here (#8, critique 10): a `{…}` as the
+ * last line of its body does class the box (probe a4) — on the `!!!` line it
+ * styles only the title — but the admonition node keeps neither, so one
+ * written so opens as source. Its look here is its type.
+ */
+export const ADMONITION_ATTRS_REFUSAL: Said = `An admonition's attributes can't be set here. In the file they go on the last line of its body (the admonition then opens as source). To change its look here, choose a ${VERB.type}▾.`;
+
+/**
+ * What a source block made by an admonition's title literal says (F12, shown
+ * once #5a's source marker carries the reason): `!!! note {.x}` with no title
+ * draws an empty one.
+ */
+export const ADMONITION_TITLE_LITERAL_EMPTY: Said = said`The ${value('{.x}')} on the ${value('!!!')} line styles the title, so with no title it draws an empty one. To style the box, put ${value('{.x}')} on the last line of its body; for a styled title, write one: ${value('!!! note "Title" {.x}')}.`;
+
+/** The same with a title: the literal styles it, not the box. */
+export const ADMONITION_TITLE_LITERAL: Said = said`The ${value('{.x}')} on the ${value('!!!')} line styles the title, not the box. To style the box, put ${value('{.x}')} on the last line of its body.`;
+
+/** What a quote whose paragraph carries its own literal says (F12, critique 12): it stays a source block. */
+export const QUOTE_PARAGRAPH_LITERAL: Said = said`A paragraph inside a quote can't keep its own ${value('{.x}')} here, so the quote shows as source. Change it with ${VERB.showInTextEditor}, or style the whole quote instead with a last line ${value('> {.x}')}.`;
+
+/**
+ * Why a source block the classifier made for an attribute literal is one, in
+ * words (F12): `reason` the classifier's own (`attributes on …`), `src` the
+ * block's text. `null` for any other reason. Pure: whichever of #5a's source
+ * marker and #8 merges second shows it in the bar's title and aria name.
+ */
+export function sourceExplanation(reason: string, src: string): Said | null {
+    if (reason === 'attributes on admonition_title_open') {
+        // The title is the quoted string after the type on the `!!!` line.
+        const opening = src.split(/\r?\n/, 1)[0];
+        return /^\s*(?:!!!|\?\?\?\+?)\s*\S+\s+"[^"]*"/.test(opening) ? ADMONITION_TITLE_LITERAL : ADMONITION_TITLE_LITERAL_EMPTY;
+    }
+    if (reason === 'attributes on paragraph_open' && /^\s*>/.test(src)) {
+        return QUOTE_PARAGRAPH_LITERAL;
+    }
+    return null;
+}
+
+/**
+ * `sourceExplanation` for a source block as the page holds it: by its
+ * `construct` (#5a, the reason in words, `sourceReason.ts`) — the source
+ * block bar's tooltip says it (`rawBlockLabel`). `null` for any other.
+ */
+export function constructExplanation(construct: string | null, src: string): Said | null {
+    switch (construct) {
+        case TITLE_ATTRIBUTES:
+            return sourceExplanation('attributes on admonition_title_open', src);
+        case QUOTE_PARAGRAPH_ATTRIBUTES:
+            return sourceExplanation('attributes on paragraph_open', src);
+        default:
+            return null;
+    }
+}
 
 /**
  * Why a code block inside a quote, a list or a container is given no literal:
@@ -1181,6 +1324,31 @@ export const ADMONITION_ATTRS_REFUSAL = `An admonition takes no {…}: on its !!
  * kept as source, `fidelity.ts`). Its other verbs work at any depth.
  */
 export const NESTED_CODE_ATTRS_REFUSAL: Said = said`A code block inside a quote, a list or a container takes no ${value('{…}')} here. ${VERB.language} and ${VERB.editSource} still work.`;
+
+/**
+ * Why a list inside another block is given no literal: the save writes a
+ * list's literal only at the top level (a `{…}` line under a nested list goes
+ * to the outermost one, and a nested list written with one is kept as source).
+ */
+export const NESTED_LIST_ATTRS_REFUSAL: Said = `A list inside a quote, an admonition or a container keeps attributes only as source — use ${VERB.showInTextEditor} to add them there.`;
+
+/**
+ * Why `node`, standing inside another block, is given no literal, or `null`:
+ * the save writes a literal below the top level only for a heading and a list
+ * item (`writtenLiterals`, `fidelity.ts`) — a nested code block's, a nested
+ * list's or any other nested block's would be dropped, so none is taken. A
+ * block that takes no literal anywhere (a container, an admonition) is left to
+ * `literalHomeRefusal`, whose reason names it.
+ */
+export function nestedAttrsRefusal(node: Node): Said | null {
+    if (node.type === nodes.heading || node.type === nodes.list_item || !SUFFIX_NODES.has(node.type.name)) {
+        return null;
+    }
+    if (node.type === nodes.code_block) {
+        return NESTED_CODE_ATTRS_REFUSAL;
+    }
+    return node.type === nodes.bullet_list || node.type === nodes.ordered_list ? NESTED_LIST_ATTRS_REFUSAL : NO_BLOCK_ATTRS_REFUSAL;
+}
 
 /**
  * What an indented code block given `literal` becomes as well: a fenced one,
@@ -1221,20 +1389,23 @@ export function literalOf(node: Node): string | null {
  * item — or why it is none: none where the host's engine reads no attributes
  * (`NO_ATTRS_REFUSAL`), else `literalHomeRefusal`, except that a block which
  * has a literal already can always have it edited or removed (a requirement
- * heading's apart). A code block's bar says whether it is `nested`, inside
- * another block (`NESTED_CODE_ATTRS_REFUSAL`); every other caller targets a
- * top-level block or a list item.
+ * heading's apart). A caller says whether the block is `nested`, inside
+ * another block: then only a heading and a list item take one
+ * (`nestedAttrsRefusal`: a nested code block, list or other block is refused).
  */
 export function attributesTargetOf(node: Node, pos: number, nested = false): AttributesTarget | { refusal: Said } {
     const refusal = (currentReadsAttrs() ? null : NO_ATTRS_REFUSAL)
-        ?? (nested && node.type === nodes.code_block ? NESTED_CODE_ATTRS_REFUSAL : null)
+        ?? (nested ? nestedAttrsRefusal(node) : null)
         ?? blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
     return refusal === null ? { pos, node, name: BLOCK_NAMES[node.type.name] ?? 'Block' } : { refusal };
 }
 
 /**
  * The block the selection gives attributes to, or why there is none — what
- * **Formatting → Attributes of Paragraph…** is named by and acts on. Innermost first: the
+ * **Formatting → Attributes of Paragraph…** is named by and acts on, and the
+ * breadcrumb's current block part (`crumbsAt`, #8): one rule, so the bar and
+ * the menu name the same block. Innermost first: a heading in a quote, an
+ * admonition or a container (its literal written where it stands), else the
  * list item holding both ends of the selection (a literal the item writes at
  * the end of its first paragraph, at any depth), else the top-level block
  * holding them — a nested paragraph's or quote's literal is not written
@@ -1251,11 +1422,9 @@ export function attributesTargetAt(state: EditorState): AttributesTarget | { ref
     if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1)) {
         return { refusal: NO_BLOCK_ATTRS_REFUSAL };
     }
-    for (let d = $from.depth; d > 1; d--) {
-        const node = $from.node(d);
-        if (node.type === nodes.list_item && $to.depth >= d && $to.node(d) === node) {
-            return attributesTargetOf(node, $from.before(d));
-        }
+    const held = nestedHeadingOf(state) ?? innermostItemOf(state);
+    if (held !== null) {
+        return attributesTargetOf(held.node, held.pos, true);
     }
     return attributesTargetOf($from.node(1), $from.before(1));
 }
@@ -1264,6 +1433,337 @@ export function attributesTargetAt(state: EditorState): AttributesTarget | { ref
 export function currentTarget(state: EditorState, target: AttributesTarget): AttributesTarget | null {
     const node = target.pos < state.doc.content.size ? state.doc.nodeAt(target.pos) : null;
     return node !== null && node.type === target.node.type ? { ...target, node } : null;
+}
+
+/** What an open field or a bar holds a position of: a block target, an object, an inline element's run, a range. */
+export type Followed = AttributesTarget | EditorObject | LiteralObject | { from: number; to: number };
+
+/**
+ * `items` followed through `transactions` into `doc`, in place (#8 F7, the
+ * wave-2 follow-up): a host resync that inserts above a bar's object or an
+ * open field's target moves them, it does not close the field. Each is
+ * mapped once however often it is named. Returned: the ones that are gone —
+ * a step deleted across their start; a block or a node object whose node a
+ * step deleted from its start on (a resync replacing it: what then stands at
+ * the place is its neighbour, never followed onto, #8 review 1), or where no
+ * node of their type stands at the mapped place, decided on the new document;
+ * a run whose end met its start. A step that swaps a block node's top-level
+ * block whole for one of the same type — a resync, whenever anything in the
+ * block differs — follows it to the same place inside (`followSwap`, #8
+ * review 2): a sibling's change keeps it; its own change the field's commit
+ * refuses. A step that only sets a node's markup at its
+ * own place (a resync's `setNodeMarkup`, the fidelity repair) keeps it: its
+ * literal may have changed, which the field's commit refuses
+ * (`attributesStep`). Positions only: O(items × steps), never per key.
+ */
+export function followAll(items: Iterable<Followed>, transactions: readonly Transaction[], doc: Node): Set<Followed> {
+    const gone = new Set<Followed>();
+    for (const item of new Set(items)) {
+        let from = 'pos' in item ? item.pos : item.from;
+        // A node's start also mapped leaning left, for a step that rewrites its markup other than in place.
+        let left = from;
+        let to = 'pos' in item ? item.pos + item.node.nodeSize : item.to;
+        let across = false;
+        let after = false;
+        // A block node is followed through a swap of its top-level block (`followSwap`).
+        const block = ('pos' in item || 'node' in item) && item.node.isBlock ? item.node.type : null;
+        for (const tr of transactions) {
+            tr.steps.forEach((step, i) => {
+                const map = tr.mapping.maps[i];
+                if (!markupAt(step, from)) {
+                    const start = map.mapResult(from, 1);
+                    // `deletedAfter` alone is also set by an insertion at the place: only a range that removes something counts.
+                    const removes = start.deletedAfter && deletesFrom(map, from);
+                    const swapped = block !== null && !across && !after && (start.deletedAcross || removes)
+                        ? followSwap(map, tr.docs[i], tr.docs[i + 1] ?? tr.doc, from, block) : null;
+                    if (swapped !== null) {
+                        from = left = to = swapped;
+                        return;
+                    }
+                    across = across || start.deletedAcross;
+                    after = after || removes;
+                    from = start.pos;
+                }
+                left = map.map(left, -1);
+                to = map.map(to, -1);
+            });
+        }
+        if ('pos' in item || 'node' in item) {
+            const was = item.node;
+            if (after) {
+                gone.add(item);
+                continue;
+            }
+            const at =(pos: number) => (!across && pos < doc.content.size ? doc.nodeAt(pos) : null);
+            from = at(from)?.type === was.type ? from : left;
+            const node = at(from);
+            if (node === null || node.type !== was.type) {
+                gone.add(item);
+                continue;
+            }
+            if ('pos' in item) {
+                item.pos = from;
+                item.node = node;
+            } else {
+                item.from = from;
+                item.to = from + node.nodeSize;
+                item.node = node;
+            }
+        } else if (across || to < from || ('mark' in item && to === from)) {
+            gone.add(item);
+        } else {
+            item.from = from;
+            item.to = to;
+        }
+    }
+    return gone;
+}
+
+/**
+ * Where the block node at `pos` in `before` stands after `map` (to `after`)
+ * swapped its top-level block whole for one block of the same type — a
+ * resync replaces a block whenever anything in it differs (#8 review 2): the
+ * node of `type` at the same index path inside the new block, or `null`. A
+ * parent on the path whose child count changed (an item inserted or removed)
+ * gives `null` too: what stands at the place may be a neighbour.
+ */
+function followSwap(map: StepMap, before: Node, after: Node, pos: number, type: NodeType): number | null {
+    if (pos >= before.content.size) {
+        return null;
+    }
+    const $pos = before.resolve(pos);
+    const blockFrom = $pos.depth === 0 ? pos : $pos.before(1);
+    const old = before.nodeAt(blockFrom);
+    if (old === null) {
+        return null;
+    }
+    let swap: { from: number; to: number } | null = null;
+    map.forEach((oldStart, oldEnd, newStart, newEnd) => {
+        if (oldStart === blockFrom && oldEnd === blockFrom + old.nodeSize) {
+            swap = { from: newStart, to: newEnd };
+        }
+    });
+    const range = swap as { from: number; to: number } | null;
+    const fresh = range === null ? null : after.nodeAt(range.from);
+    if (range === null || fresh === null || fresh.type !== old.type || range.from + fresh.nodeSize !== range.to) {
+        return null;
+    }
+    let was: Node = old;
+    let now: Node = fresh;
+    let at = range.from;
+    for (let d = 1; d <= $pos.depth; d++) {
+        const index = $pos.index(d);
+        if (was.childCount !== now.childCount || index >= now.childCount) {
+            return null;
+        }
+        at += 1;
+        for (let k = 0; k < index; k++) {
+            at += now.child(k).nodeSize;
+        }
+        was = was.child(index);
+        now = now.child(index);
+    }
+    return now.type === type ? at : null;
+}
+
+/** Whether `map` removes a range starting at `pos`. */
+function deletesFrom(map: StepMap, pos: number): boolean {
+    let hit = false;
+    map.forEach((oldStart, oldEnd) => {
+        hit = hit || (oldStart === pos && oldEnd > oldStart);
+    });
+    return hit;
+}
+
+/** Whether `step` only sets the markup of the node at `pos` (`setNodeMarkup`): the node stays where it stands. */
+function markupAt(step: Step, pos: number): boolean {
+    return step instanceof ReplaceAroundStep && step.from === pos && step.gapFrom === pos + 1 && step.insert === 1
+        && step.slice.content.childCount === 1 && step.slice.openStart === 0 && step.slice.openEnd === 0;
+}
+
+// ---------------------------------------------------------------------------
+// The breadcrumb: the parts at the caret that hold a {…} (#8)
+// ---------------------------------------------------------------------------
+
+/**
+ * One part of the breadcrumb (#8): a block or an inline element that holds,
+ * or can hold, a `{…}`. The current part is the caret's innermost holder —
+ * the bar's object and the menu's target; the outer one the block around it.
+ */
+export interface CrumbPart {
+    role: 'current' | 'outer';
+    /** As the field and the menu call it (`BLOCK_NAMES`, `holderNames`): `List item`, `List`, `Quote`, `Heading`, `Bold`; a wrapper's is its kind (its bar names it). */
+    name: string;
+    /** As written, braces included; `null` for none. */
+    literal: string | null;
+    /** What its field acts on; `null` for a title part (an admonition, a container: no literal kept here) or a refused one. */
+    target: AttributesTarget | InlineHolderAt | null;
+    /** Why a part that is drawn cannot be given attributes (a list inside a quote, F3); `null` when it can. */
+    refusal: Said | null;
+    /** Where its field opens: under the holder's own line, under the block, at the run. */
+    anchor: 'line' | 'block' | 'run';
+    from: number;
+    to: number;
+}
+
+/** The breadcrumb at the caret: the current part and, where the editor holds both levels, the outer one. */
+export interface Crumbs {
+    current: CrumbPart;
+    outer: CrumbPart | null;
+}
+
+/** The lists whose literal the save writes: a top-level one's (`writtenLiterals`). */
+const LIST_NODES: ReadonlySet<string> = new Set(['bullet_list', 'ordered_list']);
+
+/** `node` at `pos` as a block part: named by its kind, its target or the reason it has none. */
+function blockPart(role: CrumbPart['role'], node: Node, pos: number, nested: boolean): CrumbPart {
+    const found = attributesTargetOf(node, pos, nested);
+    const refused = 'refusal' in found;
+    const own = node.type === nodes.list_item || node.type === nodes.heading;
+    return {
+        role,
+        name: BLOCK_NAMES[node.type.name] ?? 'Block',
+        literal: literalOf(node),
+        target: refused ? null : found,
+        refusal: refused ? found.refusal : null,
+        anchor: own ? 'line' : 'block',
+        from: pos,
+        to: pos + node.nodeSize,
+    };
+}
+
+/**
+ * The block parts at the selection, the inline element left out — what the
+ * Block type menu's two entries read (`blockPartsAt`) and what the bar's
+ * breadcrumb is built on (`crumbsAt`). O(depth): it reads `$from`'s
+ * ancestors, never the document.
+ *
+ * - A heading in a quote: the heading, and the quote when that carries a literal.
+ * - A heading in an admonition or a container: the heading, and — only when the
+ *   heading carries a literal — the wrapper as a title part (no target: the
+ *   wrapper keeps no literal here; its bar names it).
+ * - A list item: the item, and always a List — the top-level list, the only one
+ *   the file can give a literal to (F2); for a list not at the top level a
+ *   refused part (F3) — unless the list stands in a quote carrying a literal:
+ *   then the Quote (#8 review 1).
+ * - Else the top-level block alone (refused in a wrapper, as the menu says).
+ *
+ * Read from the range `$from`–`$to`: a selection's, or a selected image's place.
+ */
+function blockCrumbsOf($from: ResolvedPos, $to: ResolvedPos): Crumbs | null {
+    if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1)) {
+        return null;
+    }
+    const heading = nestedHeadingIn($from, $to);
+    if (heading !== null) {
+        const current = blockPart('current', heading.node, heading.pos, true);
+        for (let d = $from.depth - 1; d >= 1; d--) {
+            const node = $from.node(d);
+            if (WRAPPER_NODES.has(node.type.name)) {
+                // The literal gate stays for a wrapper (ux-critic reopen): its other lines reach it.
+                const title: CrumbPart = {
+                    role: 'outer', name: BLOCK_NAMES[node.type.name] ?? 'Block', literal: null, target: null, refusal: null,
+                    anchor: 'block', from: $from.before(d), to: $from.before(d) + node.nodeSize,
+                };
+                return { current, outer: current.literal === null ? null : title };
+            }
+        }
+        const quote = $from.node(1);
+        return { current, outer: literalOf(quote) === null ? null : blockPart('outer', quote, $from.before(1), false) };
+    }
+    const item = innermostItemIn($from, $to);
+    if (item !== null) {
+        const current = blockPart('current', item.node, item.pos, true);
+        const top = $from.node(1);
+        if (LIST_NODES.has(top.type.name)) {
+            return { current, outer: blockPart('outer', top, $from.before(1), false) };
+        }
+        // A quote carrying a literal keeps its part (#8 review 1): Quote › List item, two parts — the list in it takes none anyway.
+        if (top.type === nodes.blockquote && literalOf(top) !== null) {
+            return { current, outer: blockPart('outer', top, $from.before(1), false) };
+        }
+        // Drawn always, and refused (F3): a list inside a quote, an admonition or a container keeps no literal here.
+        const list = $from.node(item.depth - 1);
+        const from = $from.before(item.depth - 1);
+        return {
+            current,
+            outer: { role: 'outer', name: BLOCK_NAMES[list.type.name] ?? 'List', literal: null, target: null, refusal: NESTED_LIST_ATTRS_REFUSAL, anchor: 'block', from, to: from + list.nodeSize },
+        };
+    }
+    return { current: blockPart('current', $from.node(1), $from.before(1), false), outer: null };
+}
+
+/** `at` as the breadcrumb's current part: an inline element, its field at its run. */
+function inlinePart(at: InlineHolderAt): CrumbPart {
+    return {
+        role: 'current', name: holderNames(at).label, literal: literalOfObject(at.object), target: at, refusal: null,
+        anchor: 'run', from: at.object.from, to: at.object.to,
+    };
+}
+
+/**
+ * The breadcrumb at the selection (#8): the caret's innermost holder — the
+ * inline element carrying a literal (the bar's object, `holderRunAt`), else
+ * the innermost block holder (`attributesTargetAt`'s) — and the outer part:
+ * for an inline element the innermost block holder when that carries a
+ * literal, else, in a list item, its List when that carries one; for a block,
+ * as `blockCrumbsOf` says. At most two parts. `null` where the selection
+ * holds neither (across blocks, a node selected that is no image).
+ *
+ * Asked by the bar on every refresh: once per state (and per engine, whose
+ * reading of attributes the targets ask), O(depth) the first time.
+ */
+export function crumbsAt(state: EditorState): Crumbs | null {
+    const definition = currentInlineDefinition();
+    const known = crumbCache.get(state);
+    if (known !== undefined && known.definition === definition) {
+        return known.value;
+    }
+    const inline = state.selection instanceof TextSelection || state.selection instanceof NodeSelection
+        ? holderRunAt(state, INLINE_LITERAL_HOLDERS, true)
+        : null;
+    // A selected image's blocks are those of the caret at it (#8 review 1: List item › Image, Quote › Image).
+    const blocks = inline !== null && state.selection instanceof NodeSelection && state.selection.node.isInline
+        ? blockCrumbsOf(state.selection.$from, state.selection.$from)
+        : blockCrumbsAt(state);
+    let value: Crumbs | null = blocks;
+    if (inline !== null) {
+        const block = blocks?.current ?? null;
+        const outer = block !== null && block.target !== null && block.literal !== null
+            ? { ...block, role: 'outer' as const }
+            : block?.name === BLOCK_NAMES.list_item && blocks?.outer?.target && blocks.outer.literal !== null ? blocks.outer : null;
+        value = { current: inlinePart(inline), outer };
+    }
+    crumbCache.set(state, { definition, value });
+    return value;
+}
+
+const crumbCache = new WeakMap<EditorState, { definition: unknown; value: Crumbs | null }>();
+
+/** `blockCrumbsOf`, once per state and engine. */
+function blockCrumbsAt(state: EditorState): Crumbs | null {
+    const definition = currentInlineDefinition();
+    const known = blockCrumbCache.get(state);
+    if (known !== undefined && known.definition === definition) {
+        return known.value;
+    }
+    const sel = state.selection;
+    const value = sel instanceof NodeSelection ? null : blockCrumbsOf(sel.$from, sel.$to);
+    blockCrumbCache.set(state, { definition, value });
+    return value;
+}
+
+const blockCrumbCache = new WeakMap<EditorState, { definition: unknown; value: Crumbs | null }>();
+
+/**
+ * The Block type menu's two attribute entries, from the one resolver (#8):
+ * the innermost block holder (`attributesTargetAt`), then the outer block
+ * part — a List, a Quote — or `null` where there is none to offer (no outer
+ * block, or one that keeps no literal here: an admonition's title part).
+ */
+export function blockPartsAt(state: EditorState): { current: AttributesTarget | { refusal: Said }; outer: CrumbPart | null } {
+    const outer = blockCrumbsAt(state)?.outer ?? null;
+    return { current: attributeHolderAt(state).block, outer: outer !== null && outer.target === null && outer.refusal === null ? null : outer };
 }
 
 /**
@@ -1287,7 +1787,9 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
     const value = literal.trim();
     const removed = isRemoval(value);
     const node = current.node;
-    const refusal = blockAttrsRefusal(node)
+    // Below the top level only a heading's and a list item's literal is written: any other would be dropped by the save.
+    const refusal = (state.doc.resolve(current.pos).depth > 0 ? nestedAttrsRefusal(node) : null)
+        ?? blockAttrsRefusal(node)
         ?? (removed ? null : literalRefusal(value, literalPlaceOf(node)) ?? literalHomeRefusal(node));
     if (refusal !== null) {
         return { refusal };

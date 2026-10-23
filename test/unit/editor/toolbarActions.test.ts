@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
-    BUBBLE_OVERFLOW, INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, ROW_OVERFLOW, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, moreOrder, submenuOf, tipOf,
+    BLOCK_CARDS, BUBBLE_OVERFLOW, INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, ROW_OVERFLOW, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, moreOrder, submenuOf, tipOf,
 } from '../../../src/editor/webview/toolbar/actions';
 import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
 import { tipText } from '../../../src/editor/tips';
@@ -18,6 +18,8 @@ import {
 } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_FAMILIES, ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { HOVER_SECTION_CLASS } from '../../../src/editor/webview/languageCard';
+import { NESTED_LIST_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
+import { evaluate } from '../../../src/editor/webview/toolbar/toolbar';
 import { hostEngine, readText, repoRoot } from './helpers';
 
 /** The opening tags named `tag` in `html`, with their attributes. */
@@ -331,8 +333,8 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                 assert.strictEqual(menuOf(a), 'block-type', `${a.id}: only the block types draw their label`);
                 continue;
             }
-            // Block type's one entry that is no block type — Attributes of Paragraph…, after its divider — has a glyph.
-            assert.ok(menuOf(a) !== 'block-type' || a.id === 'block-type-attributes', `${a.id}: a block type draws its label`);
+            // Block type's entries that are no block type — Attributes of Paragraph…, after its divider, and the outer block's (#8) — have a glyph.
+            assert.ok(menuOf(a) !== 'block-type' || a.id === 'block-type-attributes' || a.id === 'block-type-outer-attributes', `${a.id}: a block type draws its label`);
             if (a.glyph !== undefined && a.glyph !== null && 'text' in a.glyph) {
                 assert.ok(['{…}', '[ ]'].includes(a.glyph.text), `${a.id}: ${a.glyph.text}`);
             }
@@ -620,5 +622,76 @@ suite('Editor toolbar: what leaves a narrow row for "…"', () => {
     test('"…" lists what it holds in row order, marks before menus, whatever order they left in', () => {
         assert.deepStrictEqual(moreOrder(['annotation', 'formatting', 'insert', 'code', 'strong']), { marks: ['strong', 'code'], menus: ['formatting', 'annotation', 'insert'] });
         assert.deepStrictEqual(moreOrder([]), { marks: [], menus: [] });
+    });
+});
+
+suite('Editor toolbar: a block\'s attributes entries and their cards (#8 step 4)', () => {
+    const md = hostEngine();
+    const stateOf = (text: string) => EditorState.create({ doc: parseDocument(md, text, {}).doc });
+    const at = (text: string, needle: string): EditorState => {
+        const state = stateOf(text);
+        let found = -1;
+        state.doc.descendants((node, pos) => {
+            if (found < 0 && node.isText && (node.text ?? '').includes(needle)) {
+                found = pos + (node.text ?? '').indexOf(needle) + 1;
+            }
+            return found < 0;
+        });
+        return state.apply(state.tr.setSelection(TextSelection.create(state.doc, found)));
+    };
+    const current = TOOLBAR_ACTIONS.find(a => a.id === 'block-type-attributes') as ToolbarAction;
+    const outer = TOOLBAR_ACTIONS.find(a => a.id === 'block-type-outer-attributes') as ToolbarAction;
+
+    for (const [holder, card] of Object.entries(BLOCK_CARDS)) {
+        test(`${holder}'s card renders as its block with the class, through the host's engine`, () => {
+            const html = md.render(card.preview.markdown);
+            for (const node of card.preview.nodes) {
+                assertRendersSample(html, node, `${holder} card`);
+            }
+        });
+    }
+
+    test('the quote\'s card writes its literal on a > line of its own', () => {
+        assert.deepStrictEqual(BLOCK_CARDS.blockquote.preview.markdown.split('\n').pop(), '> {.warning}');
+    });
+
+    test('the outer entry follows the current one in the Block type menu, in its group', () => {
+        const ids = TOOLBAR_ACTIONS.filter(a => menuOf(a) === 'block-type').map(a => a.id);
+        assert.strictEqual(ids.indexOf('block-type-outer-attributes'), ids.indexOf('block-type-attributes') + 1);
+        assert.ok(!outer.separated, 'no divider between the two');
+    });
+
+    test('at a list item: "Attributes of List item…" then "Attributes of List…", each with its card', () => {
+        const state = at('- Queue the edit\n- Send\n\n{.steps}\n', 'Queue');
+        const a = evaluate(current, state, false);
+        const b = evaluate(outer, state, false);
+        assert.deepStrictEqual([a.label, a.enabled, a.syntax], ['Attributes of List item…', true, BLOCK_CARDS.list_item.column]);
+        assert.deepStrictEqual([b.label, b.enabled, b.hidden ?? false, b.syntax], ['Attributes of List…', true, false, BLOCK_CARDS.bullet_list.column]);
+        assert.strictEqual(b.preview, BLOCK_CARDS.bullet_list.preview);
+        const ordered = at('1. Queue\n2. Send\n', 'Queue');
+        assert.strictEqual(evaluate(current, ordered, false).syntax, BLOCK_CARDS.ordered_list_item.column);
+    });
+
+    test('one entry in a quote\'s paragraph, a hidden outer one in a plain paragraph; a list in a quote: the outer refused with why', () => {
+        const quote = at('> Conflicts are shown.\n', 'Conflicts');
+        assert.strictEqual(evaluate(current, quote, false).label, 'Attributes of Quote…');
+        assert.strictEqual(evaluate(current, quote, false).preview, BLOCK_CARDS.blockquote.preview);
+        assert.strictEqual(evaluate(outer, quote, false).hidden, true);
+        assert.strictEqual(evaluate(outer, at('Plain text.\n', 'Plain'), false).hidden, true);
+        const nested = evaluate(outer, at('> - a\n> - b\n', 'a'), false);
+        assert.deepStrictEqual([nested.label, nested.enabled, nested.hidden ?? false], ['Attributes of List…', false, false]);
+        assert.strictEqual(nested.reason, NESTED_LIST_ATTRS_REFUSAL);
+    });
+
+    test('in an admonition\'s heading: "Attributes of Heading…", and no outer entry — the admonition keeps none', () => {
+        const state = at('!!! warning\n    ## Sync rules {#sync-rules}\n    Body\n', 'Sync');
+        assert.strictEqual(evaluate(current, state, false).label, 'Attributes of Heading…');
+        assert.strictEqual(evaluate(current, state, false).syntax, BLOCK_CARDS.heading.column);
+        assert.strictEqual(evaluate(outer, state, false).hidden, true);
+    });
+
+    test('in a heading in a quote that carries one: Heading, then Quote', () => {
+        const state = at('> ## Sync rules\n> Text\n> {.warning}\n', 'Sync');
+        assert.deepStrictEqual([evaluate(current, state, false).label, evaluate(outer, state, false).label], ['Attributes of Heading…', 'Attributes of Quote…']);
     });
 });

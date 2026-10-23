@@ -58,7 +58,7 @@ import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, la
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
 import { HintTone, RefusalPlace, applyKey, dismissRefusal, showChangeHint, showHint, showRefusal, undoHint, undoKey } from './hint';
-import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, quotedVerb, wording } from '../verbs';
+import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, crumbName, crumbPartName, emojiWayBack, firstFocus, overflowOrder, quotedVerb, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
 import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
@@ -72,9 +72,10 @@ import {
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine, CodeBlockObject,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, literalOfObject, attributeHolderAt, holderInside,
+    AttributesTarget, CrumbPart, Crumbs, Followed, attributesTargetAt, blockAttrsRefusal, commitAttributes, constructExplanation, crumbsAt, followAll,
 } from './objects';
-import { attributesField, attributesStep, holderAttributesStep } from './attributes';
-import { attributesTyped } from '../attributeLiteral';
+import { attributesField, attributesRemovedHint, attributesStep, goneFieldHint, holderAttributesStep } from './attributes';
+import { attributesTip, attributesTyped } from '../attributeLiteral';
 import { currentReadsAttrs } from '../inlineEngine';
 import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
 import { barSeparator, followPointer, selectionWantsBubble, separator } from './toolbar/toolbar';
@@ -87,9 +88,9 @@ import {
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
-import { Said, Tip, plainTip, said, tipText, value } from '../tips';
+import { Said, Tip, plainTip, said, saidText, tipText, value } from '../tips';
 import { Tooltips } from './tooltip';
-import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, caretRect, placeMenu, rangeAnchor } from './placement';
+import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, caretRect, placeMenu, rangeAnchor, revealField } from './placement';
 
 /**
  * The opening line the save writes for a code block (`savedOpeningLine`), once
@@ -165,6 +166,9 @@ const HOVER_GRACE_MS = 300;
 /** Narrower than this, a cut title says nothing: `fit` hides it (the bar's `aria-label` still names the object). */
 const TITLE_STUB = 42;
 
+/** What a two-part bar leaves of the window's width, at most (#8 review 1): 16 px each side, as the overlay's hints. */
+const BAR_WINDOW_GUTTER = 32;
+
 /** What `reopenVia` holds for "…"'s own list, which no verb id is. */
 const MORE_LIST = '…';
 
@@ -202,6 +206,13 @@ export interface Verb {
     separated?: boolean;
     /** What its field edits, when it is not the bar's object: the element inside it (`withInlineAttributes`), drawn while the field is open. */
     target?: { from: number; to: number };
+    /**
+     * The block its field edits, when the field stands at that block and not at the bar's object (#8): a
+     * breadcrumb part's List under the list, an admonition's heading under the heading (`blockAnchor`).
+     */
+    anchorBlock?: AttributesTarget;
+    /** On a two-part bar, it acts on the outer part (an admonition's Type▾): never the first focus (`firstFocus`, #8). */
+    outer?: true;
     /** What a table's set-verb acts on, tinted while it is active (`ObjectBar.activeAxis`): Row the caret's row, Column and Align its column. */
     axis?: 'row' | 'column';
 }
@@ -216,7 +227,7 @@ function drawVerbLabel(el: HTMLElement, verb: Verb, text: string): void {
 
 /** A verb as the bars' model reads it (`verbs.ts`): whether it opens in place is read from which of its ways it has. */
 function slotted(verb: Verb): Slotted {
-    return { slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box) };
+    return { slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box), ...(verb.outer ? { outer: true as const } : {}) };
 }
 
 /** One entry of a set-verb's menu. */
@@ -225,8 +236,10 @@ interface MenuEntry {
     id: string;
     label: string;
     title: string;
-    /** The keyboard route to the same thing, shown at the entry's right (`Tab at end`). */
+    /** The keyboard route to the same thing, shown at the entry's right (`Tab at end`); or what stays (`formatting stays`, #8). */
     keys?: string;
+    /** A literal after the label, in the code font, muted (`Bold {.term}`, #8). */
+    code?: string;
     /** For a choice of one value out of several: whether this is the current one, marked. */
     checked?: boolean;
     /** Why it cannot be chosen here, in its tooltip and, pressed, beside it (#10); the entry is drawn disabled. */
@@ -238,6 +251,23 @@ interface MenuEntry {
     run(): void;
 }
 
+/**
+ * A part of the breadcrumb as the bar draws it (#8): a control that opens its
+ * field — or says why it cannot — or, for an admonition or a container, which
+ * keep no literal here, a title.
+ */
+interface CrumbView {
+    role: 'current' | 'outer';
+    name: string;
+    /** A title part's short form, taken before anything is cut (`Warning`). */
+    short?: string;
+    literal: string | null;
+    /** What pressing it chooses — its field, or its refusal (#10, at the part); `null` for a title part. */
+    verb: Verb | null;
+    /** Where its field opens, as its tooltip says: `under the list`, `at the bold text`. */
+    opens: string;
+}
+
 interface Presentation {
     label: string;
     /** The title's short form, drawn before the title truncates (`ObjectBar.fit`): an admonition's type alone, `Warning`. */
@@ -246,6 +276,20 @@ interface Presentation {
     code?: string;
     title: string;
     verbs: Verb[];
+    /** The breadcrumb in the title's place (#8): the outer part, then the current one — the bar's object. */
+    crumbs?: { outer: CrumbView; current: CrumbView };
+    /** The bar's accessible name where it is not its title's (`List item .lead in List .steps`). */
+    name?: string;
+    /**
+     * No bar on a caret rest (F6): a breadcrumb whose parts are both bare — every list item of a list
+     * without literals — `Alt+Enter` draws it. Decided before other extensions' actions join the verbs.
+     */
+    restless?: boolean;
+    /**
+     * Where the bar stands when not at its object (#8 review 1): the current part's block — the heading of an
+     * admonition or a container whose bar it is — so the bar is at the heading's line, not under the whole box.
+     */
+    anchorFrom?: number;
 }
 
 /**
@@ -255,6 +299,10 @@ interface Presentation {
  * (its own verbs are the properties panel's header), with none offered.
  */
 function barless(object: EditorObject, presentation: Presentation): boolean {
+    // A breadcrumb's bar is drawn on a rest where a part carries a literal (#8, F6).
+    if (presentation.crumbs !== undefined) {
+        return presentation.restless === true;
+    }
     // Attributes of Bold… for the bold the caret is in is no reason for a bar on a caret
     // rest (`withInlineAttributes`): `Alt+Enter` draws it there (`ObjectToolbarView.forced`).
     const verbs = presentation.verbs.filter(v => v.id !== 'inline-attributes');
@@ -265,6 +313,33 @@ function barless(object: EditorObject, presentation: Presentation): boolean {
     // heading — is chrome on every such block; the menu reaches it, and the verb joins
     // the bar once the block has others (lenses, code actions) or a literal.
     return 'node' in object && literalOf(object.node) === null && verbs.every(v => v.id === 'block-attributes');
+}
+
+/** What stays when an inline part's literal is removed (#8 Remove▾'s right column): the element, or a span's text. */
+const STAYS: Readonly<Record<string, string>> = {
+    styled: 'formatting stays',
+    holder: 'formatting stays',
+    span: 'text stays',
+    link: 'link stays',
+    image: 'image stays',
+};
+
+/**
+ * Whether `crumbs` are `object`'s bar's (#8): its current part is `object` —
+ * the inline element, the list item, the heading at its place — or `object` is
+ * the admonition or the container whose title part stands outer.
+ */
+function crumbsFor(object: EditorObject, crumbs: Crumbs): boolean {
+    const target = crumbs.current.target;
+    if (isMarkObject(object) || object.kind === 'image') {
+        return target !== null && 'object' in target && sameObject(target.object, object);
+    }
+    if (object.kind === 'admonition' || object.kind === 'container') {
+        const outer = crumbs.outer;
+        return outer !== null && outer.target === null && outer.refusal === null && outer.from === object.from;
+    }
+    // By place, not by target: a refused current part (an item starting with a heading, a new empty one) has none, and keeps its crumbs (#8 review 1).
+    return crumbs.current.anchor !== 'run' && crumbs.current.from === object.from;
 }
 
 const CONVERT_LABELS: Readonly<Record<NoteNodeName, string>> = {
@@ -339,7 +414,12 @@ function sameDecor(a: BarDecor, b: BarDecor): boolean {
  * the kind of table, so the bar says why this table has no Row and Column menus
  * when the one above it has them.
  */
-export function rawBlockLabel(construct: string | null): { label: string; title: string } {
+export function rawBlockLabel(construct: string | null, src = ''): { label: string; title: string } {
+    // An attribute literal the editor cannot keep where it stands: what it does, and where it would (#8 F12, `sourceExplanation`).
+    const explained = constructExplanation(construct, src);
+    if (explained !== null && construct !== null) {
+        return { label: `Source · ${construct}`, title: saidText(explained) };
+    }
     switch (construct) {
         case 'multimd table':
             return {
@@ -491,8 +571,11 @@ export function emojiVerbs(state: EditorState, object: EditorObject, actions: Em
 /** What a bar tells the view about its field. */
 interface BarEvents {
     escape(): void;
-    /** A field opened for `object`, editing `target` within it when given: what it acts on is drawn (`pendingRange.ts`). */
-    fieldOpened(object: EditorObject, target?: { from: number; to: number }): void;
+    /**
+     * A field opened for `object`, editing `target` within it when given: what it acts on is drawn (`pendingRange.ts`);
+     * or editing the block `block`, where it stands (#8: a breadcrumb's outer part, an admonition's heading).
+     */
+    fieldOpened(object: EditorObject, target?: { from: number; to: number }, block?: AttributesTarget): void;
     fieldClosed(committed: boolean): void;
     /** The open field's row changed size (its keys line, a refusal cleared): the slot places it again. */
     fieldResized(): void;
@@ -510,6 +593,8 @@ interface BarEvents {
 class ObjectBar {
     readonly el: HTMLElement;
     object: EditorObject | null = null;
+    /** Where the bar stands when not at its object (`Presentation.anchorFrom`): the current part's block. */
+    anchorFrom: number | null = null;
     private field: InlineField | InlineChoice | null = null;
     /** What draws the field's row while it is open (`fieldRow.ts`). */
     private row: FieldRow | null = null;
@@ -519,6 +604,12 @@ class ObjectBar {
     /** The object's name as the title shows it (`Emoji :rocket:`): the bar's accessible name while a field stands in for its verbs. */
     private name = '';
     private buttons: { verb: Verb; el: HTMLButtonElement }[] = [];
+    /** The breadcrumb's parts (#8), outer then current, as drawn: a part's button, or a title part's span. */
+    private parts: { view: CrumbView; el: HTMLElement }[] = [];
+    /** The outer part moved into "…" by `fitCrumbs` (#8, step 3 of the ladder): its entry is first there. */
+    private outerMoved = false;
+    /** What the open field edits by its place (`FieldStep.followed`): followed through the document's changes while it is open (#8 F7). */
+    private following: readonly object[] = [];
     /** "…" (`moreControl`), last on the bar: the verbs `fit` moved into it, in the order they left. */
     private more: HTMLButtonElement | null = null;
     private moved: { verb: Verb; el: HTMLButtonElement }[] = [];
@@ -565,18 +656,27 @@ class ObjectBar {
         return this.field !== null;
     }
 
+    /** What the open field edits by its place, and the place its field stands at: none while no field is open. */
+    get followed(): readonly object[] {
+        return this.field === null ? [] : this.following;
+    }
+
     /** Show `object`; redrawn only when what it shows changed, so a focused verb keeps its focus, and never under an open field. */
     show(object: EditorObject, presentation: Presentation): void {
         this.object = object;
+        this.anchorFrom = presentation.anchorFrom ?? null;
         this.el.dataset.object = object.kind;
         // Everything the bar draws or will prefill: an image's `src` is in no
         // label, only in the title and the field's value, and a bar kept after
         // an undo would otherwise offer the undone source.
+        // A breadcrumb's parts too (#8): names, literals, refusals, roles — a literal changed redraws them.
+        const part = (c: CrumbView) => [c.role, c.name, c.short ?? null, c.literal, c.opens, c.verb?.id ?? null, c.verb?.refusal ?? null, c.verb?.field?.value ?? null];
         const signature = JSON.stringify([
-            object.kind, object.from, presentation.label, presentation.short ?? null, presentation.title,
+            object.kind, object.from, presentation.label, presentation.short ?? null, presentation.title, presentation.name ?? null,
+            presentation.crumbs === undefined ? null : [part(presentation.crumbs.outer), part(presentation.crumbs.current)],
             presentation.verbs.map(v => [
                 v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? v.choice?.value ?? null, v.separated ?? false,
-                v.menu?.map(m => [m.id, m.label, m.title, m.keys ?? null, m.checked ?? null, m.refusal ?? null]) ?? null,
+                v.menu?.map(m => [m.id, m.label, m.title, m.keys ?? null, m.code ?? null, m.checked ?? null, m.refusal ?? null]) ?? null,
             ]),
         ]);
         if (!this.field && signature !== this.signature) {
@@ -656,11 +756,16 @@ class ObjectBar {
      */
     fit(room: number): void {
         const label = this.el.querySelector<HTMLElement>(':scope > .mep-object-label');
+        const crumbs = this.el.querySelector<HTMLElement>(':scope > .mep-crumbs');
         const key = `${Math.round(room)}|${this.signature}`;
-        if (this.field || this.el.hidden || label === null || key === this.fitted) {
+        if (this.field || this.el.hidden || (label === null && crumbs === null) || key === this.fitted) {
             return;
         }
         this.fitted = key;
+        if (crumbs !== null) {
+            this.fitCrumbs(room);
+            return;
+        }
         const movedBefore = this.moved.map(b => b.verb.id).join(',');
         const shortens = this.buttons.filter(b => b.verb.short !== undefined && b.verb.short !== b.verb.label);
         for (const b of shortens) {
@@ -717,6 +822,106 @@ class ObjectBar {
         }
         // A title the room hid still names the object on a rest on the bar (its `aria-label` names it too).
         this.tips.attach(this.el, () => (label.hidden ? plainTip(this.name) : null));
+        this.el.style.left = left;
+        keepMore();
+        this.menuAfterFit(movedBefore);
+    }
+
+    /**
+     * A two-part bar fitted to `room` (#8, section 4.6; review 1), never wider
+     * than the window less `BAR_WINDOW_GUTTER`, one step at a time while it is
+     * past the room: (1) the outer part's literal is cut, (2) then hidden — a
+     * title part takes its short form ("Warning"); (3) the current part's
+     * literal is cut, six characters still showing; (4) the outer part moves
+     * into the bar's "…" as "Attributes of List… {.steps}", the chevron with
+     * it, "…" drawn even where every verb fits (a title part never moves: it is
+     * no control); (5) the verbs move into "…" in `overflowOrder`; (6) the
+     * current literal is hidden, (7) then a title part — so "…" stays inside
+     * the bar. No part's name is ever cut, and the bar's name keeps every part.
+     * Its verbs keep their nouns throughout: no short forms on a two-part bar.
+     * Measured, from the whole bar each time.
+     */
+    private fitCrumbs(room: number): void {
+        const movedBefore = this.moved.map(b => b.verb.id).join(',');
+        for (const b of this.buttons) {
+            this.showVerb(b);
+        }
+        this.moved = [];
+        this.outerMoved = false;
+        const keepMore = holdFocus([...this.parts.map(p => p.el), ...this.buttons.map(b => b.el)], this.more, this.el);
+        this.more?.remove();
+        const [outer, current] = this.parts;
+        const sep = this.el.querySelector<HTMLElement>(':scope > .mep-crumbs > .mep-crumb-sep');
+        for (const p of this.parts) {
+            p.el.hidden = false;
+            p.el.classList.remove('mep-crumb-cut');
+            p.el.classList.toggle('mep-crumb-bare', p.view.literal === null);
+            const name = p.el.querySelector('.mep-crumb-name');
+            if (name !== null) {
+                name.textContent = p.view.name;
+            }
+        }
+        if (sep !== null) {
+            sep.hidden = false;
+        }
+        // Never past the window, whatever the room (#8 review 1: at 380 px the bar ran off it): its "…" stays inside.
+        // The window's width less a scrollbar, as the placement clamps with (`placement.ts`).
+        this.el.style.maxWidth = `${Math.floor(Math.min(room, document.documentElement.clientWidth - BAR_WINDOW_GUTTER))}px`;
+        const left = this.el.style.left;
+        this.el.style.left = '0px';
+        const more = this.more;
+        const past = () => overflows(this.el);
+        if (outer !== undefined && current !== undefined && past()) {
+            // (1) The outer literal is cut, (2) then hidden; a title takes its short form.
+            outer.el.classList.add('mep-crumb-cut');
+            if (past()) {
+                outer.el.classList.add('mep-crumb-bare');
+                const name = outer.el.querySelector('.mep-crumb-name');
+                if (outer.view.short !== undefined && name !== null) {
+                    name.textContent = outer.view.short;
+                }
+            }
+            // (3) The current literal is cut, six characters still showing — before the outer part leaves (#8 review 1).
+            if (past()) {
+                current.el.classList.add('mep-crumb-cut');
+            }
+            // (4) The outer part, a control, moves into "…" — first there — the chevron with it.
+            if (past() && outer.view.verb !== null && more) {
+                outer.el.hidden = true;
+                if (sep !== null) {
+                    sep.hidden = true;
+                }
+                this.outerMoved = true;
+                this.el.append(more);
+            }
+        }
+        if (more && past()) {
+            // (5) The verbs, in `overflowOrder`; "…" stays while it holds the outer part.
+            const order = overflowOrder(this.buttons.map(b => slotted(b.verb))).map(k => this.buttons[k]);
+            this.moved = fitWithMore(order, () => overflows(this.el), b => this.showVerb(b), b => this.hideVerb(b), shown => {
+                if (shown || this.outerMoved) {
+                    this.el.append(more);
+                } else {
+                    more.remove();
+                }
+            });
+        }
+        if (outer !== undefined && current !== undefined) {
+            // (6) Still past — the verb Alt+Enter focuses never leaves — the current literal goes, (7) then a title part:
+            // "…" is pinned inside the bar. The bar's name keeps both parts and their literals.
+            if (past()) {
+                current.el.classList.add('mep-crumb-bare');
+            }
+            if (past() && outer.view.verb === null) {
+                outer.el.hidden = true;
+                if (sep !== null) {
+                    sep.hidden = true;
+                }
+            }
+        }
+        if (this.more) {
+            this.more.setAttribute('aria-label', moreName('bar', this.moreEntries().map(e => e.label)));
+        }
         this.el.style.left = left;
         keepMore();
         this.menuAfterFit(movedBefore);
@@ -798,7 +1003,17 @@ class ObjectBar {
      * divider; a set-verb's entry opens its own menu under "…" (F4).
      */
     private moreEntries(): MenuEntry[] {
-        return this.buttons.filter(b => this.moved.includes(b)).map(({ verb }) => ({
+        // The breadcrumb's outer part, moved there by the fit (#8): first, named as the menu names it, its literal after it.
+        const outer = this.outerMoved ? this.parts.find(p => p.view.role === 'outer') : undefined;
+        const crumb: MenuEntry[] = outer?.view.verb ? [{
+            id: outer.view.verb.id,
+            label: outer.view.verb.label,
+            code: outer.view.literal ?? undefined,
+            title: outer.view.verb.title,
+            refusal: outer.view.verb.refusal,
+            run: () => this.choose(outer.view.verb as Verb),
+        }] : [];
+        return [...crumb, ...this.buttons.filter(b => this.moved.includes(b)).map(({ verb }): MenuEntry => ({
             id: verb.id,
             label: lensName(verb.label),
             title: verb.title,
@@ -812,7 +1027,7 @@ class ObjectBar {
                     this.choose(verb);
                 }
             },
-        }));
+        }))];
     }
 
     /** The open field's row fitted to `room` before the slot places it (`FieldRow.fit`). */
@@ -840,6 +1055,7 @@ class ObjectBar {
         label.textContent = presentation.label;
         this.title = { label: presentation.label, short: presentation.short };
         this.moved = [];
+        this.outerMoved = false;
         this.el.dataset.name = presentation.label;
         if (presentation.code !== undefined) {
             const code = document.createElement('span');
@@ -850,8 +1066,14 @@ class ObjectBar {
         // What the object is, on a rest: the title is a label, not a control — no focus, no press.
         this.tips.attach(label, () => (presentation.title === '' ? null : plainTip(presentation.title)));
         this.fitted = '';
-        this.name = barName(presentation.label, presentation.code);
-        this.el.setAttribute('aria-label', barDescription(this.name, presentation.verbs.filter(v => !v.refusal).length));
+        // A breadcrumb takes the title's place (#8): its parts are controls in the bar's arrow order, counted with the verbs.
+        const head = presentation.crumbs === undefined ? label : this.renderCrumbs(presentation.crumbs);
+        if (presentation.crumbs === undefined) {
+            this.parts = [];
+        }
+        this.name = presentation.name ?? barName(presentation.label, presentation.code);
+        const parts = this.parts.filter(p => p.view.verb !== null && !p.view.verb.refusal).length;
+        this.el.setAttribute('aria-label', barDescription(this.name, parts + presentation.verbs.filter(v => !v.refusal).length));
         this.buttons = presentation.verbs.map(verb => {
             const el = document.createElement('button');
             el.type = 'button';
@@ -891,8 +1113,71 @@ class ObjectBar {
         // Its hover is its name: said once, as the `aria-label`, not again as a description.
         this.tips.attach(more, () => plainTip(more.getAttribute('aria-label') ?? 'More actions'), 'below', false);
         more.hidden = false;
-        this.more = this.buttons.length > 0 ? more : null;
-        this.el.replaceChildren(label, ...(this.buttons.length > 0 ? [barSeparator()] : []), ...this.buttons.flatMap((b, i) => b.verb.separated && i > 0 ? [barSeparator(), b.el] : [b.el]));
+        this.more = this.buttons.length > 0 || this.parts.length > 0 ? more : null;
+        this.el.replaceChildren(head, ...(this.buttons.length > 0 ? [barSeparator()] : []), ...this.buttons.flatMap((b, i) => b.verb.separated && i > 0 ? [barSeparator(), b.el] : [b.el]));
+    }
+
+    /**
+     * The breadcrumb (#8): a group "Blocks at the caret" — no landmark — of
+     * the outer part, a chevron drawn and not read, and the current part. A
+     * part that opens a field is a button: its name, then its literal in the
+     * code font (hidden while it has none); named "Attributes of List,
+     * .steps"; the current one `aria-current`, its name set semibold. A part
+     * that is a title (an admonition's, a container's) is drawn as the bar's
+     * title: not focusable, no hover. Pressed, a part opens its field, or says
+     * why it cannot at the part (#10).
+     */
+    private renderCrumbs(crumbs: NonNullable<Presentation['crumbs']>): HTMLElement {
+        const group = document.createElement('span');
+        group.className = 'mep-crumbs';
+        group.setAttribute('role', 'group');
+        group.setAttribute('aria-label', 'Blocks at the caret');
+        const draw = (view: CrumbView): HTMLElement => {
+            const name = document.createElement('span');
+            name.className = 'mep-crumb-name';
+            name.textContent = view.name;
+            const verb = view.verb;
+            if (verb === null) {
+                const title = document.createElement('span');
+                title.className = 'mep-crumb mep-crumb-title';
+                title.dataset.part = view.role;
+                title.append(name);
+                return title;
+            }
+            const el = document.createElement('button');
+            el.type = 'button';
+            el.className = 'mep-crumb';
+            el.tabIndex = -1;
+            el.dataset.part = view.role;
+            el.classList.toggle('mep-crumb-bare', view.literal === null);
+            if (view.role === 'current') {
+                el.setAttribute('aria-current', 'true');
+            }
+            const code = document.createElement('span');
+            code.className = 'mep-crumb-code';
+            code.textContent = view.literal ?? '';
+            el.append(name, code);
+            el.setAttribute('aria-label', crumbPartName(view));
+            el.setAttribute('aria-disabled', String(Boolean(verb.refusal)));
+            // Its hover says what pressing it does and where the field opens, as the menu's entry names it; a refused one why not.
+            this.tips.attach(el, () => (verb.refusal ? plainTip(`Attributes of ${view.name}…`, verb.refusal) : plainTip(`Attributes of ${view.name}… — opens ${view.opens}`)));
+            el.addEventListener('click', e => {
+                e.preventDefault();
+                this.choose(verb, el);
+            });
+            el.addEventListener('focus', () => this.events.verbActive());
+            el.addEventListener('blur', () => this.events.verbActive());
+            return el;
+        };
+        const outer = draw(crumbs.outer);
+        const current = draw(crumbs.current);
+        const sep = document.createElement('span');
+        sep.className = 'mep-crumb-sep';
+        sep.setAttribute('aria-hidden', 'true');
+        sep.append(...lensLabelNodes('$(chevron-right)'));
+        group.append(outer, sep, current);
+        this.parts = [{ view: crumbs.outer, el: outer }, { view: crumbs.current, el: current }];
+        return group;
     }
 
     /**
@@ -1002,6 +1287,13 @@ class ObjectBar {
             label.className = 'mep-entry-label';
             label.textContent = entry.label;
             el.append(label);
+            if (entry.code !== undefined) {
+                // The part's literal (#8 Remove▾): in the code font, muted, after the name.
+                const code = document.createElement('span');
+                code.className = 'mep-entry-code';
+                code.textContent = entry.code;
+                el.append(code);
+            }
             if (entry.opens) {
                 el.append(chevronNode('right'));
             }
@@ -1129,7 +1421,15 @@ class ObjectBar {
      * the same place; the bar is redrawn once the last one is in.
      */
     private openField(verb: Verb, spec: NonNullable<Verb['field']> | NonNullable<Verb['choice']>): void {
-        const label = this.el.querySelector<HTMLElement>('.mep-object-label');
+        let label = this.el.querySelector<HTMLElement>('.mep-object-label');
+        // A breadcrumb gives way to the field's heading for the field's lifetime (#8): drawn again once it closes.
+        const crumbs = this.el.querySelector<HTMLElement>(':scope > .mep-crumbs');
+        if (label === null && crumbs !== null) {
+            label = document.createElement('span');
+            label.className = 'mep-object-label';
+            crumbs.replaceWith(label);
+            this.parts = [];
+        }
         const make = 'options' in spec
             ? (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
                 new InlineChoice({ choices: spec.options, value: spec.value, label: spec.label, ...callbacks })
@@ -1162,6 +1462,8 @@ class ObjectBar {
         });
         field.el.dataset.verb = verb.id;
         this.field = field;
+        // The step's own and what its field is placed at (`target`, `anchorBlock`): one object each where they are the same.
+        this.following = [...('options' in spec ? [] : spec.followed ?? []), ...(verb.target ? [verb.target] : []), ...(verb.anchorBlock ? [verb.anchorBlock] : [])];
         // The buttons go with the replaced row, and no pointerleave comes for a hover on one: forgotten here, it would tint on (`activeVerb`).
         this.hovered = null;
         this.hoveredEntry = null;
@@ -1183,13 +1485,15 @@ class ObjectBar {
         this.row.render();
         field.focus();
         if (this.object) {
-            this.events.fieldOpened(this.object, verb.target);
+            this.events.fieldOpened(this.object, verb.target, verb.anchorBlock);
         }
     }
 
     private onKey(e: KeyboardEvent): void {
-        // What the keys reach: the verbs shown and offered, then "…" while it holds any.
-        const enabled: { el: HTMLButtonElement; choose(): void }[] = [
+        // What the keys reach: the breadcrumb's parts shown, outer then current — a refused one too, Enter saying why at it (#8) —
+        // then the verbs shown and offered, then "…" while it holds any.
+        const enabled: { el: HTMLElement; choose(): void }[] = [
+            ...this.parts.filter(p => p.view.verb !== null && !p.el.hidden).map(p => ({ el: p.el, choose: () => this.choose(p.view.verb as Verb, p.el) })),
             ...this.buttons.filter(b => !b.verb.refusal && !b.el.hidden).map(b => ({ el: b.el, choose: () => this.choose(b.verb) })),
             ...(this.more?.isConnected ? [{ el: this.more, choose: () => this.toggleMore() }] : []),
         ];
@@ -1283,6 +1587,10 @@ class ObjectToolbarView implements PluginView {
     private typingHold = false;
     /** The dismissals Esc made, by the slot's key: where each is about, for `followDismissals`. */
     private readonly dismissals = new Map<string, Dismissal>();
+    /** What puts the window's scroll back once an outer part's field closes (#8, `revealField`). */
+    private unreveal: ((committed: boolean) => void) | null = null;
+    /** The bars whose open field's target a change deleted (`followObjects`): closed at the next `update`. */
+    private readonly goneFields = new Set<ObjectBar>();
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -1326,16 +1634,22 @@ class ObjectToolbarView implements PluginView {
                 }
                 this.view.focus();
             },
-            fieldOpened: (object, target) => {
-                if (target !== undefined) {
+            fieldOpened: (object, target, block) => {
+                // A block's field names its block by its heading and stands at it: no range drawn (#8).
+                if (block !== undefined) {
+                    clearPendingRange(this.view);
+                } else if (target !== undefined) {
                     showPendingRange(this.view, target.from, target.to);
                 } else if (PENDING_OBJECTS.has(object.kind)) {
                     showPendingRange(this.view, object.from, object.to);
                 }
-                this.fieldOpened(bar, object, target);
+                this.fieldOpened(bar, object, target, block);
             },
-            fieldClosed: () => {
+            fieldClosed: committed => {
                 this.fieldGone();
+                // An outer part's field scrolled the window to stand in view (#8): the scroll goes back.
+                this.unreveal?.(committed);
+                this.unreveal = null;
                 clearPendingRange(this.view);
                 this.refresh();
             },
@@ -1346,6 +1660,7 @@ class ObjectToolbarView implements PluginView {
             },
             fieldDropped: () => {
                 this.fieldGone();
+                this.unreveal = null;
                 setTimeout(() => {
                     if (!this.destroyed) {
                         clearPendingRange(this.view);
@@ -1367,10 +1682,10 @@ class ObjectToolbarView implements PluginView {
      * object: a block's field stands where the block's bar did, anchored to
      * the block.
      */
-    private fieldOpened(bar: ObjectBar, object: EditorObject, target?: { from: number; to: number }): void {
+    private fieldOpened(bar: ObjectBar, object: EditorObject, target?: { from: number; to: number }, block?: AttributesTarget): void {
         const view = this.view;
         const sel = view.state.selection;
-        const range = target ?? { from: object.from, to: object.to };
+        const range = block !== undefined ? { from: block.pos, to: block.pos + block.node.nodeSize } : target ?? { from: object.from, to: object.to };
         const key = `field@${range.from}-${range.to}`;
         if (this.fieldKey === key && this.slot.current?.key === key) {
             // The next step of the same field, or its refusal's line: the size changed, the claim is the same.
@@ -1380,8 +1695,12 @@ class ObjectToolbarView implements PluginView {
         this.fieldKey = key;
         // A block's field opens where that block's bar stands, anchored to the block (Daniel, #4 build critique); an inline
         // object's at the object, a selection's at the selection — only where the caret itself is the anchor, at the caret.
-        const atCaret = target === undefined && bar === this.selectionBar && sel instanceof TextSelection && !isBlockPlaced(object);
+        const atCaret = target === undefined && block === undefined && bar === this.selectionBar && sel instanceof TextSelection && !isBlockPlaced(object);
         const head = sel.head;
+        // An outer part's field stands under a block that may be far from the caret (#8): the window shows it, and gives the scroll back.
+        if (block !== undefined && block.pos !== object.from) {
+            this.unreveal = revealField(view, blockAnchor(view, block), bar.el.offsetHeight);
+        }
         this.slot.request({
             kind: 'field',
             key,
@@ -1391,12 +1710,18 @@ class ObjectToolbarView implements PluginView {
                     return null;
                 }
                 const size = view.state.doc.content.size;
+                if (block !== undefined) {
+                    // Under the block the field edits, as its own bar would stand (#8): the list under the list, the heading under it.
+                    return blockAnchor(view, block);
+                }
                 if (target !== undefined) {
                     return rangeAnchor(view, Math.min(target.from, size), Math.min(target.to, size));
                 }
                 return atCaret ? caretRect(view, Math.min(head, size)) : bar.object ? anchorOf(view, bar.object) : null;
             },
             valid: () => bar.editing,
+            // A run's field stands where an inline object's bar does (#8: Bold at the run): above, where text is on both sides.
+            bothCovered: target !== undefined && block === undefined ? 'above' : undefined,
             hidden: () => this.barHidden(bar, 'displaced'),
             fit: (room, fresh) => bar.fitField(room, fresh),
         }, { force: true });
@@ -1419,6 +1744,13 @@ class ObjectToolbarView implements PluginView {
             this.typingHold = true;
             this.slot.typing();
         }
+        // A field whose target the change deleted (`followObjects`): it closes, nothing written, and says so (#8 review 1).
+        for (const bar of this.goneFields) {
+            const hint = goneFieldHint(bar.followed);
+            this.hideBar(bar);
+            this.say(hint, 'neutral');
+        }
+        this.goneFields.clear();
         this.refresh();
     }
 
@@ -1431,6 +1763,49 @@ class ObjectToolbarView implements PluginView {
         }
         if (changed) {
             this.followDismissals(transactions, newState.doc);
+            this.followObjects(transactions, newState.doc);
+        }
+    }
+
+    /**
+     * A change of the document moved what the bars hold a position of (#8 F7,
+     * the wave-2 follow-up): the bars' objects, the rested and forced object,
+     * and an open field's target and the place it stands at — followed in
+     * place (`followAll`), so a host resync that inserts above the object
+     * keeps its bar and its open field, what was typed and all, and the
+     * commit writes to the same block. A field whose target is gone closes,
+     * writing nothing — after this update, from `update`.
+     */
+    private followObjects(transactions: readonly Transaction[], doc: EditorState['doc']): void {
+        const bars = [this.selectionBar, this.hoverBar];
+        const items: Followed[] = [];
+        for (const bar of bars) {
+            if (bar.object !== null) {
+                items.push(bar.object);
+            }
+            items.push(...bar.followed as Followed[]);
+        }
+        for (const object of [this.matured, this.forced, this.pending?.object ?? null]) {
+            if (object !== null) {
+                items.push(object);
+            }
+        }
+        if (items.length === 0) {
+            return;
+        }
+        const gone = followAll(items, transactions, doc);
+        if (gone.size === 0) {
+            return;
+        }
+        for (const bar of bars) {
+            if (bar.editing && (bar.followed.some(f => gone.has(f as Followed)) || (bar.object !== null && gone.has(bar.object)))) {
+                this.goneFields.add(bar);
+            }
+        }
+        this.matured = this.matured !== null && gone.has(this.matured) ? null : this.matured;
+        this.forced = this.forced !== null && gone.has(this.forced) ? null : this.forced;
+        if (this.pending !== null && gone.has(this.pending.object)) {
+            this.cancelPending();
         }
     }
 
@@ -1650,7 +2025,8 @@ class ObjectToolbarView implements PluginView {
             this.matured = isBlockObject(object) ? null : object;
             const presentation = this.present(object);
             this.forced = sameObject(object, this.forced) ? this.forced : null;
-            const keyed = this.forced !== null && presentation.verbs.some(v => v.id === 'inline-attributes');
+            // Alt+Enter draws what a rest does not: the element's Attributes of Bold…, a breadcrumb of two bare parts (F6).
+            const keyed = this.forced !== null && (presentation.verbs.some(v => v.id === 'inline-attributes') || presentation.restless === true);
             this.forced = keyed ? this.forced : null;
             if (barless(object, presentation) && !keyed) {
                 // A heading's verbs are other extensions' lenses and actions; with none, no bar.
@@ -1697,7 +2073,7 @@ class ObjectToolbarView implements PluginView {
             kind,
             key: barKey(kind, object),
             el: bar.el,
-            anchor: () => (bar.object === null ? null : anchorOf(this.view, bar.object)),
+            anchor: () => (bar.object === null ? null : anchorOf(this.view, this.partAnchor(bar) ?? bar.object)),
             valid: () => bar.object !== null,
             // An inline object's bar goes above where text is on both sides (Daniel, 2026-10-20); a block's stays below.
             bothCovered: isBlockPlaced(object) ? undefined : 'above',
@@ -1709,6 +2085,13 @@ class ObjectToolbarView implements PluginView {
                 bar.fit(room);
             },
         };
+    }
+
+    /** The block `bar` stands at instead of its object (`ObjectBar.anchorFrom`, #8 review 1): a heading in its admonition; `null` for its object. */
+    private partAnchor(bar: ObjectBar): EditorObject | null {
+        const at = bar.anchorFrom;
+        const node = at === null || at >= this.view.state.doc.content.size ? null : this.view.state.doc.nodeAt(at);
+        return node === null ? null : objectOfNode(node, at as number);
     }
 
     /**
@@ -1960,12 +2343,13 @@ class ObjectToolbarView implements PluginView {
      * not applied yet.
      */
     private present(object: EditorObject): Presentation {
-        const own = this.withInlineAttributes(object, this.ownPresentation(object));
-        if (!isTopLevelBlock(this.view.state, object) || this.holdsFocusedControl(object)) {
+        const own = this.withCrumbs(object, this.withInlineAttributes(object, this.ownPresentation(object)));
+        const at = this.actionsAt(object);
+        if (at === null || this.holdsFocusedControl(object)) {
             return { ...own, verbs: arrange(own.verbs) };
         }
-        const lenses = this.lensVerbs(this.host.lensesAt(object.from));
-        const actions = this.host.codeActionsAt(object.from).map((item): Verb => {
+        const lenses = this.lensVerbs(this.host.lensesAt(at));
+        const actions = this.host.codeActionsAt(at).map((item): Verb => {
             const name = lensName(item.title);
             return {
                 id: `code-action:${item.id}`,
@@ -1986,6 +2370,205 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
+     * Where the lenses and code actions `object`'s bar carries are asked for:
+     * a whole top-level block's own — and, for a list item's bar or a heading's
+     * in a quote, the top-level list's or quote's (#8, Daniel: nothing the
+     * list's bar offered is lost to the item's). `null` for none.
+     */
+    private actionsAt(object: EditorObject): number | null {
+        const state = this.view.state;
+        if (isTopLevelBlock(state, object)) {
+            return object.from;
+        }
+        if (isMarkObject(object) || !(object.kind === 'list_item' || object.kind === 'heading' || object.kind === 'block_attrs') || object.from >= state.doc.content.size) {
+            return null;
+        }
+        const $pos = state.doc.resolve(object.from);
+        if ($pos.depth < 1) {
+            return null;
+        }
+        const top = $pos.node(1).type.name;
+        return top === 'bullet_list' || top === 'ordered_list' || top === 'blockquote' ? $pos.before(1) : null;
+    }
+
+    /**
+     * The breadcrumb on `object`'s bar (#8), where the editor holds two
+     * levels (`crumbsAt`) and `object` is the current part — a list item, a
+     * heading in a quote, an inline element with a literal — or the wrapper
+     * whose heading it is (an admonition, a container: their title part).
+     * Else `own` as it is: a one-part bar. The parts open their own fields,
+     * the outer one at its block; an admonition's Type▾ and Edit title… act
+     * on the outer part (`outer`). A breadcrumb of two bare parts draws no bar
+     * on a rest (F6, `restless`).
+     */
+    private withCrumbs(object: EditorObject, own: Presentation): Presentation {
+        const crumbs = currentReadsAttrs() ? crumbsAt(this.view.state) : null;
+        if (crumbs === null || crumbs.outer === null || !crumbsFor(object, crumbs)) {
+            return own;
+        }
+        const title = crumbs.outer.target === null && crumbs.outer.refusal === null;
+        const outer: CrumbView = title
+            ? { role: 'outer', name: own.label, short: own.short, literal: null, verb: null, opens: '' }
+            : this.crumbView(crumbs.outer);
+        const current = this.crumbView(crumbs.current);
+        const blockBar = object.kind === 'list_item' || object.kind === 'heading' || object.kind === 'block_attrs';
+        // An admonition's Type▾ and Edit title…, a container's Edit classes…, act on the outer part: never the first focus (#14 on two-part bars).
+        const ownVerbs = title ? own.verbs.map(v => (v.slot === 'type' || v.slot === 'edit' ? { ...v, outer: true as const } : v)) : own.verbs;
+        return {
+            ...own,
+            crumbs: { outer, current },
+            name: crumbName(current, outer),
+            restless: blockBar && current.literal === null && outer.literal === null,
+            ...(title ? { anchorFrom: crumbs.current.from } : {}),
+            verbs: this.withCrumbRemove(object, ownVerbs, crumbs, title),
+        };
+    }
+
+    /**
+     * Remove on a two-part bar (#8, section 4.4), in place of the object's own
+     * Remove attributes: **Remove attributes of List** where one part carries
+     * a literal; **Remove attributes ▾** naming each part, the current one
+     * first, where both do — an inline part's entry saying what stays
+     * (`formatting stays`); on an admonition or a container whose heading
+     * carries one, one **Remove ▾**: the heading's attributes, then — after a
+     * divider — the wrapper, its content kept. Each entry reads its part again
+     * when chosen (`removePart`), never a position held from before.
+     */
+    private withCrumbRemove(object: EditorObject, verbs: Verb[], crumbs: Crumbs, title: boolean): Verb[] {
+        const outer = crumbs.outer as CrumbPart;
+        const current = crumbs.current;
+        // What stays, in a word (#8 review 1, W2/W3): "item" for a list item, else the part's own name.
+        const stays = (part: CrumbPart) => (part.name === BLOCK_NAMES.list_item ? 'item' : part.name.toLowerCase());
+        const removes = (part: CrumbPart) => `Removes the ${part.name.toLowerCase()}'s attributes; the ${stays(part)} stays.`;
+        const entryOf = (part: CrumbPart): MenuEntry => ({
+            id: `remove-${part.role}`,
+            label: part.name,
+            code: part.literal ?? undefined,
+            keys: part.target !== null && 'object' in part.target ? STAYS[part.target.object.kind] ?? 'text stays' : `${stays(part)} stays`,
+            title: removes(part),
+            run: () => this.removePart(object, part),
+        });
+        if (title) {
+            const wrapper = verbs.find(v => v.slot === 'destroy');
+            if (current.literal === null || wrapper === undefined || wrapper.run === undefined) {
+                return verbs;
+            }
+            const unwrap = wrapper.run;
+            const keep = object.kind === 'container' ? 'Container, keep content' : 'Admonition, keep content';
+            const remove: Verb = {
+                id: 'remove-menu',
+                label: wording({ verb: 'Remove', noun: '' }).label,
+                title: 'Choose what to remove',
+                slot: 'destroy',
+                menu: [
+                    { ...entryOf(current), label: `Attributes of ${current.name}` },
+                    { id: 'remove-wrapper', label: keep, title: wrapper.title, separated: true, run: unwrap },
+                ],
+            };
+            return [...verbs.filter(v => v !== wrapper), remove];
+        }
+        // The object's own Remove of its literal gives way: a styled run's, a span's, a block's one-part Remove attributes.
+        const rest = verbs.filter(v => v.id !== 'remove-attributes');
+        const carrying = [current, outer].filter(p => p.literal !== null && (p.target !== null));
+        if (carrying.length === 0) {
+            return rest;
+        }
+        if (carrying.length === 1) {
+            const part = carrying[0];
+            return [...rest, {
+                id: 'remove-attributes',
+                label: `Remove attributes of ${part.name}`,
+                title: removes(part),
+                slot: 'destroy',
+                run: () => this.removePart(object, part),
+            }];
+        }
+        return [...rest, {
+            id: 'remove-attributes',
+            label: wording({ verb: 'Remove', noun: 'attributes', titled: false }).label,
+            title: 'Choose whose attributes to remove',
+            slot: 'destroy',
+            menu: carrying.map(entryOf),
+        }];
+    }
+
+    /**
+     * Remove the literal of the breadcrumb's part `part` was (#8): its part
+     * read again by its role from the state as it is once the focus is back —
+     * never a position held from when the bar was drawn — and refused at the
+     * Remove control, nothing removed, where that part is gone or its literal
+     * changed meanwhile (a resync). The hint names the part.
+     */
+    private removePart(object: EditorObject, part: CrumbPart): void {
+        const done = attributesRemovedHint(part.name);
+        // Every refusal stands at the Remove control that was pressed (#8 review 1), never silent.
+        const refuse = (message: Said) => {
+            const el = this.selectionBar.el.querySelector<HTMLElement>('[data-verb="remove-attributes"], [data-verb="remove-menu"]');
+            if (el !== null && !el.hidden) {
+                showRefusal(this.view, message, { at: 'control', el });
+            } else {
+                showRefusal(this.view, message);
+            }
+        };
+        this.act(object, () => {
+            const crumbs = crumbsAt(this.view.state);
+            const now = crumbs === null ? null : part.role === 'current' ? crumbs.current : crumbs.outer;
+            if (now === null || now.name !== part.name || now.literal !== part.literal || now.target === null) {
+                refuse(`Not removed: the ${part.name.toLowerCase()}'s attributes changed meanwhile — choose Remove again.`);
+                return false;
+            }
+            const target = now.target;
+            if ('pos' in target) {
+                const made = commitAttributes(this.view.state, target, '');
+                if (made === null) {
+                    return false;
+                }
+                if ('refusal' in made) {
+                    refuse(made.refusal);
+                    return false;
+                }
+                this.view.dispatch(made.tr);
+                return true;
+            }
+            const run = literalObjectOf(currentObject(this.view.state, target.object));
+            const tr = run === null ? null : run.kind === 'span' ? removeSpanTransaction(this.view.state, run as Extract<EditorObject, { kind: 'span' }>) : changeInlineLiteralTransaction(this.view.state, run, '');
+            if (tr === null) {
+                const why = run === null || run.kind === 'span' ? null : changeInlineLiteralRefusal(this.view.state, run, '');
+                refuse(why ?? `Not removed: the ${part.name.toLowerCase()}'s attributes changed meanwhile — choose Remove again.`);
+                return false;
+            }
+            this.view.dispatch(tr);
+            return true;
+        }, done);
+    }
+
+    /** A block or inline part of the breadcrumb as its button: its field — the one every route opens — or why it has none. */
+    private crumbView(part: CrumbPart): CrumbView {
+        const name = part.name;
+        const base = {
+            id: `crumb-${part.role}`,
+            label: `Attributes of ${name}…`,
+            title: attributesTip(name, part.literal),
+            slot: 'attributes' as const,
+        };
+        const opens = part.anchor === 'run' && part.target !== null && 'object' in part.target
+            ? `at the ${holderNames(part.target).noun}`
+            : `under the ${name === BLOCK_NAMES.list_item ? 'item' : name.toLowerCase()}`;
+        let verb: Verb;
+        if (part.target === null) {
+            verb = { ...base, refusal: part.refusal ?? NO_BLOCK_ATTRS_REFUSAL };
+        } else if ('pos' in part.target) {
+            // A copy, followed while its field is open (F7): the field commits to it and stands at it — the cached part is the state's.
+            const target = { ...part.target };
+            verb = { ...base, field: attributesStep(this.view, target), anchorBlock: target };
+        } else {
+            const at = { holder: part.target.holder, object: { ...part.target.object } };
+            verb = { ...base, field: holderAttributesStep(this.view, at), target: at.object };
+        }
+        return { role: part.role, name, literal: part.literal, verb, opens };
+    }
+
+    /**
      * The object's own verbs and, beside its Attributes…, **Attributes of Bold…**
      * for the element inside it the caret is in — bold in a table's cell, code
      * in a link (`holderInside`, the rule the menu reads) — whose field is the
@@ -2003,10 +2586,11 @@ class ObjectToolbarView implements PluginView {
         const verb: Verb = {
             id: 'inline-attributes',
             label: `${name}…`,
-            title: `The ${names.noun}'s {…}, written right after it: ${attributesTyped(literalOfObject(inside.object))} (Enter to apply, Esc to cancel).`,
+            title: attributesTip(names.label, literalOfObject(inside.object), ' Written right after it.'),
             slot: 'attributes',
             field: step,
-            target: { from: inside.object.from, to: inside.object.to },
+            // The run itself: followed with the field while it is open (F7).
+            target: inside.object,
         };
         return { ...own, verbs: [...own.verbs, verb] };
     }
@@ -2144,7 +2728,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, typed => `The link's {…}, written after its (…): ${typed} (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, typed => `The link's {…}, written after its (…): ${typed} (Enter to set, Esc to cancel).`),
                         {
                             id: 'remove-link',
                             label: remove.label,
@@ -2201,7 +2785,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, typed => `The image's {…}, written after its (…): ${typed} (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, typed => `The image's {…}, written after its (…): ${typed} (Enter to set, Esc to cancel).`),
                         { id: 'open-image', label: open.label, short: open.short, title: `Open ${src} (as Ctrl+click on a link does).`, slot: 'open', run: () => host.openLink(src) },
                         {
                             id: 'delete-image',
@@ -2235,6 +2819,8 @@ class ObjectToolbarView implements PluginView {
                 }, {
                     removable: false,
                     unchanged: () => this.act(object, () => false),
+                    // The span followed while the field is open (F7): a resync above it keeps the field.
+                    followed: [object],
                 });
                 // The title says Span, not attributes: the verb keeps its noun however narrow the bar.
                 const remove = wording({ verb: 'Remove', noun: 'attributes', keeps: ', keep text', titled: false });
@@ -2245,11 +2831,11 @@ class ObjectToolbarView implements PluginView {
                         {
                             id: 'edit-attributes',
                             label: VERB.attributes,
-                            title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
+                            title: 'Change the span\'s {…} (Enter to set, Esc to cancel).',
                             slot: 'attributes',
                             field: step,
-                            // At the span it edits, as every run's attributes field (`markAttributesVerb`).
-                            target: { from: object.from, to: object.to },
+                            // At the span it edits, as every run's attributes field (`markAttributesVerb`), followed with it.
+                            target: object,
                         },
                         {
                             id: 'remove-attributes',
@@ -2269,7 +2855,7 @@ class ObjectToolbarView implements PluginView {
                 return {
                     label: names.label,
                     title: `\`${text}\`: ${names.noun} — Attributes… gives it a {…}`,
-                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Give the ${names.noun} a {…}, written right after it: ${typed} (Enter to apply, Esc to cancel).`)],
+                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Give the ${names.noun} a {…}, written right after it: ${typed} (Enter to set, Esc to cancel).`)],
                 };
             }
             case 'styled': {
@@ -2283,7 +2869,7 @@ class ObjectToolbarView implements PluginView {
                     code: literal,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
                     verbs: [
-                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Change the ${name.toLowerCase()}'s {…}: ${typed} (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Change the ${name.toLowerCase()}'s {…}: ${typed} (Enter to set, Esc to cancel).`),
                         {
                             id: 'remove-attributes',
                             label: remove.label,
@@ -2322,7 +2908,7 @@ class ObjectToolbarView implements PluginView {
                             slot: 'edit',
                             field: classes,
                         },
-                        this.attributesVerb(object),
+                        this.wrapperAttributesVerb(object),
                         {
                             id: 'remove-container',
                             label: remove.label,
@@ -2366,7 +2952,7 @@ class ObjectToolbarView implements PluginView {
                                 commit: value => this.apply(object, current => changeAdmonitionTransaction(view.state, current.from, { title: value })),
                             },
                         },
-                        this.attributesVerb(object),
+                        this.wrapperAttributesVerb(object),
                         {
                             id: 'remove-admonition',
                             label: remove.label,
@@ -2401,12 +2987,25 @@ class ObjectToolbarView implements PluginView {
                     ],
                 };
             }
-            case 'block_attrs': {
-                const literal = (object.node.attrs.attrsSuffix as string | null) ?? '';
+            case 'list_item': {
+                const literal = literalOf(object.node);
                 return {
-                    label: `${BLOCK_NAMES[object.node.type.name] ?? 'Block'} attributes`,
-                    title: `${literal}: the attributes the block is rendered with.`,
+                    label: BLOCK_NAMES.list_item,
+                    ...(literal === null ? {} : { code: literal }),
+                    title: literal === null ? 'A list item.' : `${literal}: the attributes the item is rendered with.`,
                     verbs: [this.attributesVerb(object)],
+                };
+            }
+            case 'block_attrs': {
+                // The block's name and its literal in the code font, as an inline element's bar shows its own (#8):
+                // `Quote {.warning}` · Attributes… · | · Remove attributes.
+                const literal = (object.node.attrs.attrsSuffix as string | null) ?? '';
+                const name = BLOCK_NAMES[object.node.type.name] ?? 'Block';
+                return {
+                    label: name,
+                    code: literal,
+                    title: `${literal}: the attributes the block is rendered with.`,
+                    verbs: [this.attributesVerb(object), this.removeBlockAttributesVerb(object, name)],
                 };
             }
             case 'wiki_embed':
@@ -2467,7 +3066,7 @@ class ObjectToolbarView implements PluginView {
                 };
                 const remove = wording({ verb: 'Delete', noun: 'block' });
                 return {
-                    ...rawBlockLabel(object.node.attrs.construct as string | null),
+                    ...rawBlockLabel(object.node.attrs.construct as string | null, object.node.attrs.src as string),
                     verbs: [
                         this.showInTextEditor(object),
                         ...(editing ? [] : [editSource]),
@@ -2617,8 +3216,9 @@ class ObjectToolbarView implements PluginView {
      * reason, on a container and an admonition, whose renderers drop a literal.
      */
     private attributesVerb(object: EditorObject): Verb {
-        // A code block is an object at any depth; its literal is written only at the top level.
-        const nested = object.kind === 'code_block' && this.view.state.doc.resolve(object.from).depth > 0;
+        // A code block is an object at any depth, a list item and a heading in a quote too; below the top level only
+        // a heading's and a list item's literal is written (`nestedAttrsRefusal`).
+        const nested = !isMarkObject(object) && object.from < this.view.state.doc.content.size && this.view.state.doc.resolve(object.from).depth > 0;
         const found = isMarkObject(object) ? { refusal: NO_BLOCK_ATTRS_REFUSAL } : attributesTargetOf(object.node, object.from, nested);
         const refused = 'refusal' in found;
         const fences = object.kind === 'code_block' && object.node.attrs.markup === '' ? ' Setting one makes the block fenced.' : '';
@@ -2626,10 +3226,81 @@ class ObjectToolbarView implements PluginView {
             id: 'block-attributes',
             label: VERB.attributes,
             slot: 'attributes',
-            title: `The block's {…}: ${attributesTyped(refused ? null : literalOf(found.node))} (Enter to apply, Esc to cancel).${fences}`,
+            title: attributesTip(refused ? 'Block' : found.name, refused ? null : literalOf(found.node), fences),
             refusal: refused ? found.refusal : null,
             field: refused ? undefined : attributesStep(this.view, found),
         };
+    }
+
+    /**
+     * An admonition's or a container's Attributes… (#8, F5): refused for the
+     * wrapper itself — it keeps no literal here — but where the caret's block
+     * inside it is one that takes one (the menu's target, `attributesTargetAt`:
+     * a heading, a list item), **Attributes of Heading…** for that block,
+     * its field under it.
+     */
+    private wrapperAttributesVerb(object: EditorObject): Verb {
+        const own = this.attributesVerb(object);
+        const found = currentReadsAttrs() ? attributesTargetAt(this.view.state) : null;
+        if (found === null || 'refusal' in found || found.pos <= object.from || found.pos >= object.to) {
+            return own;
+        }
+        // A copy, followed while its field is open (F7).
+        const target = { ...found };
+        return {
+            id: 'block-attributes',
+            label: `Attributes of ${target.name}…`,
+            slot: 'attributes',
+            title: attributesTip(target.name, literalOf(target.node)),
+            field: attributesStep(this.view, target),
+            anchorBlock: target,
+        };
+    }
+
+    /**
+     * **Remove attributes** on a one-part block's bar (#8, F8): its literal
+     * goes, the block stays — the same commit the field's empty value makes
+     * (`commitAttributes`), the hint naming the block ("Quote attributes
+     * removed"). Refused only where the field would refuse it.
+     */
+    private removeBlockAttributesVerb(object: Extract<EditorObject, { node: unknown }>, name: string): Verb {
+        const remove = wording({ verb: 'Remove', noun: 'attributes', titled: false });
+        return {
+            id: 'remove-attributes',
+            label: remove.label,
+            title: `Removes the ${name.toLowerCase()}'s attributes; the ${name === BLOCK_NAMES.list_item ? 'item' : name.toLowerCase()} stays.`,
+            slot: 'destroy',
+            refusal: blockAttrsRefusal(object.node),
+            run: () => this.removeBlockLiteral(object, () => {
+                const now = currentObject(this.view.state, object);
+                if (now === null || isMarkObject(now)) {
+                    return null;
+                }
+                const found = attributesTargetOf(now.node, now.from, this.view.state.doc.resolve(now.from).depth > 0);
+                return 'refusal' in found ? null : found;
+            }, attributesRemovedHint(name)),
+        };
+    }
+
+    /**
+     * Remove the literal of the block `target` reads now (`null`: gone), once
+     * the focus is back (`act`): one transaction, the hint `done`; refused at
+     * the caret where the commit refuses it.
+     */
+    private removeBlockLiteral(object: EditorObject, target: () => AttributesTarget | null, done: string): void {
+        this.act(object, () => {
+            const now = target();
+            const made = now === null ? null : commitAttributes(this.view.state, now, '');
+            if (made === null) {
+                return false;
+            }
+            if ('refusal' in made) {
+                showRefusal(this.view, made.refusal);
+                return false;
+            }
+            this.view.dispatch(made.tr);
+            return true;
+        }, done);
     }
 
     /**
@@ -2737,7 +3408,8 @@ class ObjectToolbarView implements PluginView {
      * at the image, its object, already.
      */
     private markAttributesVerb(object: LiteralObject, id: string, label: string, title: (typed: string) => string): Verb {
-        const target = 'mark' in object ? { from: object.from, to: object.to } : undefined;
+        // The run itself, followed with its field while it is open (F7).
+        const target = 'mark' in object ? object : undefined;
         // What the tooltip says an empty value does is what the field's keys line says: it removes only a literal there is.
         return { id, label, title: title(attributesTyped(literalOfObject(object))), slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)), target };
     }

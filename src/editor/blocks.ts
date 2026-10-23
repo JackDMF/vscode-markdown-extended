@@ -213,11 +213,12 @@ export const CONTAINER_OPEN = 'container_container_open';
 export const CONTAINER_CLOSE = 'container_container_close';
 
 /**
- * Why a container written with a `{…}` on its `:::` line is a source block: the
- * preview draws the literal on the container's `div` (`markdownItContainer.ts`),
- * and the container node has no slot to keep it in.
+ * Why a container written with a `{…}` on its `:::` line, or on a line of its
+ * own just before the closing `:::`, is a source block: the preview draws the
+ * literal on the container's `div` (`markdownItContainer.ts`), and the
+ * container node has no slot to keep it in.
  */
-const CONTAINER_ATTRS_REASON = 'container attributes on its ::: line, which the container node does not keep';
+const CONTAINER_ATTRS_REASON = 'container attributes (on its ::: line or the line before its closing :::), which the container node does not keep';
 
 /** Top-level tokens that can open an editable block. Anything else at top level is a raw block. */
 export const EDITABLE_TOP_LEVEL_TOKENS: ReadonlySet<string> = new Set([

@@ -25,6 +25,7 @@
  * refusals (`webview/objects.ts`) quote the verbs' names from `VERB`.
  */
 import type { Said } from './tips';
+import { innerOf } from './attributeLiteral';
 
 /** Where a verb stands on its bar. */
 export type Slot = 'open' | 'edit' | 'type' | 'attributes' | 'source' | 'actions' | 'destroy';
@@ -41,6 +42,12 @@ export interface Slotted {
     separated?: boolean;
     /** It opens something in place — a field, a choice, a menu, a source box — rather than acting at once or elsewhere. */
     opensInPlace: boolean;
+    /**
+     * On a two-part bar (#8), it acts on the outer part, not the current one
+     * the caret is in: an admonition's Type▾ and Edit title… on a bar whose
+     * current part is the heading inside it. Never the first focus.
+     */
+    outer?: true;
 }
 
 /**
@@ -48,10 +55,18 @@ export interface Slotted {
  * gives: before the first other extension's verb when a verb of the object's
  * own precedes it, and before the verb that destroys when any verb precedes
  * it. A divider the presentation set itself (a table's, before Attributes…)
- * stays; every other is the rule's.
+ * stays; every other is the rule's. On a two-part bar (#8 review 1, Daniel)
+ * the verbs acting on the outer part (`outer`) stand after the current part's
+ * own, in slot order among themselves, before other extensions' and the one
+ * that destroys: "Attributes of Heading… · Edit title… · Type▾ · Remove▾".
  */
-export function arrange<V extends Pick<Slotted, 'slot' | 'separated'>>(verbs: readonly V[]): V[] {
-    const rank = (v: V) => SLOT_ORDER.indexOf(v.slot);
+export function arrange<V extends Pick<Slotted, 'slot' | 'separated' | 'outer'>>(verbs: readonly V[]): V[] {
+    // An outer verb ranks between the object's last own slot (`source`) and other extensions' (`actions`).
+    const source = SLOT_ORDER.indexOf('source');
+    const rank = (v: V) => {
+        const at = SLOT_ORDER.indexOf(v.slot);
+        return v.outer && at <= source ? source + 0.5 + at / (2 * SLOT_ORDER.length) : at;
+    };
     const sorted = verbs.map((v, k) => ({ v, k })).sort((a, b) => rank(a.v) - rank(b.v) || a.k - b.k).map(x => x.v);
     const firstAction = sorted.findIndex(v => v.slot === 'actions');
     const firstDestroy = sorted.findIndex(v => v.slot === 'destroy');
@@ -64,10 +79,12 @@ export function arrange<V extends Pick<Slotted, 'slot' | 'separated'>>(verbs: re
 /**
  * Where `Alt+Enter` puts the focus: the index of the first verb that opens in
  * place and is not refused — never Open, never another extension's, never one
- * that acts at once — or `-1`, the bar itself.
+ * that acts at once, and on a two-part bar never one acting on the outer part
+ * (#8: the first in-place verb acting on the current part) — or `-1`, the bar
+ * itself.
  */
 export function firstFocus(verbs: readonly Slotted[]): number {
-    return verbs.findIndex(v => v.opensInPlace && !v.refusal && v.slot !== 'open' && v.slot !== 'actions' && v.slot !== 'destroy');
+    return verbs.findIndex(v => v.opensInPlace && !v.refusal && !v.outer && v.slot !== 'open' && v.slot !== 'actions' && v.slot !== 'destroy');
 }
 
 /**
@@ -135,6 +152,27 @@ export function wording(w: Wording): { label: string; short: string; done: strin
 /** What a bar shows as its title: the object's name and, after it, its spelling (`Emoji :rocket:`). */
 export function barName(label: string, code?: string): string {
     return code === undefined ? label : `${label} ${code}`;
+}
+
+/** A breadcrumb part as its names read it: what it is called and its literal, braces included (`null`: none). */
+export interface NamedPart {
+    name: string;
+    literal: string | null;
+}
+
+/**
+ * A two-part bar's accessible name (#8): the current part, then the outer one
+ * — `List item .lead in List .steps` — each literal without its braces, which
+ * a screen reader would read out; a part without one is its name alone.
+ */
+export function crumbName(current: NamedPart, outer: NamedPart | null): string {
+    const one = (p: NamedPart) => (p.literal === null ? p.name : `${p.name} ${innerOf(p.literal).trim()}`);
+    return outer === null ? one(current) : `${one(current)} in ${one(outer)}`;
+}
+
+/** A breadcrumb part's accessible name (#8): `Attributes of List, .steps`, or `…, none` without a literal. */
+export function crumbPartName(part: NamedPart): string {
+    return `Attributes of ${part.name}, ${part.literal === null ? 'none' : innerOf(part.literal).trim()}`;
 }
 
 /**

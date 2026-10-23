@@ -202,3 +202,67 @@ suite('Editor refusal wording: the marks and parts it names', () => {
         assert.ok(saidText(serialize.literalRewrittenBeside(list, list.child(1), lost)).includes('item 2 wouldn\'t be saved as shown'));
     });
 });
+
+/**
+ * #8's texts (the admonition's and the container's are #8's, ux-critic #10;
+ * critique items 10–13): each reached by its route, under #10's rules — what
+ * happened, then what to do; no internals; no "title bar" (VS Code has one).
+ */
+suite('Editor refusal wording: the nested attributes\' texts (#8 step 3)', () => {
+    /** The refusal the menu's target meets with the caret at `needle`. */
+    const refusalAt = (md: string, needle: string): Said => {
+        const state = stateOf(md);
+        const at = state.apply(state.tr.setSelection(TextSelection.create(state.doc, posOf(state.doc, needle) + 1)));
+        const target = objects.attributesTargetAt(at);
+        assert.ok('refusal' in target, `${md}: refused`);
+        return target.refusal;
+    };
+    const outerAt = (md: string, needle: string): Said | null => {
+        const state = stateOf(md);
+        const at = state.apply(state.tr.setSelection(TextSelection.create(state.doc, posOf(state.doc, needle) + 1)));
+        return objects.blockPartsAt(at).outer?.refusal ?? null;
+    };
+
+    const routes = (): [string, Said][] => [
+        ['admonition paragraph', refusalAt('!!! note\n    Body text.\n', 'Body')],
+        ['container paragraph', refusalAt('::: box\nInside.\n:::\n', 'Inside')],
+        ['quote ending in a list', refusalAt('> Text.\n>\n> - item\n', 'Text')],
+        ['quote ending in a code block', refusalAt('> Text.\n>\n> ```\n> x\n> ```\n', 'Text')],
+        ['list in a quote (its List part)', outerAt('> - a\n> - b\n', 'a') ?? 'none'],
+        ['item without a text line', refusalAt('- ```\n  x\n  ```\n', 'x')],
+        ['!!! note {.x}', objects.sourceExplanation('attributes on admonition_title_open', '!!! note {.x}\n    Body\n') ?? 'none'],
+        ['!!! note "T" {.x}', objects.sourceExplanation('attributes on admonition_title_open', '!!! note "T" {.x}\n    Body\n') ?? 'none'],
+        ['quote paragraph', objects.sourceExplanation('attributes on paragraph_open', '> text {.x}\n') ?? 'none'],
+    ];
+
+    test('each is reached by its route, and says what happened, then what to do — no internals, no "title bar", at most 220 characters', () => {
+        const expected: Record<string, Said> = {
+            'admonition paragraph': objects.ADMONITION_ATTRS_REFUSAL,
+            'container paragraph': objects.CONTAINER_ATTRS_REFUSAL,
+            'list in a quote (its List part)': objects.NESTED_LIST_ATTRS_REFUSAL,
+            'item without a text line': objects.ITEM_ATTRS_REFUSAL,
+            '!!! note {.x}': objects.ADMONITION_TITLE_LITERAL_EMPTY,
+            '!!! note "T" {.x}': objects.ADMONITION_TITLE_LITERAL,
+            'quote paragraph': objects.QUOTE_PARAGRAPH_LITERAL,
+        };
+        for (const [id, said] of routes()) {
+            if (expected[id] !== undefined) {
+                assert.strictEqual(said, expected[id], id);
+            }
+            const text = saidText(said);
+            assert.doesNotMatch(text, INTERNALS, `${id}: ${text}`);
+            assert.doesNotMatch(text, /title bar/i, `${id}: ${text}`);
+            assert.ok(text.includes(' — ') || /[.!?)]["”]? +["A-Z]/.test(text), `${id} says what to do: ${text}`);
+            assert.ok(text.length <= 220, `${id} is ${text.length} characters`);
+        }
+        assert.strictEqual(saidText(refusalAt('> Text.\n>\n> - item\n', 'Text')), saidText(objects.quoteAttrsRefusal(topChildren(parseDocument(hostEngine(), '> Text.\n>\n> - item\n').doc)[0])));
+        assert.strictEqual(objects.sourceExplanation('attributes on table_open', '| a |\n'), null, 'other source blocks keep their own words');
+    });
+
+    test('a value the user types is set in mono: ":::", "!!!", "{.x}", "> {.x}"', () => {
+        const mono = (said: Said) => saidParts(said).filter((p): p is { code: string } => typeof p !== 'string' && 'code' in p).map(p => p.code);
+        assert.deepStrictEqual(mono(objects.CONTAINER_ATTRS_REFUSAL), [':::', ':::']);
+        assert.deepStrictEqual(mono(objects.ADMONITION_TITLE_LITERAL_EMPTY), ['{.x}', '!!!', '{.x}', '!!! note "Title" {.x}']);
+        assert.deepStrictEqual(mono(objects.QUOTE_PARAGRAPH_LITERAL), ['{.x}', '> {.x}']);
+    });
+});

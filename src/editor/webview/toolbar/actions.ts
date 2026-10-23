@@ -107,9 +107,11 @@ export type ActionApply =
      * The `{…}` literal of the block at the caret (`attributesTargetAt`): the
      * attributes field asks for it — the block's literal between the braces
      * the field draws, or empty with the placeholder `.class` when it has
-     * none; an emptied field removes it.
+     * none; an emptied field removes it. `part: 'outer'`: the block around it
+     * that holds one too — a list item's List, a heading's Quote
+     * (`blockPartsAt`, #8) — the Block type menu's second entry.
      */
-    | { kind: 'block-attrs' }
+    | { kind: 'block-attrs'; part?: 'outer' }
     /**
      * The `{…}` literal of the inline element at the caret that carries or can
      * carry one (`attributeHolderAt`): inline code, a key, a link, emphasis,
@@ -472,6 +474,77 @@ const formatting: ToolbarAction[] = [
  */
 const blockTypeAttributes: ToolbarAction = { id: 'block-type-attributes', place: { menu: 'block-type' }, separated: true, ...BLOCK_ATTRIBUTES };
 
+/**
+ * Its second entry, right after it (#8): the block around the caret's that
+ * holds a `{…}` too — **Attributes of List…** at a list item, **Attributes of
+ * Quote…** at a heading in a quote carrying one — named and carded by that
+ * block; hidden where there is none, refused with the reason where the block
+ * keeps none here (a list inside a quote). At most two attribute entries, the
+ * current block's first.
+ */
+const blockTypeOuterAttributes: ToolbarAction = {
+    id: 'block-type-outer-attributes', place: { menu: 'block-type' }, ...BLOCK_ATTRIBUTES, apply: { kind: 'block-attrs', part: 'outer' },
+};
+
+/** A block's attributes card (#8): the syntax column and the preview its menu entry shows, one per kind of holder. */
+export interface BlockCard {
+    column: string;
+    preview: ActionPreview;
+}
+
+/** The two items every list card shows. */
+const CARD_ITEMS = ['Queue the edit locally', 'Send the batch'] as const;
+
+/**
+ * One card per holder (#8, F11): where each block's literal is written, in a
+ * sample that renders as the block with the class — a paragraph's at its
+ * end, a list item's at the end of its line, a list's on a line under it, a
+ * quote's on a `>` line of its own, a heading's after its text, a table's under
+ * a blank line, a fence's on its opening line, a rule's after it. Keyed by
+ * node name; `ordered_list_item` is an item of a numbered list. The test
+ * renders each through the host's engine.
+ */
+export const BLOCK_CARDS: Readonly<Record<string, BlockCard>> = {
+    // The card every block showed before #8 (`BLOCK_ATTRIBUTES`).
+    paragraph: { column: BLOCK_ATTRIBUTES.syntax, preview: BLOCK_ATTRIBUTES.preview },
+    list_item: {
+        column: `- text ${CLASS_LITERAL}`,
+        preview: { markdown: `- ${CARD_ITEMS[0]} {.lead}\n- ${CARD_ITEMS[1]}`, nodes: [el('ul', el('li.lead', CARD_ITEMS[0]), el('li', CARD_ITEMS[1]))] },
+    },
+    ordered_list_item: {
+        column: `1. text ${CLASS_LITERAL}`,
+        preview: { markdown: `1. ${CARD_ITEMS[0]} {.lead}\n2. ${CARD_ITEMS[1]}`, nodes: [el('ol', el('li.lead', CARD_ITEMS[0]), el('li', CARD_ITEMS[1]))] },
+    },
+    bullet_list: {
+        column: `${CLASS_LITERAL} under it`,
+        preview: { markdown: `- ${CARD_ITEMS[0]}\n- ${CARD_ITEMS[1]}\n{.steps}`, nodes: [el('ul.steps', el('li', CARD_ITEMS[0]), el('li', CARD_ITEMS[1]))] },
+    },
+    ordered_list: {
+        column: `${CLASS_LITERAL} under it`,
+        preview: { markdown: `1. ${CARD_ITEMS[0]}\n2. ${CARD_ITEMS[1]}\n{.steps}`, nodes: [el('ol.steps', el('li', CARD_ITEMS[0]), el('li', CARD_ITEMS[1]))] },
+    },
+    blockquote: {
+        column: `> ${CLASS_LITERAL}`,
+        preview: { markdown: '> Conflicts are shown to the user.\n> {.warning}', nodes: [el('blockquote.warning', el('p', 'Conflicts are shown to the user.'))] },
+    },
+    heading: {
+        column: `## text ${CLASS_LITERAL}`,
+        preview: { markdown: '## Sync rules {#sync-rules}\n\nThe text under it.', nodes: [{ tag: 'h2', attrs: { id: 'sync-rules' }, children: ['Sync rules'] }, el('p', 'The text under it.')] },
+    },
+    table: {
+        column: `${CLASS_LITERAL} under it`,
+        preview: { markdown: '| Name | Kind |\n| ---- | ---- |\n| Alpha | first |\n\n{.wide}', nodes: [el('table.wide')] },
+    },
+    code_block: {
+        column: `\`\`\`js ${CLASS_LITERAL}`,
+        preview: { markdown: '```js {.wide}\nconst answer = 42;\n```', nodes: [el('pre', el('code.wide', 'const answer = 42;'))] },
+    },
+    horizontal_rule: {
+        column: `--- ${CLASS_LITERAL}`,
+        preview: { markdown: 'Above the rule.\n\n--- {.dashed}\n\nBelow it.', nodes: [el('p', 'Above the rule.'), el('hr.dashed'), el('p', 'Below it.')] },
+    },
+};
+
 // ---------------------------------------------------------------------------
 // Annotations — notes and sidebars, edited in place; the footnote as source
 // ---------------------------------------------------------------------------
@@ -737,7 +810,7 @@ const bubbleOnly: ToolbarAction[] = [
     },
 ];
 
-export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, blockTypeAttributes, ...formatting, ...annotations, ...insert, ...bubbleOnly];
+export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, blockTypeAttributes, blockTypeOuterAttributes, ...formatting, ...annotations, ...insert, ...bubbleOnly];
 
 /** The row, left to right; hairlines between the groups. */
 export const ROW_LAYOUT: readonly (readonly ('marks' | ToolbarMenu)[])[] = [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']];

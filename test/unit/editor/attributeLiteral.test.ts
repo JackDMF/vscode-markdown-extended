@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { attributesTitle, attributesTyped, holdsLiteral, innerOf, isRemoval, keysFor, keysLine, literalFrom, stripOuterPair } from '../../../src/editor/attributeLiteral';
+import { attributesTip, attributesTitle, attributesTyped, holdsLiteral, innerOf, isRemoval, keysFor, keysLine, literalFrom, stripOuterPair } from '../../../src/editor/attributeLiteral';
 import { tipText } from '../../../src/editor/tips';
 
 /** The attributes field's spelling rules: the braces drawn by the field, the value what stands between them. */
@@ -96,5 +96,11 @@ suite('Attribute literal: what the field shows and what it commits', () => {
         for (const literal of [null, '{}', '{.x}']) {
             assert.strictEqual(attributesTyped(literal).includes('empty removes'), keysFor('', literal).kind === 'removes', String(literal));
         }
+    });
+
+    test('attributesTip (#8 review 1, W1/W4): the part named, "Leave empty to remove them." only with a literal, Enter\'s verb "set"', () => {
+        assert.strictEqual(attributesTip('List item', '{.lead}'), 'Attributes of List item: .class #id key=value. Leave empty to remove them. Enter to set, Esc to cancel.');
+        assert.strictEqual(attributesTip('List', null), 'Attributes of List: .class #id key=value. Enter to set, Esc to cancel.');
+        assert.strictEqual(attributesTip('Bold', '{.t}', ' Written right after it.'), 'Attributes of Bold: .class #id key=value. Leave empty to remove them. Written right after it. Enter to set, Esc to cancel.');
     });
 });

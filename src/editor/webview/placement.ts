@@ -64,6 +64,8 @@ export interface Frame {
     floor: number;
     /** The text column's right edge: a layer that fits the column keeps to it (wave 1, 2026-10-16); only a wider one stands past it, up to `layerEdge`. Absent: `layerEdge` for every layer. */
     columnRight?: number;
+    /** The window's right edge less the gutter: a layer wider than the room (a field's floor) is kept left of it. Absent: no such clamp. */
+    windowRight?: number;
 }
 
 /** The right edge a layer of `width` may reach in `frame`: the column's when it fits the column, else the layer edge. */
@@ -127,7 +129,9 @@ export function probeBand(x: number, y: number, size: Size): Rect {
  */
 export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Context = {}): Placement {
     // A layer wider than the room was fitted to it before (`ObjectBar.fit`): this clamps, never shrinks.
-    const x = Math.max(frame.columnLeft, Math.min(anchor.left, rightEdge(size.width, frame) - size.width));
+    const clamped = Math.max(frame.columnLeft, Math.min(anchor.left, rightEdge(size.width, frame) - size.width));
+    // Wider than the column allows (a field's floor, `fieldFloor`): kept inside the window, left of the column if it must.
+    const x = frame.windowRight !== undefined && clamped + size.width > frame.windowRight ? Math.max(LAYER_GUTTER, frame.windowRight - size.width) : clamped;
     const below = anchor.bottom + GAP;
     const above = anchor.top - GAP - size.height;
     const belowOk = qualifies(x, below, size, frame, ctx);
@@ -320,7 +324,17 @@ export function layerEdge(mount: HTMLElement): number {
 /** The mount frame: everything about the text — the column, the layer edge, under the row (and its lock line), inside the window. */
 export function readFrame(mount: HTMLElement): Frame {
     const column = mount.getBoundingClientRect();
-    return { columnLeft: column.left, columnRight: column.right, layerEdge: layerEdge(mount), ceiling: rowCeiling(mount), floor: window.innerHeight };
+    return {
+        columnLeft: column.left, columnRight: column.right, layerEdge: layerEdge(mount), ceiling: rowCeiling(mount), floor: window.innerHeight,
+        windowRight: document.documentElement.clientWidth - LAYER_GUTTER,
+    };
+}
+
+/** The width no field is narrower than (#8 review 1), as `.mep-hint`'s: min(44ch of `el`'s font, the window less 2 × `LAYER_GUTTER`). */
+export function fieldFloor(el: HTMLElement): number {
+    const em = parseFloat(getComputedStyle(el).fontSize) || 12;
+    // A `ch` of the UI font, about half an em: measured once per size would buy nothing the floor needs.
+    return Math.min(44 * em * 0.55, document.documentElement.clientWidth - 2 * LAYER_GUTTER);
 }
 
 /** The viewport frame: the chrome's — menus, the preview card, tooltips. */
@@ -366,8 +380,9 @@ export function openLayers(mount: HTMLElement, except?: Element): Rect[] {
  * block's own object (`anchorOf`), the one rule, so a field opened from Formatting and the same
  * field opened from the block's bar flip to the same top. The block as it is now (`currentTarget`:
  * the position a field was opened at may have moved or gone in a resync); `null` where it is gone
- * or not drawn. A block that is no object of its own (a paragraph, a list item) is read as a block
- * with attributes, its text's first line the top: what its bar would anchor to once it had a literal.
+ * or not drawn. A block that is no object of its own (a paragraph, a list) is read as a block
+ * with attributes, its text's first line the top: what its bar would anchor to once it had a literal;
+ * a list item's is its first block's (`anchorOf`), so its field stands under the item's own line.
  */
 export function blockAnchor(view: EditorView, target: AttributesTarget): Rect | null {
     const current = currentTarget(view.state, target);
@@ -380,6 +395,41 @@ export function blockAnchor(view: EditorView, target: AttributesTarget): Rect | 
 }
 
 /**
+ * The window scrolled for a field of `height` about to open under `block`
+ * (#8: an outer part's — the List's under a list far below the caret): when
+ * the field would stand past the window's bottom, or the block's last line
+ * is above its top, by the difference, so the field and that line are in
+ * view. The caret does not move. What it returns puts the scroll back: after
+ * a cancel where it was, after a commit too — unless the caret's line would
+ * then be out of view. `null` where nothing scrolled; only on open and close,
+ * never per key.
+ */
+export function revealField(view: EditorView, block: Rect | null, height: number): ((committed: boolean) => void) | null {
+    const scroller = document.scrollingElement;
+    if (block === null || !(scroller instanceof HTMLElement)) {
+        return null;
+    }
+    const bottom = block.bottom + GAP + height + GAP;
+    const delta = bottom > window.innerHeight ? bottom - window.innerHeight : block.bottom < GAP ? block.bottom - GAP - height : 0;
+    if (delta === 0) {
+        return null;
+    }
+    const saved = scroller.scrollTop;
+    scroller.scrollTop = saved + delta;
+    return committed => {
+        const now = scroller.scrollTop;
+        scroller.scrollTop = saved;
+        if (committed) {
+            // The caret's line out of view once the scroll is back (the commit grew the block above it): left where it is.
+            const caret = caretRect(view, Math.min(view.state.selection.head, view.state.doc.content.size));
+            if (caret !== null && (caret.bottom < 0 || caret.top > window.innerHeight)) {
+                scroller.scrollTop = now;
+            }
+        }
+    };
+}
+
+/**
  * An object's anchor, in the window's coordinates: an inline object's first
  * line's start and top, its last line's bottom; a block's box — an atom's
  * less its inset, a heading's or an attributed block's from its text's first
@@ -388,13 +438,14 @@ export function blockAnchor(view: EditorView, target: AttributesTarget): Rect | 
 export function anchorOf(view: EditorView, object: EditorObject): Rect | null {
     try {
         if (isBlockPlaced(object)) {
-            const dom = isMarkObject(object) ? null : view.nodeDOM(object.from);
+            // A list item's box is its first block's (#8): its bar and its field stand under the item's own line, not under the list nested in it.
+            const dom = isMarkObject(object) ? null : view.nodeDOM(object.kind === 'list_item' ? object.from + 1 : object.from);
             if (!(dom instanceof Element)) {
                 return null;
             }
             const box = dom.getBoundingClientRect();
             const inset = isBlockObject(object) ? ATOM_INSET : 0;
-            const textual = object.kind === 'heading' || object.kind === 'block_attrs';
+            const textual = object.kind === 'heading' || object.kind === 'block_attrs' || object.kind === 'list_item';
             const top = (textual ? firstLineTop(dom) : null) ?? box.top;
             return { left: box.left + inset, top, right: box.right - inset, bottom: box.bottom };
         }
@@ -946,7 +997,10 @@ export class LayerSlot {
         const frame = readFrame(this.mount);
         const fresh = this.refitNext;
         this.refitNext = false;
-        claim.fit?.(frame.layerEdge - frame.columnLeft, fresh);
+        // A field's room is never narrower than a hint's (#8 review 1): a user stylesheet's narrow column or margin lane
+        // (petrol at 520 px wrapped a keys line at 150 px) gives it min(44ch, window − 32 px), placed inside the window.
+        const room = frame.layerEdge - frame.columnLeft;
+        claim.fit?.(claim.kind === 'field' ? Math.max(room, fieldFloor(claim.el)) : room, fresh);
         const width = claim.el.offsetWidth;
         const height = claim.el.offsetHeight;
         const avoid = openLayers(this.mount, claim.el);

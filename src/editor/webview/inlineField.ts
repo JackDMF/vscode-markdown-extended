@@ -51,6 +51,13 @@ export interface FieldStep {
     adorn?: FieldAdorn;
     /** Why what was typed was refused: drawn under the field (its values in the code font), the keys line kept, until the next edit. */
     refusal?: Said;
+    /**
+     * What the field edits by its place in the document — a block target, an
+     * element's run — followed through every change while it is open (#8 F7,
+     * `followAll`): a host resync above it keeps the field and what was typed;
+     * where one is gone, the field closes and writes nothing.
+     */
+    followed?: readonly object[];
     commit(value: string): FieldStep | void;
 }
 

@@ -708,6 +708,15 @@ img.mep-pending-range {
     color: var(--vscode-descriptionForeground, GrayText);
 }
 .mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail, .mep-entry-key) { color: inherit; opacity: 0.8; }
+/* A part's literal after its name in a bar's Remove▾ (#8, `Bold {.term}`): the code font, muted, never cut before the name. */
+.mep-entry-code {
+    flex: none;
+    margin-left: 6px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
+.mep-menu-item:is(:hover, :focus):not(.mep-disabled) .mep-entry-code { color: inherit; opacity: 0.8; }
 
 /*
  * "…" (`toolbar.ts`, `layoutRow`): as wide as its longest entry, within the
@@ -908,6 +917,82 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 .mep-object-label-code {
     font-family: var(--vscode-editor-font-family, monospace);
 }
+
+/* #8 the breadcrumb takes the title's place on a bar whose object stands inside another holder:
+   outer part, chevron, current part (`objectToolbar.ts`, `renderCrumbs`). A part that opens a field
+   is a control in the bar's arrow order; a part that does not (an admonition, which keeps no literal
+   here) stays a title — muted, no press. No "…" inside it: an outer part with no room moves into the
+   bar's "…" (`fit`). */
+.mep-crumbs {
+    display: inline-flex;
+    flex: none; /* gives way only by the fit steps (classes), never by flex shrinking */
+    align-items: center;
+    padding-left: 2px;
+}
+.mep-crumb {
+    display: inline-flex;
+    flex: none;
+    align-items: baseline;
+    box-sizing: border-box;
+    height: 22px;
+    line-height: 20px;
+    min-width: 0;
+    padding: 0 5px;
+    font: inherit;
+    font-size: 12px;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, GrayText);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.mep-crumb[hidden], .mep-crumb-sep[hidden] { display: none; }
+/* Light Modern: the description colour is the text colour; muted as the bar title is (wave 1). */
+body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Light Modern"]) :is(.mep-crumb:not([aria-current]):not(:hover), .mep-crumb-sep) {
+    color: color-mix(in srgb, var(--vscode-descriptionForeground, GrayText) 75%, var(--vscode-editorWidget-background, Canvas));
+}
+/* The current part — the caret's innermost holder, the one Attributes… and Remove act on — in the
+   text colour, its name semibold (told apart by more than colour; its literal stays regular). */
+.mep-crumb[aria-current] { color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, CanvasText)); }
+.mep-crumb[aria-current] .mep-crumb-name { font-weight: 600; }
+.mep-crumb:hover {
+    /* The tint lowers the muted text under 4.5:1 in Light Modern (4.26): a hovered part takes the text colour. */
+    color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, CanvasText));
+    background: var(--vscode-toolbar-hoverBackground, transparent);
+    outline: 1px dashed var(--vscode-toolbar-hoverOutline, transparent);
+    outline-offset: -1px;
+}
+.mep-crumb:focus { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: 1px; }
+/* A part drawn but refused (a list inside a quote, F3): as a refused verb, pressed it says why. */
+.mep-crumb[aria-disabled="true"] { opacity: 0.6; cursor: default; }
+.mep-crumb[aria-disabled="true"]:hover { background: transparent; outline: none; }
+/* A part that is a title, not a control (the admonition's name): the bar title's look, no hover. */
+.mep-crumb.mep-crumb-title { font-size: 11px; cursor: default; }
+.mep-crumb.mep-crumb-title:hover { color: var(--vscode-descriptionForeground, GrayText); background: transparent; outline: none; }
+/* The literal in a part: the editor's code font, no chip; it is what gives way first (`.mep-crumb-cut`). */
+.mep-crumb-code {
+    display: inline-block;
+    min-width: 0;
+    max-width: 22ch;
+    margin-left: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+}
+/* Cut, six characters still show before the ellipsis (#8 review 1). */
+.mep-crumb.mep-crumb-cut .mep-crumb-code { max-width: 7ch; }
+.mep-crumb.mep-crumb-bare .mep-crumb-code { display: none; }
+/* The chevron between parts: drawn, not read (aria-hidden). */
+.mep-crumb-sep {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
+.mep-crumb-sep > .codicon { font-size: 12px; }
 
 /* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through.
    The hint stands in the overlay on <html>, outside the mount, and takes no hit anyway (`.mep-hint`); this reaches

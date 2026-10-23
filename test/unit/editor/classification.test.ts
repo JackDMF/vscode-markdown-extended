@@ -225,7 +225,7 @@ suite('Editor block classification (constructs.md)', () => {
  * container node has no slot for it, so the block is a source block saying so.
  */
 suite('Editor block classification: a container with attributes', () => {
-    const reason = 'container attributes on its ::: line, which the container node does not keep';
+    const reason = 'container attributes (on its ::: line or the line before its closing :::), which the container node does not keep';
 
     for (const [where, text] of [
         ['at top level', '::: note {#id .c}\nInside.\n:::\n'],

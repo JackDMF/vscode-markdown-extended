@@ -29,19 +29,24 @@
  *
  * | Block | Why |
  * | --- | --- |
- * | Container | the preview draws a literal on the `:::` line, but the container node has no slot for it: one written so is a source block |
- * | Admonition | the plugin gives a literal on the `!!!` line to the title bar, not the box |
+ * | Container | the preview draws a literal on the `:::` line or on a line of its own before the closing `:::`, but the container node has no slot for it: one written either way is a source block |
+ * | Admonition | a literal on the `!!!` line styles the title; the box's (a last line of its body) opens as source |
  * | Quote ending in a list, code or a quote | a `> {…}` line under it goes to that block, not the quote |
  * | List item not starting with a paragraph that ends in text | there is no line end to put it at |
+ * | List inside a quote, an admonition or a container | only a top-level list's literal is written; a nested one's is source |
  * | Requirement heading | its anchor is Req Explorer's |
  * | Source block, front matter, injected content | not rich text, or not in the file |
  * | A literal the plugin would not read back whole | `literalRefusal`: not `{…}`, `{.}`, two lines, a `{` in a rule's value |
  *
- * The caret in a nested block acts on the list item or the top-level block
- * around it (`attributesTargetAt`): only a top-level block's literal is written
- * (`fidelity.ts`), and a list item's at any depth.
+ * A heading inside a quote, an admonition or a container takes one where it
+ * stands, at the end of its line (`> ## Title {.x}`): the save writes a
+ * heading's literal at any depth. Otherwise the caret in a nested block acts
+ * on the list item or the top-level block around it (`attributesTargetAt`):
+ * only a top-level block's literal is written (`fidelity.ts`), and a list
+ * item's at any depth.
  */
 import { EditorView } from 'prosemirror-view';
+import { Mark, Node } from 'prosemirror-model';
 import { showChangeHint, undoHint } from './hint';
 import { wording } from '../verbs';
 import { FENCED_DONE } from '../fences';
@@ -49,8 +54,8 @@ import { FieldAdorn, FieldStep, KeysLine, refusedStep } from './inlineField';
 import { ATTR_BRACES, ATTR_PLACEHOLDER, attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, stripOuterPair } from '../attributeLiteral';
 import type { Said } from '../tips';
 import {
-    AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, holderNames, literalObjectOf, literalOf,
-    literalOfObject,
+    AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, currentTarget, holderNames, literalObjectOf,
+    literalOf, literalOfObject,
 } from './objects';
 
 /** The field's own label — its accessible name; its heading names the element (`Paragraph · Attributes`, `attributesTitle`). */
@@ -82,11 +87,12 @@ export function attributesField(
     name: string,
     literal: string | null,
     commit: (literal: string, refused: (reason: Said) => FieldStep) => FieldStep | void,
-    options: { removable?: boolean; unchanged?: () => void } = {},
+    options: { removable?: boolean; unchanged?: () => void; followed?: readonly object[] } = {},
 ): FieldStep {
     const removable = options.removable ?? true;
     const shown = innerOf(literal);
     const step: FieldStep = {
+        ...(options.followed === undefined ? {} : { followed: options.followed }),
         value: shown,
         label: ATTRIBUTES_FIELD_LABEL,
         heading: attributesTitle(name),
@@ -108,8 +114,48 @@ export function attributesField(
 
 /** What the caret hint says once a literal is set or removed: the change is on the page, the way back is named. */
 export const ATTRIBUTES_SET_HINT = 'Attributes set';
-/** As the bars' Remove attributes words it (`verbs.ts`): one hint, whichever route removed them. */
-export const ATTRIBUTES_REMOVED_HINT = wording({ verb: 'Remove', noun: 'attributes' }).done;
+/**
+ * What the caret hint says once the literal of the element called `name` is
+ * removed (#8): the part named, as the bars' Remove words it (`verbs.ts`) —
+ * "List item attributes removed" — whichever route removed them.
+ */
+export function attributesRemovedHint(name: string): string {
+    return wording({ verb: 'Remove', noun: `${name} attributes` }).done;
+}
+
+/**
+ * What an open attributes field says on Enter when the element called `name`
+ * — a block by its name, an inline element by its noun ("bold text") — or its
+ * literal changed elsewhere since it opened (#8 reviews 1 and 2): refused in
+ * the field, what was typed kept, nothing written over the other change.
+ */
+export function staleFieldRefusal(name: string): string {
+    return `This ${name.toLowerCase()} changed meanwhile — press Esc and open its attributes again to see the new ones.`;
+}
+
+/** The source bookkeeping a top-level node carries (`sourceAttrs`): set by the host and the fidelity repair, not a change of the node. */
+const BOOKKEEPING: ReadonlySet<string> = new Set(['src', 'gap']);
+
+/** Whether `now` is the node an open field was opened on: type, marks, content and attributes, the source bookkeeping aside. */
+function sameAsOpened(now: Node, opened: Node): boolean {
+    if (now === opened) {
+        return true;
+    }
+    return now.type === opened.type && Mark.sameSet(now.marks, opened.marks) && now.content.eq(opened.content)
+        && Object.keys(now.attrs).every(key => BOOKKEEPING.has(key) || now.attrs[key] === opened.attrs[key]
+            || JSON.stringify(now.attrs[key]) === JSON.stringify(opened.attrs[key]));
+}
+
+/**
+ * What the caret hint says when an open field closes because what it was for
+ * — the first of what it follows: a block target by its name, else "element"
+ * — was replaced or deleted elsewhere (#8 review 1): nothing was written.
+ */
+export function goneFieldHint(followed: readonly object[]): string {
+    const first = followed[0] as Partial<AttributesTarget> | undefined;
+    const name = typeof first?.name === 'string' ? first.name : 'element';
+    return `This ${name.toLowerCase()} was changed or removed elsewhere — nothing set.`;
+}
 
 /**
  * The attributes field for `target` (`attributesField`), named by its block.
@@ -120,7 +166,17 @@ export const ATTRIBUTES_REMOVED_HINT = wording({ verb: 'Remove', noun: 'attribut
  * that says so.
  */
 export function attributesStep(view: EditorView, target: AttributesTarget): FieldStep {
-    return attributesField(target.name, literalOf(target.node), (value, refused) => {
+    // `target` is followed in place while the field is open (`FieldStep.followed`, #8 F7): a caller sharing it — a bar's
+    // anchor for the field — sees it move with it; one that must not, passes a copy.
+    const opened = literalOf(target.node);
+    const openedNode = target.node;
+    return attributesField(target.name, opened, (value, refused) => {
+        // Changed elsewhere since the field opened — its literal or anything else in it (#8 reviews 1 and 2): never
+        // written over the other change. A change beside it (a sibling item) leaves it equal: written as asked.
+        const now = currentTarget(view.state, target);
+        if (now !== null && !sameAsOpened(now.node, openedNode)) {
+            return refused(staleFieldRefusal(target.name));
+        }
         // Asked first, so a refusal keeps the field open with what was typed; the
         // transaction is built after the focus is back, which may commit a source box.
         const asked = commitAttributes(view.state, target, value);
@@ -140,9 +196,9 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
         const before = view.state;
         view.dispatch(made.tr);
         if (view.state !== before) {
-            showChangeHint(view, undoHint(made.fenced ? FENCED_DONE : made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
+            showChangeHint(view, undoHint(made.fenced ? FENCED_DONE : made.removed ? attributesRemovedHint(target.name) : ATTRIBUTES_SET_HINT));
         }
-    }, { unchanged: () => view.focus() });
+    }, { unchanged: () => view.focus(), followed: [target] });
 }
 
 /**
@@ -157,11 +213,16 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
  * open with what was typed and the reason.
  */
 export function holderAttributesStep(view: EditorView, at: InlineHolderAt): FieldStep {
-    return attributesField(holderNames(at).label, literalOfObject(at.object), (value, refused) => {
+    const opened = literalOfObject(at.object);
+    return attributesField(holderNames(at).label, opened, (value, refused) => {
         const current = literalObjectOf(currentObject(view.state, at.object));
         if (current === null) {
             view.focus();
             return;
+        }
+        // Changed elsewhere since the field opened (#8 review 1): never written over the other change.
+        if (literalOfObject(current) !== opened) {
+            return refused(staleFieldRefusal(holderNames(at).noun));
         }
         const refusal = changeInlineLiteralRefusal(view.state, current, value);
         if (refusal !== null) {
@@ -180,7 +241,7 @@ export function holderAttributesStep(view: EditorView, at: InlineHolderAt): Fiel
         const before = view.state;
         view.dispatch(tr);
         if (view.state !== before) {
-            showChangeHint(view, undoHint(removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
+            showChangeHint(view, undoHint(removed ? attributesRemovedHint(holderNames(at).label) : ATTRIBUTES_SET_HINT));
         }
-    }, { unchanged: () => view.focus() });
+    }, { unchanged: () => view.focus(), followed: [at.object] });
 }

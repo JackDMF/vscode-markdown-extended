@@ -26,6 +26,27 @@
 - Backspace or Delete beside a source block selects it first; cut still takes it.
 - Replacing a selection that spans a source block says "Source block removed" with the undo key.
 - PNG and JPEG export no longer hangs on macOS while the display sleeps.
+- Nested blocks show a breadcrumb bar, e.g. "List › List item"; each part opens its own attributes field.
+- Bar and Block type menu now name the same block: in a list, the list item.
+- A block's bar shows its literal, e.g. "Quote {.warning}", and offers Remove attributes.
+- Remove names the part: "Remove attributes of List", or a menu when both parts carry one.
+- Block type offers the outer block too, e.g. "Attributes of List…", each with its own preview card.
+- Headings inside quotes, admonitions and containers take attributes; an admonition offers "Attributes of Heading…".
+- The outer part's field scrolls into view, and the scroll returns when it closes.
+- A list inside a quote is refused attributes with a reason, instead of losing them on save.
+- Admonition, container and quote refusals now say correctly where attributes go.
+- An open attributes field stays open, with what you typed, when the file changes above it.
+- In narrow windows a two-part bar keeps its verbs' names; the outer part moves into "…".
+- A two-part bar never runs past the window: its "…" stays inside, the literals and a title part give way first.
+- On two-part bars the current part's verbs come first, e.g. "Attributes of Heading… · Edit title… · Type".
+- An admonition's bar for its heading stands at the heading's line, not under the whole box.
+- A list inside a quote with attributes shows "Quote › List item"; a list item starting with a heading keeps its bar.
+- Block changed elsewhere: an open attributes field refuses Enter, keeping your text; block deleted: it closes, saying so.
+- A change elsewhere beside the field's item or heading keeps the field and caret; Enter sets it as asked.
+- Remove ▾ says what stays for each part ("item stays"); tooltips name the part and say "Enter to set".
+- Fields keep a readable width beside a user stylesheet's narrow column or margin.
+- Inline fields opened from a bar open above when text is on both sides, like the bar.
+- A source block made by an admonition title's or a quote paragraph's {…} names it and says what it does.
 
 ## v4.9.0 — Layers That Keep Their Place
 

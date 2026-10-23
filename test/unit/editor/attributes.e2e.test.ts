@@ -5,8 +5,8 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { keysLine } from '../../../src/editor/attributeLiteral';
-import { tipText } from '../../../src/editor/tips';
-import { ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } from '../../../src/editor/webview/attributes';
+import { saidText, tipText } from '../../../src/editor/tips';
+import { ATTRIBUTES_SET_HINT, attributesRemovedHint } from '../../../src/editor/webview/attributes';
 import { CONTAINER_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
 import { INLINE_ATTRS_LOCK } from '../../../src/editor/webview/toolbar/actions';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
@@ -236,7 +236,7 @@ suite('Editor Attributes… (e2e)', () => {
         await settle();
         assert.ok((await lastEdit())?.text.includes('a paragraph can carry a class of its own.\n'), (await lastEdit())?.text);
         assert.strictEqual(await page.$('.ProseMirror p.note'), null);
-        assert.strictEqual((await hint()).text, `${ATTRIBUTES_REMOVED_HINT} — ${UNDO}`);
+        assert.strictEqual((await hint()).text, `${attributesRemovedHint('Paragraph')} — ${UNDO}`);
     });
 
     test('a plain heading grows no bar for Attributes… alone; with another extension\'s action its bar carries it first, and the literal goes at the end of its line', async function () {
@@ -381,10 +381,10 @@ suite('Editor Attributes… (e2e)', () => {
         await openFormatting();
         const inContainer = await entryState();
         assert.strictEqual(inContainer.disabled, true);
-        assert.ok(inContainer.title.includes(CONTAINER_ATTRS_REFUSAL), inContainer.title);
+        assert.ok(inContainer.title.includes(saidText(CONTAINER_ATTRS_REFUSAL)), inContainer.title);
         await page.hover(ENTRY);
         await page.waitForSelector('.mep-preview-card[data-action="block-attributes"]:not([hidden]) .mep-preview-refusal', { timeout: 2000 });
-        assert.strictEqual(await page.$eval('.mep-preview-card .mep-preview-refusal', el => el.textContent), CONTAINER_ATTRS_REFUSAL);
+        assert.strictEqual(await page.$eval('.mep-preview-card .mep-preview-refusal', el => el.textContent), saidText(CONTAINER_ATTRS_REFUSAL));
         // A reader's stylesheet sets the document's font on `body`; the card's own words keep the editor's.
         await page.addStyleTag({ content: 'body { font-family: Georgia, serif; line-height: 1.9; }' });
         const said = await page.$eval('.mep-preview-card .mep-preview-refusal', el => {

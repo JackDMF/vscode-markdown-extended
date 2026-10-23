@@ -1,6 +1,7 @@
 import * as assert from 'assert';
-import { FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, Wording, arrange, barDescription, barName, firstFocus, overflowOrder, wording } from '../../../src/editor/verbs';
+import { FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, Wording, arrange, barDescription, barName, crumbName, crumbPartName, firstFocus, overflowOrder, wording } from '../../../src/editor/verbs';
 import { undoHint } from '../../../src/editor/webview/hint';
+import { attributesRemovedHint } from '../../../src/editor/webview/attributes';
 import { UNDO_BINDING, keyLabel } from '../../../src/editor/keys';
 
 /** A verb as the model reads it: an id to tell it by, its slot, and whether it opens in place or is refused. */
@@ -68,6 +69,13 @@ suite('Editor object bars: the verbs\' model', () => {
             assert.deepStrictEqual(dividers(arranged), ['remove-link']);
         });
 
+        test('fail-first, #8 review 1: on a two-part bar the current part\'s verbs come first, then the outer part\'s, then the divider and Remove▾', () => {
+            // Before, slot order put the admonition's Edit title… and Type▾ before Attributes of Heading….
+            const arranged = arrange([v('edit-title', 'edit', true, { outer: true }), v('change-type', 'type', true, { outer: true }), v('block-attributes', 'attributes', true), v('remove-menu', 'destroy', true)]);
+            assert.deepStrictEqual(ids(arranged), ['block-attributes', 'edit-title', 'change-type', 'remove-menu']);
+            assert.deepStrictEqual(dividers(arranged), ['remove-menu']);
+        });
+
         test('a Delete alone gets no divider: nothing stands before it but the title', () => {
             assert.deepStrictEqual(dividers(arrange([v('delete-block', 'destroy', false)])), []);
         });
@@ -87,6 +95,13 @@ suite('Editor object bars: the verbs\' model', () => {
             { name: 'source block → Edit source (a box), not Show in text editor', verbs: [v('show-in-text-editor', 'open', false), v('edit-source', 'source', true), v('delete-block', 'destroy', false)], focus: 1 },
             { name: 'snippet → the bar: Change snippet… asks the host, nothing opens in place', verbs: [v('open-snippet', 'open', false), v('show-in-text-editor', 'open', false), v('change-snippet', 'edit', false), v('delete-directive', 'destroy', false)], focus: -1 },
             { name: 'badge, no verbs → the bar', verbs: [], focus: -1 },
+            // #8: on a two-part bar the first in-place verb acting on the current part — an admonition's Type▾ and Edit title… act on the outer one.
+            {
+                name: 'Admonition › Heading → Attributes of Heading…, not Type▾',
+                verbs: [v('edit-title', 'edit', true, { outer: true }), v('change-type', 'type', true, { outer: true }), v('block-attributes', 'attributes', true), v('remove-menu', 'destroy', true)],
+                focus: 2,
+            },
+            { name: 'List › List item → Attributes…, never Remove▾', verbs: [v('block-attributes', 'attributes', true), v('remove-attributes', 'destroy', true)], focus: 0 },
         ];
         for (const row of rows) {
             test(row.name, () => assert.strictEqual(firstFocus(row.verbs), row.focus));
@@ -115,6 +130,20 @@ suite('Editor object bars: the verbs\' model', () => {
             const verbs = [v('edit', 'edit', true), v('remove-a', 'destroy', false), v('delete-b', 'destroy', false)];
             assert.deepStrictEqual(order(verbs), ['remove-a', 'delete-b']);
         });
+        test('#8: an admonition bar with a heading — Remove▾ first, then from the right; Attributes of Heading… (the first focus) never moves', () => {
+            const verbs = [v('edit-title', 'edit', true, { outer: true }), v('change-type', 'type', true, { outer: true }), v('block-attributes', 'attributes', true), v('remove-menu', 'destroy', true)];
+            assert.deepStrictEqual(order(verbs), ['remove-menu', 'change-type', 'edit-title']);
+        });
+    });
+
+    test('#8: a two-part bar\'s name and a part\'s, the braces left out; the undo hint names the part', () => {
+        assert.strictEqual(crumbName({ name: 'List item', literal: '{.lead}' }, { name: 'List', literal: '{.steps}' }), 'List item .lead in List .steps');
+        assert.strictEqual(crumbName({ name: 'List item', literal: null }, { name: 'List', literal: '{.steps}' }), 'List item in List .steps');
+        assert.strictEqual(crumbName({ name: 'Heading', literal: '{#sync-rules}' }, null), 'Heading #sync-rules');
+        assert.strictEqual(crumbPartName({ name: 'List', literal: '{.steps}' }), 'Attributes of List, .steps');
+        assert.strictEqual(crumbPartName({ name: 'List item', literal: null }), 'Attributes of List item, none');
+        assert.strictEqual(attributesRemovedHint('List item'), 'List item attributes removed');
+        assert.strictEqual(attributesRemovedHint('Quote'), 'Quote attributes removed');
     });
 
     suite('wording: label, short form, hint', () => {

@@ -32,8 +32,15 @@ const UNTOKENED: readonly [RegExp, string][] = [
 /** What a block holding an emoji the editor cannot keep is called (`parse.ts` gives it to one it makes source). */
 export const HAS_AN_EMOJI = 'has an emoji';
 
+/** What an admonition is called whose `!!!` line carries a literal (#8 F12: `sourceExplanation` says what it does). */
+export const TITLE_ATTRIBUTES = 'title attributes';
+
+/** What a quote is called whose paragraph carries its own literal (#8 F12). */
+export const QUOTE_PARAGRAPH_ATTRIBUTES = 'paragraph attributes';
+
 /** Sentences of the classifier, by their start, in words. */
 const SENTENCES: readonly [RegExp, string][] = [
+    [/^attributes on admonition_title_open$/, TITLE_ATTRIBUTES],
     [/^setext heading/, 'setext heading'],
     [/^heading attributes/, 'heading attributes'],
     [/^container attributes/, 'container attributes'],
@@ -50,6 +57,9 @@ export function sourceReasonWords(reason: string, src: string): string | null {
     if (reason === 'source lines no token accounts for') {
         const first = src.replace(/^(?:[ \t]*\r?\n)+/, '');
         return UNTOKENED.find(([re]) => re.test(first))?.[1] ?? null;
+    }
+    if (reason === 'attributes on paragraph_open' && /^\s*>/.test(src)) {
+        return QUOTE_PARAGRAPH_ATTRIBUTES;
     }
     for (const [re, words] of SENTENCES) {
         if (re.test(reason)) {
