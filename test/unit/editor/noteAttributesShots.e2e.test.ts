@@ -109,16 +109,26 @@ const SCENES: { name: string; doc: () => Doc | null; widths?: number[]; step: St
         },
     },
     {
+        // Formatting open, the disabled entry pressed: its reason at the row (critique: the menu stays in the shot).
         name: 'menu-resting', doc: () => NOTES_DOC, widths: [1280], step: async (page, b) => {
             await caretIn(page, 'last paragraph', 3);
-            await b.openMenuByKeys('formatting');
-            await focusEntry(page, 'inline-attributes');
-            await page.keyboard.press('Enter');
+            await b.openMenu('formatting');
+            const entry = '.mep-menu[data-menu="formatting"] [data-action="inline-attributes"]';
+            await page.waitForSelector(entry, { visible: true, timeout: 2000 });
+            await page.click(entry);
+            await delay(300);
         },
     },
     {
+        // The bubble's tip on {…}, and — where the bubble holds one (520 px) — its "…" open.
         name: 'bubble-note', doc: () => NOTES_DOC, step: async page => {
             await selectWord(page, 'abrupt');
+            const face = await page.$('.mep-bubble:not([hidden]) .mep-more-face:not([hidden])');
+            if (face !== null) {
+                await face.click();
+                await delay(400);
+                return;
+            }
             const box = await (await page.$('.mep-bubble:not([hidden]) [data-action="attrs-bubble"]'))?.boundingBox();
             if (box) {
                 await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -214,7 +224,8 @@ suite('Editor note attributes: screenshots (e2e)', () => {
             if (set === 'petrol' && (USER_STYLESHEET === undefined || !fs.existsSync(USER_STYLESHEET))) {
                 this.skip();
             }
-            const editor = await openEditorPage({ width: 1280, height: 800, styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'], stylesheets: set === 'petrol' ? [USER_STYLESHEET as string] : [] });
+            // The petrol sheet as `markdown.styles` links it: after the extension's styles (`userStyles`).
+            const editor = await openEditorPage({ width: 1280, height: 800, styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'], userStyles: set === 'petrol' ? [USER_STYLESHEET as string] : [] });
             if (!editor) {
                 this.skip();
             }
