@@ -121,7 +121,8 @@ const SCENES: { name: string; doc: () => Doc | null; widths?: number[]; step: St
     },
     {
         // The bubble's tip on {…}, and — where the bubble holds one (520 px) — its "…" open.
-        name: 'bubble-note', doc: () => NOTES_DOC, step: async page => {
+        // The note on the page's first lines: no room above the selected line, the bubble below the note, its tip below the bubble — never over the note (#15 review 3).
+        name: 'bubble-note', doc: () => NOTES_DOC.replace('3. Der Ablauf\n   - Punkt', '- Punkt').replace('\n   - Schneller', '\n- Schneller'), step: async page => {
             await selectWord(page, 'abrupt');
             const face = await page.$('.mep-bubble:not([hidden]) .mep-more-face:not([hidden])');
             if (face !== null) {

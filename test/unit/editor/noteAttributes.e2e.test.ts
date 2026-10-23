@@ -480,6 +480,24 @@ suite('Editor note attributes: menu, bubble and refusals (e2e)', () => {
         await bubbleOffNoteBody(page, b, 'the extension\'s lane');
     });
 
+    test('fail-first (#15 review 3): a selection from the start of paragraph A to the start of paragraph B (Shift+Down from a line start) — the bubble is not over B\'s line', async function () {
+        // Before: the caret at the start of B counted as a margin caret (its right edge is left of the column's), so B's line stopped protecting the column: the bubble stood at y 72–104 over B's 89–106.
+        this.timeout(30000);
+        await b.show('Erste Zeile Alpha mit Text.\n\nZweite Zeile Beta mit Text.\n\nDritte Zeile Gamma mit Text.\n\nThe last paragraph.\n');
+        await selectAt(page, 'Erste', 0, 0);
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.up('Shift');
+        await page.waitForSelector(BUBBLE, { visible: true, timeout: 3000 });
+        await delay(300);
+        const bubble = await rectOf(page, BUBBLE);
+        const line = await elementRect(page, 'p', 'Zweite');
+        const said = JSON.stringify({ bubble, line });
+        assert.ok(await page.evaluate(() => (document.getSelection() as Selection).toString().length > 0), `the selection reaches into paragraph B: ${said}`);
+        assert.ok(!(bubble.left < line.right && bubble.right > line.left && bubble.top < line.bottom && bubble.bottom > line.top), `the bubble is not over B's line: ${said}`);
+        await page.keyboard.press('Escape');
+    });
+
     test('fail-first (#15 review 2): the editor\'s own copy of [x]{.left-sidebar} and [y]{.sn-ref} pastes back as attribute spans, not as a sidebar or a note', async function () {
         // Before: the sidebar's and the note's rules (priority 60) read the span's element first: $x${.left-sidebar}, a sidenote with no body.
         this.timeout(20000);
@@ -803,6 +821,55 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
             this.skip();
         }
         await bubbleOffNoteBody(page, b, 'a margin layout');
+        await page.keyboard.press('Escape');
+    });
+
+    test('fail-first (#15 review 3), with a margin layout at 1280: the bubble in a note stacked under another note goes below the note — never over the column\'s text or the notes', async function () {
+        // Before: the other note above took the place above, the bubble was shortened to it and slid into the column (x 353, over " danach." and the next line).
+        this.timeout(30000);
+        if (editor === undefined) {
+            this.skip();
+        }
+        await b.show('Ein Satz mit !!Eins|erste Notiz mit etwas Text, der über zwei Zeilen geht und weiter und weiter!! und !!Zwei|zweite Notiz abrupt mit Text, der weitergeht und weiter und weiter!! danach.\n\nThe last paragraph with more words.\n');
+        await selectAt(page, 'abrupt');
+        await page.waitForSelector(BUBBLE, { visible: true, timeout: 3000 });
+        await delay(300);
+        const bubble = await rectOf(page, BUBBLE);
+        const lines = await page.evaluate(() => {
+            const out: { text: string; note: boolean; top: number; bottom: number; left: number; right: number }[] = [];
+            const walker = document.createTreeWalker(document.querySelector('.ProseMirror') as HTMLElement, NodeFilter.SHOW_TEXT);
+            const range = document.createRange();
+            for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+                range.selectNodeContents(n);
+                for (const r of Array.from(range.getClientRects()).filter(q => q.width > 0 && q.height > 0)) {
+                    out.push({ text: (n.textContent ?? '').slice(0, 20), note: (n.parentElement as HTMLElement).closest('.mnote') !== null, top: r.top, bottom: r.bottom, left: r.left, right: r.right });
+                }
+            }
+            return out;
+        });
+        const said = JSON.stringify({ bubble, lines });
+        for (const line of lines) {
+            const over = bubble.left < line.right && bubble.right > line.left && bubble.top < line.bottom && bubble.bottom > line.top;
+            assert.ok(!over, `never over the column's text or a note's: ${said}`);
+        }
+        const second = Math.max(...lines.filter(l => l.note).map(l => l.bottom));
+        assert.ok(bubble.top >= second - 0.5, `below the note: ${said}`);
+        await page.keyboard.press('Escape');
+    });
+
+    test('fail-first (#15 review 3), with a margin layout at 1280: the bubble over words of a right sidebar keeps the normal rule — below, in the margin, off the text — not above', async function () {
+        // Before: any floated body took the bubble above its line, over the column's text.
+        this.timeout(30000);
+        if (editor === undefined) {
+            this.skip();
+        }
+        await b.show('Ein erster Absatz mit Text, der lang genug ist, damit er über die Zeile läuft und weiter.\n\nZeile mit @Rechts außen@ und Text danach, der weitergeht.\n\nThe last paragraph.\n');
+        await selectAt(page, 'Rechts');
+        await page.waitForSelector(BUBBLE, { visible: true, timeout: 3000 });
+        await delay(300);
+        const bubble = await rectOf(page, BUBBLE);
+        const side = await elementRect(page, '.right-sidebar', 'Rechts');
+        assert.ok(bubble.top >= side.bottom - 0.5, `below the sidebar's line, not above: ${JSON.stringify({ bubble, side })}`);
         await page.keyboard.press('Escape');
     });
 

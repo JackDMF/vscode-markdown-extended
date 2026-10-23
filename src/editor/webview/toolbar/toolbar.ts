@@ -2498,8 +2498,9 @@ class ToolbarView implements PluginView {
                 const sel = view.state.selection;
                 return selectionAnchor(view, sel.from, sel.to);
             },
-            // In a note's body set into the margin: above the selected line, never over the note's text below it (#15 review 2).
-            prefer: () => (floatedAround(view, view.state.selection.from) !== null ? 'above' : undefined),
+            // In a note's body (sidenote, marginal note) set into the margin: above the selected line, never over the
+            // note's text below it (#15 review 2). A sidebar keeps the normal rule — beside, off the text (review 3).
+            prefer: () => (floatedAround(view, view.state.selection.from)?.closest('.sidenote, .mnote') ? 'above' : undefined),
             valid: () => this.bubbleWanted() && this.selectionKey() === key,
             hidden: () => this.hideBubble(),
             fit: (room, fresh) => this.fitBubble(room, fresh),

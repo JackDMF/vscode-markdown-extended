@@ -357,11 +357,16 @@ export function caretBand(view: EditorView, frame: Frame): Rect | null {
     try {
         const c = view.coordsAtPos(sel.head);
         const line = { top: c.top - 2, bottom: c.bottom + 2 };
-        if (frame.columnRight !== undefined && c.left >= frame.columnRight) {
-            return { left: frame.columnRight, right: Math.max(frame.layerEdge, c.right), ...line };
-        }
-        if (c.right <= frame.columnLeft) {
-            return { left: Math.min(0, c.left), right: frame.columnLeft, ...line };
+        // Only a caret really inside a floated note or sidebar has a margin's line: by coordinates alone the
+        // start of any top-level line would be one (the mount has no side padding), and its line stopped
+        // protecting the column (#15 review 3).
+        if (floatedAround(view, sel.head) !== null) {
+            if (frame.columnRight !== undefined && c.left >= frame.columnRight) {
+                return { left: frame.columnRight, right: Math.max(frame.layerEdge, c.right), ...line };
+            }
+            if (c.right <= frame.columnLeft) {
+                return { left: Math.min(0, c.left), right: frame.columnLeft, ...line };
+            }
         }
         return { left: frame.columnLeft, right: frame.layerEdge, ...line };
     } catch {
@@ -1093,7 +1098,15 @@ export class LayerSlot {
         }
         const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, avoid, prefer: claim.prefer?.(), atAnchor: claim.kind === 'bubble' };
         let p = placeLayer(claim.el, anchor, { ...opts, frame: wide });
-        const limited = this.marginLimit(p, claim.el, anchor, frame, wide);
+        let limited = this.marginLimit(p, claim.el, anchor, frame, wide);
+        if (limited !== null && opts.atAnchor && frame.columnRight !== undefined && anchor.left >= frame.columnRight && p.side === 'above') {
+            // A bubble at an anchor in the margin with another note or margin content in the place above: no room
+            // above (shortened to that content it would slide into the column's text, #15 review 3) — below the
+            // anchor, which for a note's body is below its last line.
+            const blocked = rectAt(p.x, p.y, { width: claim.el.offsetWidth, height: claim.el.offsetHeight });
+            p = placeLayer(claim.el, anchor, { ...opts, prefer: undefined, avoid: [...avoid, blocked], frame: wide });
+            limited = this.marginLimit(p, claim.el, anchor, frame, wide);
+        }
         if (limited !== null) {
             const short: Frame = { ...frame, layerEdge: limited };
             fit(short, false);
