@@ -29,7 +29,7 @@ export const NOTES_DOC = [
  * other extensions' plugins: VS Code's math, on by default in the test
  * window, claims `$…$`, and a left sidebar is no sidebar there (X6).
  */
-function notePage(editor: () => EditorPage): BreadcrumbPage {
+export function notePage(editor: () => EditorPage): BreadcrumbPage {
     let version = 0;
     return {
         ...breadcrumbPage(editor),
