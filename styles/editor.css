@@ -986,7 +986,9 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 .mep-crumb-sep > .codicon { font-size: 12px; }
 
-/* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through. */
+/* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through.
+   The hint stands in the overlay on <html>, outside the mount, and takes no hit anyway (`.mep-hint`); this reaches
+   it only as a row inside a menu (`data-at="menu-row"`), which is in the mount. */
 .mep-probing .mep-layer,
 .mep-probing .mep-toolbar-layer,
 .mep-probing .mep-language-card,

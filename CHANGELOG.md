@@ -8,6 +8,7 @@
 - A held key's repeated refusal is announced once, however long it is held.
 - Refusals stand outside the page body, so user stylesheets no longer narrow them; at most 44 characters wide.
 - In a narrow window a refused menu entry says why in a row right under it.
+- A refusal row inside a menu stays until the menu closes or you press again; entries never jump.
 - Below 600 px, focus outside the text only dims the formatting tools; pressing one says why.
 - Pressing a locked tool says why under it, e.g. "Formatting is off while editing source — Ctrl+Enter applies".
 - A refused bar verb or menu entry says why where it was pressed, instead of doing nothing.

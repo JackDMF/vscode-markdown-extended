@@ -12,7 +12,9 @@
  * at the next caret move, change of the document, press, focus elsewhere,
  * mode change or document from the host with another text — whatever comes
  * first after the gesture that caused it (it is *armed* one frame later) —
- * else after its time, which grows with its length (`refusalMs`). The same
+ * else after its time, which grows with its length (`refusalMs`); a row inside
+ * a menu has no time (the entries below it would jump under a resting
+ * pointer), it ends with the menu or at the next press, focus or caret move. The same
  * refusal again is placed and timed anew and said again, unless it is a
  * repeat at the same place within a second of the last one (a held key,
  * silent for as long as it is held).
@@ -29,7 +31,7 @@
  * hidden `.mep-live` region, emptied and set again on the next frame so a
  * repeat is announced too.
  */
-import { EditorState, NodeSelection, Plugin, PluginKey, Selection } from 'prosemirror-state';
+import { EditorState, NodeSelection, Plugin, PluginKey, Selection, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { APPLY_BINDING, UNDO_BINDING, keyLabel } from '../keys';
 import { REANNOUNCE_GAP_MS, refusalMs } from '../refusal';
@@ -120,7 +122,8 @@ class CaretHint {
                 this.endSoon();
             }
         });
-        this.listen(document, 'pointerup', () => {
+        // A press is over when it is up, cancelled (touch scrolling, a system gesture) or the window lost it: none of them may leave `pressing` set.
+        const released = () => {
             this.pressing = false;
             const ending = this.endAfterPress;
             if (ending !== null) {
@@ -132,7 +135,10 @@ class CaretHint {
                     }
                 }, 0);
             }
-        });
+        };
+        this.listen(document, 'pointerup', released);
+        this.listen(document, 'pointercancel', released);
+        this.listen(window, 'blur', released);
         this.listen(document, 'focusin', e => {
             if (this.armedRefusal() && e.target !== this.view.dom) {
                 this.endSoon();
@@ -218,7 +224,11 @@ class CaretHint {
             this.armed = true;
         });
         clearTimeout(this.timer);
-        this.timer = setTimeout(() => this.hide(), refusalMs(text));
+        // A row inside a menu has no time: it ends with the menu, the next press, a focus or a caret move — it never leaves
+        // under a resting pointer, so the entries below it never jump up (#10).
+        if (this.el.dataset.at !== 'menu-row') {
+            this.timer = setTimeout(() => this.hide(), refusalMs(text));
+        }
         this.announce(text, p);
     }
 
@@ -377,9 +387,10 @@ class CaretHint {
 
     /**
      * The plugin's per-transaction look: until armed the refusal follows the
-     * selection; armed, a different selection ends it, and so does a changed
-     * document (`docChanged`) — an accepted edit that leaves the caret in place,
-     * a forward Delete. A refused transaction never changes the document. O(1).
+     * selection; armed, a different selection ends it, and so does the person's
+     * own change of the document (`docChanged`) — an accepted edit that leaves the
+     * caret in place, a forward Delete; not the host's rendering or a resync.
+     * A refused transaction never changes the document. O(1).
      */
     selectionChanged(state: EditorState, docChanged = false): void {
         if (!this.showingRefusal()) {
@@ -429,8 +440,21 @@ export const HINT_PARAGRAPH_META = 'mepHintParagraph';
 /** prosemirror-history's meta key: an undo or redo ends a paragraph's hint. */
 const HISTORY_META = 'history$';
 
-/** Where the paragraph a hint is about stands (before it), followed through the edits; `null` for none. */
-const hintKey = new PluginKey<number | null>('mepHint');
+/**
+ * The hint plugin's state: where the paragraph a hint is about stands (before it), followed through the
+ * edits (`null` for none), and whether the last change of the document was the person's own (`own`).
+ */
+interface HintState {
+    at: number | null;
+    own: boolean;
+}
+
+const hintKey = new PluginKey<HintState>('mepHint');
+
+/** Whether `tr` is a change the person made: one that changes the document and is not kept out of the history (a rendering from the host, a resync, a decoration's refresh). */
+function ownChange(tr: Transaction): boolean {
+    return tr.docChanged && tr.getMeta('addToHistory') !== false;
+}
 
 /** Before the paragraph `state`'s caret is in: the textblock holding the selection's head. */
 function paragraphOf(state: EditorState): number {
@@ -502,18 +526,20 @@ export function applyKey(): string {
 
 /** The hint's element for the view, made with the view and removed with it. */
 export function hintPlugin(): Plugin {
-    return new Plugin<number | null>({
+    return new Plugin<HintState>({
         key: hintKey,
         state: {
-            init: () => null,
-            apply(tr, at, _old, state) {
+            init: () => ({ at: null, own: false }),
+            apply(tr, { at, own }, _old, state) {
+                // One dispatch is the person's transaction and what plugins append to it: theirs if any of them is.
+                const mine = ownChange(tr) || (own && tr.getMeta('appendedTransaction') !== undefined);
                 if (tr.getMeta(HINT_PARAGRAPH_META) === true) {
-                    return paragraphOf(state);
+                    return { at: paragraphOf(state), own: mine };
                 }
                 if (tr.getMeta(HISTORY_META) !== undefined || at === null) {
-                    return null;
+                    return { at: null, own: mine };
                 }
-                return tr.mapping.map(at, -1);
+                return { at: tr.mapping.map(at, -1), own: mine };
             },
         },
         view(editorView) {
@@ -523,14 +549,19 @@ export function hintPlugin(): Plugin {
                 // Before the plugins after it, whose views may show a hint for this very change.
                 update(view, prevState) {
                     // A refusal ends at the next caret move or change of the document once armed (O(1): `Selection.eq`, a reference).
-                    hint.selectionChanged(view.state, view.state.doc !== prevState.doc);
-                    if (view.state.doc !== prevState.doc) {
+                    // Only the person's own change ends a refusal or takes a flipped hint away: a rendering from the host or a resync is not a gesture of theirs.
+                    const changed = view.state.doc !== prevState.doc;
+                    const own = changed && hintKey.getState(view.state)?.own === true;
+                    hint.selectionChanged(view.state, own);
+                    if (changed) {
                         hint.staleAfterChange();
                         // A hint flipped above the caret's line stands over the text being typed: the next change takes it away.
-                        hint.hideFlipped();
+                        if (own) {
+                            hint.hideFlipped();
+                        }
                     }
                     // A paragraph's hint, once the caret has left that paragraph or an undo or redo ended it.
-                    const at = hintKey.getState(view.state);
+                    const at = hintKey.getState(view.state)?.at ?? null;
                     if (hint.showing('paragraph') && (at === null || at !== paragraphOf(view.state))) {
                         hint.hide();
                     }

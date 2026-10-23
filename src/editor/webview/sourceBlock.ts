@@ -27,6 +27,7 @@ import { EditorView } from 'prosemirror-view';
 import { HISTORY_META, PRESERVE_SOURCE_META } from '../fidelity';
 import { editorSchema } from '../schema';
 import { holdsConstruct } from '../sourceReason';
+import { VERB, quotedVerb } from '../verbs';
 import { announceHint, macKeys, showChangeHint, showRefusal, undoHint } from './hint';
 
 /**
@@ -59,7 +60,7 @@ export function sourceRefusal(reason: string | null, kind: SourceKind): string {
         : holdsConstruct(reason) ? `This ${kind} holds ${reason.slice('has '.length)}`
         : /attributes$/.test(reason) ? `These ${reason} are source`
         : `This ${reason} is source`;
-    return `${clause} — Edit source to change it`;
+    return `${clause} — change it with ${quotedVerb(VERB.editSource)}`;
 }
 
 /** What selecting a source block says to a screen reader. */

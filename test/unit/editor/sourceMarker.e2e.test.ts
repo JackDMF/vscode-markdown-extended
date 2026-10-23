@@ -59,7 +59,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
             assert.ok(!(await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes(typed), `${what}: nothing typed stands in the page`);
         }
         const hint = await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden, tone: (el as HTMLElement).dataset.tone }));
-        assert.deepStrictEqual(hint, { text: 'This paragraph holds a footnote — Edit source to change it', shown: true, tone: 'refusal' }, `${what}: the refusal says why`);
+        assert.deepStrictEqual(hint, { text: 'This paragraph holds a footnote — change it with "Edit source"', shown: true, tone: 'refusal' }, `${what}: the refusal says why`);
     };
 
     /** The caret at the start or the end of the `n`th top-level paragraph (1-based), by a click there. */
