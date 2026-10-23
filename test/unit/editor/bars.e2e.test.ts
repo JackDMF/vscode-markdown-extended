@@ -252,31 +252,38 @@ suite('Editor object bars (e2e)', () => {
             n: 4, slug: 'sidenote', source: 'Alpha ++beta ref|the body++ gamma.\n', marker: 'Alpha',
             enter: () => clickBefore('ref', 1),
             label: 'Sidenote',
-            verbs: [['convert-note', 'Convert to marginal note', false, false], ['edit-source', 'Edit source', false, false], ['delete-note', 'Delete note', false, true]],
-            focus: 'edit-source',
+            // #15: Attributes… after Convert, the first focus (F12).
+            verbs: [['convert-note', 'Convert to marginal note', false, false], ['note-attributes', 'Attributes…', false, false], ['edit-source', 'Edit source', false, false], ['delete-note', 'Delete note', false, true]],
+            focus: 'note-attributes',
+            // With Attributes… the bar is wider: at 520 px Delete drops its noun first.
+            narrow: { short: [['delete-note', 'Delete']] },
         },
         {
             // A hard line break in the body: the one-line field cannot hold it.
             n: 5, slug: 'sidenote-multiline', source: 'Alpha ++beta ref|the body\\\nmore++ gamma.\n', marker: 'Alpha',
             enter: () => clickBefore('ref', 1),
             label: 'Sidenote',
-            verbs: [['convert-note', 'Convert to marginal note', false, false], ['edit-source', 'Edit source', true, false], ['delete-note', 'Delete note', false, true]],
-            focus: 'bar',
+            // Attributes… works on a multi-line note too (#15 F12).
+            verbs: [['convert-note', 'Convert to marginal note', false, false], ['note-attributes', 'Attributes…', false, false], ['edit-source', 'Edit source', true, false], ['delete-note', 'Delete note', false, true]],
+            focus: 'note-attributes',
+            narrow: { short: [['delete-note', 'Delete']] },
         },
         {
             // Right sidebars: the test host's math would claim `$…$`.
             n: 6, slug: 'sidebar', source: 'Alpha @side text@ gamma.\n', marker: 'Alpha',
             enter: () => clickBefore('side', 1),
             label: 'Right sidebar',
-            verbs: [['convert-note', 'Move to left', false, false], ['edit-source', 'Edit source', false, false], ['remove-note', 'Remove sidebar, keep text', false, true]],
-            focus: 'edit-source',
+            verbs: [['convert-note', 'Move to left', false, false], ['note-attributes', 'Attributes…', false, false], ['edit-source', 'Edit source', false, false], ['remove-note', 'Remove sidebar, keep text', false, true]],
+            focus: 'note-attributes',
+            narrow: { short: [['remove-note', 'Remove, keep text']] },
         },
         {
             n: 7, slug: 'sidebar-multiline', source: 'Alpha @side\\\ntext@ gamma.\n', marker: 'Alpha',
             enter: () => clickBefore('side', 1),
             label: 'Right sidebar',
-            verbs: [['convert-note', 'Move to left', false, false], ['edit-source', 'Edit source', true, false], ['remove-note', 'Remove sidebar, keep text', false, true]],
-            focus: 'bar',
+            verbs: [['convert-note', 'Move to left', false, false], ['note-attributes', 'Attributes…', false, false], ['edit-source', 'Edit source', true, false], ['remove-note', 'Remove sidebar, keep text', false, true]],
+            focus: 'note-attributes',
+            narrow: { short: [['remove-note', 'Remove, keep text']] },
         },
         {
             n: 8, slug: 'span', source: 'A [spanned]{.k} word.\n', marker: 'spanned',
@@ -678,13 +685,14 @@ suite('Editor object bars (e2e)', () => {
 
     test('↓ on a focused bar moves into its first verb too', async function () {
         this.timeout(15000);
-        await showDocument('Alpha ++beta ref|the body\\\nmore++ gamma.\n', 'Alpha');
-        await clickBefore('ref', 1);
+        // An emoji's bar takes the focus itself (a multi-line note's now lands on Attributes…, #15 F12).
+        await showDocument('Launch :rocket: now.\n', 'Launch');
+        await clickCentre('.ProseMirror .mep-emoji');
         await pressAlt('Enter');
         assert.strictEqual((await drawn()).focus, 'bar');
         await page.keyboard.press('ArrowDown');
         await delay(80);
-        assert.strictEqual((await drawn()).focus, 'convert-note');
+        assert.strictEqual((await drawn()).focus, 'convert-emoji-to-text');
     });
 
     test('tooltips: a Delete whose file stays says so; Convert to text names the text it becomes', async function () {

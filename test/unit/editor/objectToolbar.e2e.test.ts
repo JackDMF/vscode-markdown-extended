@@ -102,7 +102,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$(BAR), null, 'nothing yet');
         await page.waitForSelector(BAR, { timeout: 2000 });
         assert.ok(Date.now() - pressed >= INLINE_DELAY_MS, 'not before the delay');
-        assert.deepStrictEqual(await barState(), { object: 'note', label: 'Sidenote', verbs: ['convert-note', 'edit-source', 'delete-note'] });
+        assert.deepStrictEqual(await barState(), { object: 'note', label: 'Sidenote', verbs: ['convert-note', 'note-attributes', 'edit-source', 'delete-note'] });
         const geometry = await page.evaluate(sel => {
             const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
             const range = (document.getSelection() as Selection).getRangeAt(0);
@@ -859,7 +859,10 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await delay(100);
         await pressAlt('Enter');
         assert.ok(await page.$(BAR), 'shown without the delay');
-        assert.deepStrictEqual(await active(), { verb: 'edit-source', editor: false, field: false }, 'Edit source, not Convert, which acts at once, nor Delete');
+        // #15 F12: Attributes…, the first verb that opens in place — not Convert, which acts at once, nor Delete.
+        assert.deepStrictEqual(await active(), { verb: 'note-attributes', editor: false, field: false }, 'Attributes…, not Convert, which acts at once, nor Delete');
+        await page.keyboard.press('ArrowRight');
+        assert.strictEqual((await active()).verb, 'edit-source');
         await page.keyboard.press('ArrowRight');
         assert.strictEqual((await active()).verb, 'delete-note');
         await page.keyboard.press('ArrowRight');
