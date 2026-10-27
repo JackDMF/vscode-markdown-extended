@@ -925,12 +925,22 @@ export class LayerSlot {
      * What the dismissals were about has moved (a change of the document shifted
      * it): each key in `moves` follows to its new key, or ends where it maps to
      * `null`. All at once, so keys shifting onto one another do not collide.
+     * The occupant's key follows as well; one mapped to `null` is left to its
+     * owner's `valid`.
      */
     rekeyAll(moves: ReadonlyMap<string, string | null>): void {
         const next = rekeyed(this.dismissed, moves);
         this.dismissed.clear();
         for (const key of next) {
             this.dismissed.add(key);
+        }
+        // The occupant follows too: it is the same layer, about the same thing, and is not asked for again.
+        const to = this.occupant !== null ? moves.get(this.occupant.key) : undefined;
+        if (this.occupant !== null && to !== undefined && to !== null) {
+            this.occupant.key = to;
+            if (this.placed !== null) {
+                this.placed.key = to;
+            }
         }
     }
 

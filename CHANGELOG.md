@@ -7,6 +7,7 @@
 - A list made in the visual editor (typing `- `, `1. ` or from the toolbar) is written tight, without blank lines between items.
 - A pasted HTML list whose items hold no paragraphs comes in tight as well.
 - Inside quotes, admonitions and containers, a heading, quote or list the file wrote straight under the block before it is written back so, without a new blank line.
+- A selection's formatting bubble stays up when the file changes above it, and a bubble hidden with Esc stays hidden.
 
 ## v4.10.0 — Says Why, Keeps Its Place
 

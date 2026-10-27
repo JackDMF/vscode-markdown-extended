@@ -36,7 +36,7 @@ import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
-import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
+import { LayerClaim, LayerSlot, Rect, REST_MS, blockAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
 import { dismissRefusal, showHint, showRefusal } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
@@ -721,11 +721,35 @@ class ToolbarView implements PluginView {
      * gone, the field closes at the next `update`, nothing written.
      */
     applied(transactions: readonly Transaction[], doc: EditorState['doc']): void {
-        const open = this.fieldBar;
-        if (open === null || !transactions.some(tr => tr.docChanged)) {
+        if (!transactions.some(tr => tr.docChanged)) {
             return;
         }
-        this.fieldTargetGone = followAll(open.followed as Followed[], transactions, doc).size > 0;
+        this.followBubble(transactions);
+        const open = this.fieldBar;
+        if (open !== null) {
+            this.fieldTargetGone = followAll(open.followed as Followed[], transactions, doc).size > 0;
+        }
+    }
+
+    /**
+     * A change of the document moved the selection the bubble is about (a host
+     * resync above it): its key follows — the wait, the claim and an Esc
+     * dismissal with it — so the bubble neither blinks nor comes back. A
+     * selection the change emptied has no bubble: its key ends.
+     */
+    private followBubble(transactions: readonly Transaction[]): void {
+        const moves = new Map<string, string | null>();
+        for (const key of [this.bubbleKey, this.bubbleParked]) {
+            if (key !== null && !moves.has(key)) {
+                moves.set(key, mappedSelectionKey(key, transactions));
+            }
+        }
+        if (moves.size === 0) {
+            return;
+        }
+        this.slot.rekeyAll(moves);
+        this.bubbleKey = this.bubbleKey === null ? null : moves.get(this.bubbleKey) ?? null;
+        this.bubbleParked = this.bubbleParked === null ? null : moves.get(this.bubbleParked) ?? null;
     }
 
     update(view: EditorView): void {
@@ -2503,7 +2527,7 @@ class ToolbarView implements PluginView {
         this.bubbleKey = key;
         this.bubble.hidden = false;
         const view = this.view;
-        const granted = this.slot.request({
+        const claim: LayerClaim = {
             kind: 'bubble',
             key,
             el: this.bubble,
@@ -2514,11 +2538,12 @@ class ToolbarView implements PluginView {
             // In a note's body (sidenote, marginal note) set into the margin: above the selected line, never over the
             // note's text below it (#15 review 2). A sidebar keeps the normal rule — beside, off the text (review 3).
             prefer: () => (floatedAround(view, view.state.selection.from)?.closest('.sidenote, .mnote') ? 'above' : undefined),
-            valid: () => this.bubbleWanted() && this.selectionKey() === key,
+            // Its key, as a change of the document moved it (`followBubble`).
+            valid: () => this.bubbleWanted() && this.selectionKey() === claim.key,
             hidden: () => this.hideBubble(),
             fit: (room, fresh) => this.fitBubble(room, fresh),
-        });
-        if (!granted) {
+        };
+        if (!this.slot.request(claim)) {
             this.hideBubble();
         }
     }
@@ -2548,6 +2573,25 @@ class ToolbarView implements PluginView {
         this.bubble.hidden = true;
         this.tips.hide(this.bubble);
     }
+}
+
+/**
+ * The key of the selection `key` names (`sel@from-to`) after `transactions`,
+ * mapped as the selection itself is (`Selection.map`); `null` where they
+ * emptied it.
+ */
+export function mappedSelectionKey(key: string, transactions: readonly Transaction[]): string | null {
+    const m = /^sel@(\d+)-(\d+)$/.exec(key);
+    if (m === null) {
+        return null;
+    }
+    let from = Number(m[1]);
+    let to = Number(m[2]);
+    for (const tr of transactions) {
+        from = tr.mapping.map(from);
+        to = tr.mapping.map(to);
+    }
+    return from < to ? `sel@${from}-${to}` : null;
 }
 
 const toolbarViews = new WeakMap<EditorView, ToolbarView>();

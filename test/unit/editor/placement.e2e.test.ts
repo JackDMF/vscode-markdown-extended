@@ -1099,6 +1099,61 @@ suite('Editor placement (e2e)', () => {
         await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
     });
 
+    /** A keyboard selection of 'beta' with its bubble up, the text below the host's first paragraph. */
+    const bubbleOnBeta = async () => {
+        await showDocument('Alpha beta gamma delta epsilon zeta.\n\nSecond paragraph.\n', 'Alpha');
+        await clickBefore('beta', 0);
+        await page.keyboard.down('Shift');
+        for (let i = 0; i < 4; i++) {
+            await page.keyboard.press('ArrowRight');
+        }
+        await page.keyboard.up('Shift');
+        await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
+    };
+    const resyncAbove = async () => {
+        await resendDocument('A paragraph the host put first.\n\nAlpha beta gamma delta epsilon zeta.\n\nSecond paragraph.\n');
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('the host put first'), { timeout: 3000 });
+        assert.strictEqual(await page.evaluate(() => document.getSelection()?.toString()), 'beta', 'the selection moved with its text');
+    };
+
+    test('r3-3 (wave 3 follow-up): a resync above the selection keeps its bubble up: it does not hide and wait for a new rest', async function () {
+        this.timeout(20000);
+        await bubbleOnBeta();
+        await page.evaluate(() => {
+            const w = window as unknown as { bubbleHid: boolean };
+            w.bubbleHid = false;
+            new MutationObserver(records => {
+                w.bubbleHid = w.bubbleHid || records.some(r => r.oldValue === null && (r.target as HTMLElement).hidden);
+            }).observe(document.querySelector('.mep-bubble') as Element, { attributes: true, attributeFilter: ['hidden'], attributeOldValue: true });
+        });
+        await resyncAbove();
+        await delay(REST_MS + 200);
+        assert.strictEqual(await page.evaluate(() => (window as unknown as { bubbleHid: boolean }).bubbleHid), false, 'the bubble never hid');
+        assert.strictEqual(await shown(BUBBLE), true, 'and is up');
+        const bubble = await box(BUBBLE);
+        const selection = await page.evaluate(() => {
+            const r = (document.getSelection() as Selection).getRangeAt(0).getBoundingClientRect();
+            return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+        });
+        assert.ok(bubble && bubble.top >= selection.bottom + GAP - 1, `below the moved selection: ${JSON.stringify({ bubble, selection })}`);
+    });
+
+    test('r3-3: Esc\'s dismissal of the bubble survives a resync that moves its selection', async function () {
+        this.timeout(20000);
+        await bubbleOnBeta();
+        await page.evaluate(() => (document.querySelector('.mep-bubble .mep-tool') as HTMLElement).focus());
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BUBBLE), false, 'hidden by Esc');
+        await resyncAbove();
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BUBBLE), false, 'still hidden');
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.up('Shift');
+        await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
+    });
+
     // -- shots ----------------------------------------------------------------
 
     test('shots: every scenario light and dark at 1280 and 520', async function () {
