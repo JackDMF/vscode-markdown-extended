@@ -8,6 +8,7 @@
 - A pasted HTML list whose items hold no paragraphs comes in tight as well.
 - Inside quotes, admonitions and containers, a heading, quote or list the file wrote straight under the block before it is written back so, without a new blank line.
 - A selection's formatting bubble stays up when the file changes above it, and a bubble hidden with Esc stays hidden.
+- The completion list at the caret stands where the other floating bars do: under the toolbar, inside the editor, never over an open bar.
 
 ## v4.10.0 — Says Why, Keeps Its Place
 
