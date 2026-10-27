@@ -1154,6 +1154,16 @@ suite('Editor placement (e2e)', () => {
         await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
     });
 
+    test('r3-3: a resync that deletes the selected text ends the bubble\'s claim: the next bar takes the slot', async function () {
+        this.timeout(20000);
+        await bubbleOnBeta();
+        await resendDocument('Alpha gamma.\n\n| Kind | Where |\n| --- | --- |\n| first | second |\n');
+        await page.waitForFunction(() => document.querySelector('.ProseMirror table'), { timeout: 3000 });
+        assert.strictEqual(await shown(BUBBLE), false, 'no selection, no bubble');
+        await clickBefore('first', 2);
+        await waitBar();
+    });
+
     // -- shots ----------------------------------------------------------------
 
     test('shots: every scenario light and dark at 1280 and 520', async function () {

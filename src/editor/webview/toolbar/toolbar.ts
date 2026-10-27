@@ -738,18 +738,25 @@ class ToolbarView implements PluginView {
      * selection the change emptied has no bubble: its key ends.
      */
     private followBubble(transactions: readonly Transaction[]): void {
-        const moves = new Map<string, string | null>();
-        for (const key of [this.bubbleKey, this.bubbleParked]) {
-            if (key !== null && !moves.has(key)) {
-                moves.set(key, mappedSelectionKey(key, transactions));
+        if (this.bubbleParked !== null) {
+            const parked = mappedSelectionKey(this.bubbleParked, transactions);
+            if (parked === null) {
+                this.slot.caretLeft(this.bubbleParked);
+            } else {
+                this.slot.rekeyAll(new Map([[this.bubbleParked, parked]]));
+            }
+            this.bubbleParked = parked;
+        }
+        if (this.bubbleKey !== null) {
+            const key = mappedSelectionKey(this.bubbleKey, transactions);
+            if (key === null) {
+                // Its claim and dismissal end with it, under the key they were made with.
+                this.dropBubble();
+            } else {
+                this.slot.rekeyAll(new Map([[this.bubbleKey, key]]));
+                this.bubbleKey = key;
             }
         }
-        if (moves.size === 0) {
-            return;
-        }
-        this.slot.rekeyAll(moves);
-        this.bubbleKey = this.bubbleKey === null ? null : moves.get(this.bubbleKey) ?? null;
-        this.bubbleParked = this.bubbleParked === null ? null : moves.get(this.bubbleParked) ?? null;
     }
 
     update(view: EditorView): void {
