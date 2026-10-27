@@ -213,10 +213,12 @@ export function sourceBlockPlugin(): Plugin {
                     }
                     event.preventDefault();
                     const dom = view.dom as HTMLElement;
+                    refocusing.add(view);
                     dom.contentEditable = 'false';
                     setTimeout(() => {
                         dom.contentEditable = String(view.editable);
                         view.focus();
+                        refocusing.delete(view);
                     });
                     return true;
                 },
@@ -240,6 +242,14 @@ export function sourceBlockPlugin(): Plugin {
             };
         },
     });
+}
+
+/** The views a refused composition took the focus from for a moment (`compositionstart`), until it is back. */
+const refocusing = new WeakSet<EditorView>();
+
+/** Whether the focus left `view` only for a refused composition and is coming back: no reason to hide what it shows. */
+export function refocusingAfterComposition(view: EditorView): boolean {
+    return refocusing.has(view);
 }
 
 /**

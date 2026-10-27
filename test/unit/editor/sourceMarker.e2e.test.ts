@@ -152,6 +152,21 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
         this.timeout(10000);
         await selectFootnoteBlock();
         const before = (await (editor as EditorPage).edits()).length;
+        // The block's bar, shown while it is selected: watched for a moment's hide while the focus goes and comes back.
+        await page.evaluate(() => {
+            const seen: string[] = [];
+            (window as unknown as { barFlips: string[] }).barFlips = seen;
+            const watch = new MutationObserver(list => list.forEach(m => {
+                const el = m.target as HTMLElement;
+                // Shown, then hidden: what the person would see go.
+                if (m.attributeName === 'hidden' && m.oldValue === null && el.hidden) {
+                    seen.push(el.className);
+                }
+            }));
+            document.querySelectorAll('.mep-object-toolbar').forEach(bar => watch.observe(bar, { attributes: true, attributeOldValue: true, attributeFilter: ['hidden'] }));
+        });
+        const barShown = () => page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('.mep-object-toolbar')).some(b => !b.hidden && b.offsetHeight > 0));
+        const shownBefore = await barShown();
         const cdp = await page.createCDPSession();
         try {
             await cdp.send('Input.imeSetComposition', { text: 'か', selectionStart: 1, selectionEnd: 1 });
@@ -164,6 +179,9 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
         await delay(100);
         assert.ok(await page.evaluate(() => document.activeElement?.classList.contains('ProseMirror')), 'the editor has the focus back');
         assert.ok(await page.$('.ProseMirror > .mep-raw-block.ProseMirror-selectednode'), 'the block is still selected');
+        assert.ok(shownBefore && await barShown(), 'its bar shows before and after');
+        const flips = await page.evaluate(() => (window as unknown as { barFlips: string[] }).barFlips);
+        assert.deepStrictEqual(flips, [], `the bar never hid while the focus came back: ${JSON.stringify(flips)}`);
     });
 
     test('cut takes it, onto the clipboard, and undo brings it back', async function () {

@@ -66,6 +66,7 @@ import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import { FocusPlace, focusPlace } from './focusPlace';
+import { refocusingAfterComposition } from './sourceBlock';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
@@ -1615,7 +1616,12 @@ class ObjectToolbarView implements PluginView {
         // Focus moving in or out of the editor and the bars shows or hides the selection's bar.
         const later = () => setTimeout(() => this.refresh(), 0);
         this.listen(document, 'focusin', later);
-        this.listen(document, 'focusout', later);
+        // A refused composition takes the focus for a moment and gives it back (`refocusingAfterComposition`): the bar stays.
+        this.listen(document, 'focusout', () => setTimeout(() => {
+            if (!refocusingAfterComposition(this.view)) {
+                this.refresh();
+            }
+        }, 0));
         // Capturing, so it is known before the key's own command changes the text (`update`).
         // A key whose release the text never sees (the focus moved to a bar) is over at its keyup anywhere.
         // A character made with Alt (Option, AltGr: `{ } [ ] @ \ ~`) is typing; a modifier, a shortcut or an Alt command is not (`typesText`).
