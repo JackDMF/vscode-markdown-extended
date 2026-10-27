@@ -547,19 +547,19 @@ suite('Editor Attributes…: a heading inside a quote, an admonition or a contai
         assert.ok(made !== null && 'tr' in made, made !== null && 'refusal' in made ? saidText(made.refusal) : 'a transaction');
         const changed = quote.apply(made.tr);
         // A changed quote is written in the serializer's layout (a `>` line between its blocks), as for any edit in it.
-        assert.strictEqual(text(changed), '> ## Sync rules {#other .c}\n>\n> Text\n> {.warning}\n');
+        assert.strictEqual(text(changed), '> ## Sync rules {#other .c}\n> Text\n> {.warning}\n');
         const again = stateOf(text(changed));
         assert.deepStrictEqual(literals(again), ['{.warning}', '{#other .c}'], 'the quote\'s and the heading\'s, read back');
         assert.strictEqual((again.doc.nodeAt(nodePos(again, 'heading')) as Node).attrs.anchor, 'other');
         assert.strictEqual(text(undone(changed)), QUOTE);
         const removed = commitAttributes(quote, targetOfNode(quote, 'heading', 'Heading'), '');
         assert.ok(removed !== null && 'tr' in removed && removed.removed);
-        assert.strictEqual(text(quote.apply(removed.tr)), '> ## Sync rules\n>\n> Text\n> {.warning}\n');
+        assert.strictEqual(text(quote.apply(removed.tr)), '> ## Sync rules\n> Text\n> {.warning}\n');
 
         const admonition = stateOf(ADMONITION);
         const set = commitAttributes(admonition, targetOfNode(admonition, 'heading', 'Heading'), '{#other .c}');
         assert.ok(set !== null && 'tr' in set, set !== null && 'refusal' in set ? saidText(set.refusal) : 'a transaction');
-        assert.strictEqual(text(admonition.apply(set.tr)), '!!! warning\n    ## Sync rules {#other .c}\n\n    Body\n');
+        assert.strictEqual(text(admonition.apply(set.tr)), '!!! warning\n    ## Sync rules {#other .c}\n    Body\n');
         assert.deepStrictEqual(literals(stateOf(text(admonition.apply(set.tr)))), ['{#other .c}']);
     });
 

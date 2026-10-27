@@ -93,6 +93,8 @@ interface StateInternals {
     noteMarker?: string;
     /** Whether a table cell is being written (`writeTable`); this module's own field. */
     inTableCell?: boolean;
+    /** prosemirror-markdown's own: the block whose separator is still to be written, if any. */
+    closed: unknown;
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
     flushClose(size?: number): void;
     /** prosemirror-markdown's own: the serializer's node writers and mark specs, which a state of its own is made with. */
@@ -832,6 +834,28 @@ const LibraryState = MarkdownSerializerState as unknown as new (nodes: unknown, 
  * the `*` between `=` and `b` cannot close, while the library's
  * `*~~==a==~~*~~b~~` reads as written.
  */
+/**
+ * Whether `next` may follow `prev` with no blank line and still read as its own
+ * block: anything after a heading, which ends at its line; a heading, written
+ * `#`, or a quote after anything; a list after a paragraph or a quote when it
+ * may interrupt a paragraph — bullets, or numbers from 1, with a first item
+ * that holds text.
+ */
+function joinsStraight(prev: Node, next: Node): boolean {
+    if (prev.type.name === 'heading' || next.type.name === 'heading' || next.type.name === 'blockquote') {
+        return true;
+    }
+    if (prev.type.name !== 'paragraph' && prev.type.name !== 'blockquote') {
+        return false;
+    }
+    const name = next.type.name;
+    if (name !== 'bullet_list' && !(name === 'ordered_list' && next.attrs.order === 1)) {
+        return false;
+    }
+    const first = next.firstChild?.firstChild;
+    return first !== null && first !== undefined && first.type.name === 'paragraph' && first.content.size > 0;
+}
+
 export class OrderedInlineState extends LibraryState {
     /**
      * The library's escape with `ESCAPE_EXTRA`, then a backslash before each
@@ -843,6 +867,21 @@ export class OrderedInlineState extends LibraryState {
      * judges writes the text with no shortcut escaped, and says where
      * (`escapedTexts`). A text holding no shortcut is written as escaped.
      */
+    /**
+     * A nested block the file wrote straight under the one before it (`joined`)
+     * is written so again, where the pair reads back as the same two blocks
+     * (`joinsStraight`); elsewhere the library's blank line stays.
+     */
+    render(node: Node, parent: Node, index: number): void {
+        if (node.attrs.joined === true && index > 0 && joinsStraight(parent.child(index - 1), node)) {
+            const st = internals(this);
+            if (st.closed) {
+                st.flushClose(1);
+            }
+        }
+        super.render(node, parent, index);
+    }
+
     esc(str: string, startOfLine = false): string {
         const escaped = underscoreRunsEscaped(str, super.esc(str, startOfLine));
         if (!SHORTCUT_PRETEST.test(escaped)) {

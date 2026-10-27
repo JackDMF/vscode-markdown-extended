@@ -398,7 +398,7 @@ suite('Editor read-back oracle: the merge review', () => {
 
     test('a list item that is a rule is written with a character its list\'s marker is not', () => {
         const li = (...content: Node[]) => editorSchema.nodes.list_item.create(null, content);
-        for (const [bullet, wanted] of [['*', '* a\n\n* ---\n'], ['-', '- a\n\n- ***\n'], ['+', '+ a\n\n+ ***\n']] as const) {
+        for (const [bullet, wanted] of [['*', '* a\n* ---\n'], ['-', '- a\n- ***\n'], ['+', '+ a\n+ ***\n']] as const) {
             const list = editorSchema.nodes.bullet_list.create({ bullet }, [li(p('a')), li(editorSchema.nodes.horizontal_rule.create({ markup: bullet === '-' ? '---' : '***' }))]);
             const written = serializeDocument({ doc: doc(touched(list)), eol: '\n', tail: '' }, { defaultWrap: 80 });
             assert.strictEqual(written, wanted);
@@ -417,7 +417,7 @@ suite('Editor read-back oracle: the merge review', () => {
         const tr = state.tr.delete(1, 1 + 'Intro'.length);
         assert.strictEqual(noteRefusal(tr), null);
         const written = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 80 });
-        assert.strictEqual(written, '* x---\n\n* ---\n');
+        assert.strictEqual(written, '* x---\n* ---\n');
         const back = parseDocument(hostEngine(), written, {}).doc;
         assert.deepStrictEqual(back.content.content.map(n => `${n.type.name}(${n.childCount})`), ['bullet_list(2)']);
     });

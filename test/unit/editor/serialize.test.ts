@@ -11,7 +11,8 @@ import {
 import { OrderedInlineState, UNREAD_EMOJI_SAVED, onUnreadEmojiSaved, serializeNode, unreadEmoji } from '../../../src/editor/serialize';
 import { MarkdownSerializerState } from 'prosemirror-markdown';
 import { Node } from 'prosemirror-model';
-import { EditorState } from 'prosemirror-state';
+import { Command, EditorState, TextSelection } from 'prosemirror-state';
+import { splitListItem, wrapInList } from 'prosemirror-schema-list';
 import { seamHolds } from '../../../src/editor/serialize';
 import { noteRef } from '../../../src/editor/schema';
 import { DEFAULT_INLINE_ENGINE, createInlineEngine, readAutoLinks } from '../../../src/editor/inlineEngine';
@@ -134,6 +135,62 @@ suite('Editor serializer for changed blocks', () => {
     test('nested lists indent by the marker width, and tightness is kept', () => {
         const source = '- outer\n  - inner\n    - innermost\n- second\n\n1. first\n\n2. loose\n';
         assert.strictEqual(serialize(allTouched(parseDocument(md, source))), source);
+    });
+
+    test('a list made in the editor is written tight — by "- ", by the toolbar, and pasted as markdown-it renders it', () => {
+        const parsed = parseDocument(md, 'Intro\n\nOne\n');
+        let state = EditorState.create({ doc: parsed.doc });
+        let at = -1;
+        state.doc.descendants((n, pos) => { if (n.type.name === 'paragraph' && n.textContent === 'One') { at = pos; } });
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, at + 4)));
+        const apply = (cmd: Command) => assert.ok(cmd(state, tr => { state = state.apply(tr); }));
+        apply(wrapInList(schema.nodes.bullet_list));
+        apply(splitListItem(schema.nodes.list_item));
+        state = state.apply(state.tr.insertText('Two'));
+        assert.strictEqual(serialize({ ...parsed, doc: state.doc }), 'Intro\n\n- One\n- Two\n');
+
+        const ruled = schema.nodes.ordered_list.create(null, [
+            schema.nodes.list_item.create(null, schema.nodes.paragraph.create(null, text('a'))),
+            schema.nodes.list_item.create(null, schema.nodes.paragraph.create(null, text('b'))),
+        ]);
+        assert.strictEqual(ruled.attrs.tight, true, 'the input rule and the toolbar create the list with its defaults');
+
+        // A pasted <ul>: items as tag lists, the attributes it carries.
+        const pasted = (items: string[][], attrs: string[] = []) => {
+            const rule = schema.nodes.bullet_list.spec.parseDOM?.[0] as unknown as { getAttrs: (dom: unknown) => { tight: boolean } } | undefined;
+            const children = items.map(tags => ({ children: tags.map(tagName => ({ tagName })) }));
+            return rule!.getAttrs({ hasAttribute: (name: string) => attrs.includes(name), children }).tight;
+        };
+        assert.strictEqual(pasted([[], []]), true, 'items holding text');
+        assert.strictEqual(pasted([['P'], ['P']]), false, 'items holding paragraphs');
+        assert.strictEqual(pasted([['P']], ['data-tight']), true, "the editor's own copy");
+    });
+
+    test('inside a quote or an admonition, a block the file wrote straight under the one before stays there; a blank line the file had stays', () => {
+        for (const source of [
+            '!!! note\n    #### Video\n    - a\n    - b\n',
+            '> ## Ziel\n> - a\n> - b\n',
+            '> Text\n> - a\n',
+            '> ## H\n> 2. x\n',
+            '!!! info Stoff\n    Text\n    #### Punkt\n    - Frage\n    ##### VIDEO\n',
+            '!!! info Stoff\n    Text\n    > ## Spr 13:9 {.nwt}\n    > Vers\n',
+            '- Punkt\n  > ## Spr 13:9\n  > Vers\n',
+            '!!! note\n    > Bild\n    - Frau\n',
+            '!!! note\n    #### V\n\n    - a\n',
+            '> a\n>\n> - b\n',
+            '> - a\n> - b\n>\n> Text\n',
+        ]) {
+            assert.strictEqual(serialize(allTouched(parseDocument(md, source))), source);
+        }
+    });
+
+    test('a joined list that could no longer interrupt the paragraph above gets its blank line', () => {
+        const parsed = parseDocument(md, '> Text\n> - a\n');
+        const quote = parsed.doc.firstChild!;
+        const list = quote.child(1);
+        const renumbered = schema.nodes.ordered_list.create({ ...list.attrs, order: 2 }, list.content);
+        const doc = parsed.doc.type.create(null, [touched(quote, quote.content.replaceChild(1, renumbered))]);
+        assert.strictEqual(serialize({ ...parsed, doc }), '> Text\n>\n> 2. a\n');
     });
 
     test('a changed requirement heading writes reqPrefix and attrsSuffix back verbatim around the edited text', () => {

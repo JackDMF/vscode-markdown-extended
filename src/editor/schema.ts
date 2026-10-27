@@ -99,6 +99,17 @@ export function admonitionTitleSpec(title: string): DOMOutputSpec {
 }
 
 /** The type an admonition's classes name: the first known one, else `note`, as the plugin decides. */
+/**
+ * A pasted list: the editor's own copy says so with data-tight; a loose list's
+ * items hold paragraphs, a tight one's (as markdown-it renders it) hold text.
+ */
+function listDomIsTight(dom: HTMLElement): boolean {
+    if (dom.hasAttribute('data-tight')) {
+        return true;
+    }
+    return !Array.from(dom.children).some(li => Array.from(li.children).some(c => c.tagName === 'P'));
+}
+
 function admonitionTypeOf(dom: HTMLElement): string {
     return Array.from(dom.classList).find(c => c !== 'admonition' && ADMONITION_TYPES.includes(c)) ?? 'note';
 }
@@ -106,10 +117,15 @@ function admonitionTypeOf(dom: HTMLElement): string {
 /** The top-level node types emitted from `src` whatever happens to them. */
 export const SOURCE_NODES: ReadonlySet<string> = new Set(['front_matter', 'raw_block', 'injected_block']);
 
-/** `src` and `gap`, on every node that can stand at top level. */
+/**
+ * `src` and `gap`, on every node that can stand at top level; and `joined`, on a
+ * nested one the file wrote straight under the block before it, with no blank
+ * line (`#### Video` then `- …` in a quote) — a top-level block's `gap` says that.
+ */
 const sourceAttrs = {
     src: { default: null as string | null },
     gap: { default: null as string | null },
+    joined: { default: false },
 };
 
 function headingDOM(node: Node): DOMOutputSpec {
@@ -532,10 +548,11 @@ export const editorSchema = new Schema({
                 ...sourceAttrs,
                 /** The bullet character the list was written with. */
                 bullet: { default: '-' },
-                tight: { default: false },
+                /** A list made in the editor is tight, as a Markdown author writes one. */
+                tight: { default: true },
                 ...suffixAttrs,
             },
-            parseDOM: [{ tag: 'ul', getAttrs: (dom: HTMLElement) => ({ tight: dom.hasAttribute('data-tight') }) }],
+            parseDOM: [{ tag: 'ul', getAttrs: (dom: HTMLElement) => ({ tight: listDomIsTight(dom) }) }],
             toDOM(node): DOMOutputSpec { return ['ul', withSuffix(node, { 'data-tight': node.attrs.tight ? 'true' : null }), 0]; },
         },
         ordered_list: {
@@ -546,14 +563,14 @@ export const editorSchema = new Schema({
                 order: { default: 1 },
                 /** `.` or `)`, as written. */
                 delimiter: { default: '.' },
-                tight: { default: false },
+                tight: { default: true },
                 ...suffixAttrs,
             },
             parseDOM: [{
                 tag: 'ol',
                 getAttrs: (dom: HTMLElement) => ({
                     order: dom.hasAttribute('start') ? Number(dom.getAttribute('start')) : 1,
-                    tight: dom.hasAttribute('data-tight'),
+                    tight: listDomIsTight(dom),
                 }),
             }],
             toDOM(node): DOMOutputSpec {

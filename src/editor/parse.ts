@@ -97,6 +97,39 @@ function decodeAttribute(value: string): string {
         .replace(/&amp;/g, '&');
 }
 
+/**
+ * The opening tokens of the nested blocks that start on the line after the
+ * block before them in the same parent, with no blank line between — by the
+ * line maps markdown-it gives every block. A top-level block's `gap` holds that.
+ */
+function joinedBlocks(tokens: readonly Token[]): WeakSet<object> {
+    const joined = new WeakSet<object>();
+    // The line the last closed child of each level ended on; a parent opening starts its children afresh.
+    const lastEnd: (number | undefined)[] = [];
+    const open: (readonly [number, number] | null)[] = [];
+    const seen = (t: Token, end: number | undefined) => {
+        if (t.level > 0 && t.map && lastEnd[t.level] !== undefined && lastEnd[t.level] === t.map[0]) {
+            joined.add(t);
+        }
+        lastEnd[t.level] = end;
+    };
+    for (const t of tokens) {
+        if (!t.block || t.type === 'inline') {
+            continue;
+        }
+        if (t.nesting === 1) {
+            seen(t, undefined);
+            open.push(t.map ? [t.map[0], t.map[1]] : null);
+            lastEnd[t.level + 1] = undefined;
+        } else if (t.nesting === -1) {
+            lastEnd[t.level] = open.pop()?.[1];
+        } else {
+            seen(t, t.map?.[1]);
+        }
+    }
+    return joined;
+}
+
 /** markdown-it marks the paragraphs of a tight list hidden; the first one of the list's own items answers for it. */
 function listIsTight(stream: readonly StreamToken[], index: number): boolean {
     const open = stream[index] as unknown as Token;
@@ -336,7 +369,8 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
         }
     }
 
-    const sourceOf = (tok: StreamToken) => topAttrs.get(tok) ?? { src: null, gap: null };
+    const joined = joinedBlocks(tokens);
+    const sourceOf = (tok: StreamToken) => topAttrs.get(tok) ?? { src: null, gap: null, joined: joined.has(tok) };
     const suffixOf = (tok: StreamToken) => {
         const found = blockAttrs.get(tok);
         return { attrsSuffix: found?.suffix ?? null, attrsPlacement: found?.placement ?? null };
