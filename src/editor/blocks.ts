@@ -103,6 +103,8 @@ export function takenLiteral(inline: Token | undefined, beforeLine = false): str
  * - `end` — at the end of the block's last line, after a space: a paragraph's
  *   `text {.a}`, a heading's `# Title {#id}`, a fence's opening line
  *   ```` ```js {.a} ````, a rule's `--- {#id}`;
+ * - `glued` — a fence's, right after its info string with no space
+ *   (```` ```js title={.a} ````);
  * - `line` — on a line of its own right after the block's last line: a
  *   paragraph's or a list's `{.a}` below its text, which the plugin reads
  *   through the soft break before it; a quote's `> {.a}` under its last
@@ -116,7 +118,7 @@ export function takenLiteral(inline: Token | undefined, beforeLine = false): str
  * first paragraph, at any depth (`recoverItemLiterals`), and is the item's
  * `literal`, not a top-level block's `attrsSuffix`.
  */
-export type AttrsPlacement = 'end' | 'line' | 'blank';
+export type AttrsPlacement = 'end' | 'glued' | 'line' | 'blank';
 
 /** A top-level block's attribute literal, verbatim, and where it was written. */
 export interface BlockAttrs {
@@ -825,8 +827,10 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
             return literal === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix: literal, placement: 'end' }, endLine: null };
         }
         case 'fence': {
-            const literal = endLiteralOf(lines[start]?.text ?? '');
-            return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
+            const line = (lines[start]?.text ?? '').trimEnd();
+            const literal = endLiteralOf(line);
+            const glued = literal !== null && !/\s/.test(line.charAt(line.length - literal.length - 1));
+            return reads(literal) ? { attrs: { suffix: literal, placement: glued ? 'glued' : 'end' }, endLine: null } : where;
         }
         case 'hr': {
             const literal = endLiteralOf(open.markup);

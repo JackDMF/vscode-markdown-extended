@@ -109,18 +109,27 @@ export function savedFence(node: Node): string {
  * save does not write, and refuse what the save would accept.
  */
 export function savedOpeningLine(node: Node, params = String(node.attrs.params ?? '')): string {
-    return openingLineOf({ markup: savedFence(node), params, attrsSuffix: node.attrs.attrsSuffix as string | null });
+    return openingLineOf({
+        markup: savedFence(node), params, attrsSuffix: node.attrs.attrsSuffix as string | null, attrsPlacement: node.attrs.attrsPlacement as string | null,
+    });
 }
 
 /**
  * The block's opening line as the file writes it: the fence, the info string,
- * a space and the literal; `''` for an indented block (`markup` empty).
+ * a space and the literal — no space where the file had none (`glued`) and the
+ * line still ends with that literal so; `''` for an indented block (`markup` empty).
  */
-export function openingLineOf(attrs: { markup: string; params: string; attrsSuffix: string | null }): string {
+export function openingLineOf(attrs: { markup: string; params: string; attrsSuffix: string | null; attrsPlacement?: string | null }): string {
     if (attrs.markup === '') {
         return '';
     }
-    return attrs.markup + attrs.params + (attrs.attrsSuffix ? ` ${attrs.attrsSuffix}` : '');
+    if (!attrs.attrsSuffix) {
+        return attrs.markup + attrs.params;
+    }
+    const glued = attrs.markup + attrs.params + attrs.attrsSuffix;
+    return attrs.attrsPlacement === 'glued' && attrs.params !== '' && endLiteralOf(glued) === attrs.attrsSuffix
+        ? glued
+        : `${attrs.markup}${attrs.params} ${attrs.attrsSuffix}`;
 }
 
 /**

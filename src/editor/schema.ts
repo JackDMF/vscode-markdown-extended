@@ -65,7 +65,7 @@ export const SUFFIX_NODES: ReadonlySet<string> = new Set([
 
 /**
  * A top-level block's `{…}` literal, verbatim, and where it stood
- * (`AttrsPlacement` in `blocks.ts`: `end`, `line`, `blank`). Both `null` on a
+ * (`AttrsPlacement` in `blocks.ts`: `end`, `glued`, `line`, `blank`). Both `null` on a
  * block that has none; a nested block never carries one (`fidelity.ts`).
  */
 const suffixAttrs = {
