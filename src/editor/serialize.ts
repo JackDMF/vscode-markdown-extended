@@ -227,8 +227,11 @@ function escapeTrailingBang(st: StateInternals): void {
  * What prosemirror-markdown's CommonMark escaping does not cover and this
  * engine would otherwise read as syntax: an HTML tag or entity (`html: true`),
  * `==mark==`, `^sup^`, `++sidenote++`, `!!marginal note!!`, the sidebars'
- * `$`/`@` (every one, although the sidebar rule reads only those its
- * flanking allows as markers: `sidebarCanOpen`, `sidebarCanClose`), and an
+ * markers — every `$`, which VS Code's math reads after a letter too
+ * (`x$y$`), and an `@` where one could open (`sidebarCanOpen`: no ASCII letter
+ * or digit right before it, as far as the text being escaped shows — its first
+ * character is escaped either way; one that cannot open closes nothing, every
+ * one that could being escaped: `a@b.c` and `Text@` stay as written), and an
  * emoji shortcode. Each gets a CommonMark backslash escape, which every rule
  * respects because the escape is consumed before they see the character. One
  * alternative per syntax, joined under the `u` flag. An emoji shortcut is
@@ -240,7 +243,7 @@ const ESCAPE_EXTRA_PARTS: readonly string[] = [
     /=(?==)|(?<==)=/.source, // ==mark==
     /\+(?=\+)|(?<=\+)\+/.source, // ++sidenote++
     /!(?=!)|(?<=!)!/.source, // !!marginal note!!
-    /[$@^]/.source, // the sidebars' markers, ^sup^
+    /[$^]|(?<![A-Za-z0-9])@/.source, // `$` (a left sidebar, VS Code's math), ^sup^, an `@` that could open
     /:(?=[A-Za-z_+-][\w+-]*:)/.source, // an emoji shortcode
 ];
 const ESCAPE_EXTRA = new RegExp(ESCAPE_EXTRA_PARTS.join('|'), 'gu');
@@ -883,7 +886,10 @@ export class OrderedInlineState extends LibraryState {
     }
 
     esc(str: string, startOfLine = false): string {
-        const escaped = underscoreRunsEscaped(str, super.esc(str, startOfLine));
+        const library = super.esc(str, startOfLine);
+        // Inside a right sidebar every `@` closes it, the glued ones `ESCAPE_EXTRA` leaves too.
+        const closing = internals(this).notePart === 'right' ? library.replace(/(?<=[A-Za-z0-9])@/g, '\\@') : library;
+        const escaped = underscoreRunsEscaped(str, closing);
         if (!SHORTCUT_PRETEST.test(escaped)) {
             return escaped;
         }
