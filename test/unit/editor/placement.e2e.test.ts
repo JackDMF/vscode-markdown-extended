@@ -1164,6 +1164,33 @@ suite('Editor placement (e2e)', () => {
         await waitBar();
     });
 
+    test('r3-4 (wave 3 follow-up): a bar Esc dismissed is not drawn on the next refresh: no code actions asked for it', async function () {
+        this.timeout(20000);
+        const table = 'Alpha.\n\n| Kind | Where |\n| --- | --- |\n| first | second |\n\nAfter.\n';
+        await showDocument(table, 'second');
+        await clickBefore('first', 2);
+        await waitBar();
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BAR), false, 'hidden by Esc');
+        // No pointer's bar for the table either: the pointer away from it.
+        await page.mouse.move(1, 1);
+        const requests = async () => (await (editor as EditorPage).posted()).filter(m => m.type === 'actionsFor') as { requestId: number; blockIndex: number }[];
+        const asked = async () => (await requests()).length;
+        const before = await asked();
+        assert.ok(before > 0, 'the bar asked for the table\'s code actions as it showed');
+        // The host's answer: none. A question not answered yet is not asked again.
+        const last = (await requests())[before - 1];
+        await (editor as EditorPage).send({ type: 'actions', requestId: last.requestId, blockIndex: last.blockIndex, items: [] });
+        await delay(150);
+        // The host says every code action may be out of date: a bar that shows asks again.
+        await (editor as EditorPage).send({ type: 'invalidateActions' });
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BAR), false, 'still hidden');
+        assert.strictEqual(await asked(), before, 'nothing asked for a bar that would only be hidden');
+        await clickBefore('After', 1);
+    });
+
     // -- shots ----------------------------------------------------------------
 
     test('shots: every scenario light and dark at 1280 and 520', async function () {

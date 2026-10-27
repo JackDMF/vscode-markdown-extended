@@ -838,23 +838,11 @@ export class LayerSlot {
      * asking again is placed again where its anchor, size or frame changed.
      */
     request(claim: LayerClaim, opts: { force?: boolean } = {}): boolean {
-        if (this.destroyed) {
+        if (!this.wouldGrant(claim, opts)) {
             return false;
         }
         const current = this.occupant;
         const same = current !== null && current.key === claim.key && current.el === claim.el;
-        if (!same) {
-            if (claim.kind === 'hover' && current !== null && current.kind !== 'hover') {
-                return false;
-            }
-            if ((this.dismissed.has(claim.key) || this.suppressed) && !opts.force) {
-                return false;
-            }
-            // A field holds what its person typed: only a field, or a forced claim (Alt+Enter), takes its place.
-            if (current !== null && current.kind === 'field' && claim.kind !== 'field' && !opts.force) {
-                return false;
-            }
-        }
         this.dismissed.delete(claim.key);
         if (!same && current !== null && current.el !== claim.el) {
             this.occupant = null;
@@ -875,6 +863,29 @@ export class LayerSlot {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Whether `request` would take `claim` — its anchor aside: what an owner
+     * asks before it draws a layer (the bar's verbs ask the host for lenses
+     * and code actions) that would only be hidden again.
+     */
+    wouldGrant(claim: Pick<LayerClaim, 'kind' | 'key' | 'el'>, opts: { force?: boolean } = {}): boolean {
+        if (this.destroyed) {
+            return false;
+        }
+        const current = this.occupant;
+        if (current !== null && current.key === claim.key && current.el === claim.el) {
+            return true;
+        }
+        if (claim.kind === 'hover' && current !== null && current.kind !== 'hover') {
+            return false;
+        }
+        if ((this.dismissed.has(claim.key) || this.suppressed) && !opts.force) {
+            return false;
+        }
+        // A field holds what its person typed: only a field, or a forced claim (Alt+Enter), takes its place.
+        return current === null || current.kind !== 'field' || claim.kind === 'field' || opts.force === true;
     }
 
     /** The owner let go of `key` (it hid the layer itself). */

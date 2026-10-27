@@ -2036,16 +2036,20 @@ class ObjectToolbarView implements PluginView {
         } else if (isBlockObject(object) || sameObject(object, this.matured)) {
             this.cancelPending();
             this.matured = isBlockObject(object) ? null : object;
-            const presentation = this.present(object);
             this.forced = sameObject(object, this.forced) ? this.forced : null;
+            // The refusals that need no presentation first: it asks the host for lenses and code actions.
+            // One thing at a time: a non-empty selection has the bubble, not the caret's bar.
+            const refused = (!force && (this.slot.holds('bubble') || selectionWantsBubble(this.view)))
+                // Esc dismissed it, a row menu is open, a field holds the slot.
+                || (!this.selectionBar.editing && !this.slot.wouldGrant({ kind: 'bar', key: barKey('bar', object), el: this.selectionBar.el }, { force }));
+            const presentation = refused ? null : this.present(object);
             // Alt+Enter draws what a rest does not: the element's Attributes of Bold…, a breadcrumb of two bare parts (F6).
-            const keyed = this.forced !== null && (presentation.verbs.some(v => v.id === 'inline-attributes') || presentation.restless === true);
-            this.forced = keyed ? this.forced : null;
-            if (barless(object, presentation) && !keyed) {
-                // A heading's verbs are other extensions' lenses and actions; with none, no bar.
+            const keyed = presentation !== null && this.forced !== null && (presentation.verbs.some(v => v.id === 'inline-attributes') || presentation.restless === true);
+            this.forced = keyed || presentation === null ? this.forced : null;
+            if (presentation === null) {
                 this.hideBar(this.selectionBar);
-            } else if (!force && (this.slot.holds('bubble') || selectionWantsBubble(this.view))) {
-                // One thing at a time: a non-empty selection has the bubble, not the caret's bar.
+            } else if (barless(object, presentation) && !keyed) {
+                // A heading's verbs are other extensions' lenses and actions; with none, no bar.
                 this.hideBar(this.selectionBar);
             } else {
                 this.selectionBar.show(object, presentation);
@@ -2265,7 +2269,8 @@ class ObjectToolbarView implements PluginView {
         } else if (typingHold) {
             this.cue(this.hovered);
             this.hideBar(this.hoverBar);
-        } else if (current !== null && current.el !== this.hoverBar.el) {
+        } else if (!this.hoverBar.editing && !this.slot.wouldGrant({ kind: 'hover', key: barKey('hover', object), el: this.hoverBar.el })) {
+            // Another layer holds the slot, or a row menu is open: the cue, and no bar drawn only to be hidden.
             this.cue(this.hovered);
             this.hoverBar.hide();
         } else {

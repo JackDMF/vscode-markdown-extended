@@ -236,6 +236,8 @@ suite('Editor placement: the slot\'s state', () => {
         onFreed(listener: () => void): () => void;
         dismiss(key: string): void;
         rekeyAll(moves: ReadonlyMap<string, string | null>): void;
+        wouldGrant(claim: Pick<LayerClaim, 'kind' | 'key' | 'el'>, opts?: { force?: boolean }): boolean;
+        suppress(on: boolean): void;
         dismissedOf(prefix: string): string[];
     }
     const bare = (): Bare => {
@@ -279,6 +281,23 @@ suite('Editor placement: the slot\'s state', () => {
         assert.deepStrictEqual(slot.dismissedOf('sel@'), ['sel@26-29']);
         slot.rekeyAll(new Map([['sel@20-22', null]]));
         assert.strictEqual(slot.occupant?.key, 'sel@20-22', 'its owner\'s valid() ends it');
+    });
+
+    test('wave 3 follow-up: wouldGrant answers as request does, before anything is drawn', () => {
+        const slot = bare();
+        assert.strictEqual(slot.wouldGrant(claim('bar', 'bar@link@3')), true, 'an empty slot');
+        slot.dismiss('bar@link@3');
+        assert.strictEqual(slot.wouldGrant(claim('bar', 'bar@link@3')), false, 'dismissed');
+        assert.strictEqual(slot.wouldGrant(claim('bar', 'bar@link@3'), { force: true }), true, 'Alt+Enter');
+        const field = claim('field', 'field@3-3', false);
+        slot.occupant = field;
+        assert.strictEqual(slot.wouldGrant(claim('bar', 'bar@table@9')), false, 'a field holds the slot');
+        assert.strictEqual(slot.wouldGrant(claim('hover', 'hover@table@9')), false);
+        assert.strictEqual(slot.wouldGrant(claim('field', 'field@5-5')), true, 'a field takes a field\'s place');
+        assert.strictEqual(slot.wouldGrant(field), true, 'the occupant asking again');
+        slot.occupant = null;
+        slot.suppress(true);
+        assert.strictEqual(slot.wouldGrant(claim('bubble', 'sel@1-4')), false, 'a row menu is open');
     });
 
     test('r2-8: a claim whose anchor is gone on an empty slot announces nothing; one that displaced an occupant does', async () => {
