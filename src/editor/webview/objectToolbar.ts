@@ -92,7 +92,7 @@ import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
 import { Said, Tip, plainTip, said, saidText, tipText, value } from '../tips';
 import { Tooltips } from './tooltip';
-import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, caretRect, placeMenu, rangeAnchor, revealField } from './placement';
+import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, blockFieldAnchor, caretRect, placeMenu, rangeAnchor, revealField } from './placement';
 
 /**
  * The opening line the save writes for a code block (`savedOpeningLine`), once
@@ -210,7 +210,7 @@ export interface Verb {
     target?: { from: number; to: number };
     /**
      * The block its field edits, when the field stands at that block and not at the bar's object (#8): a
-     * breadcrumb part's List under the list, an admonition's heading under the heading (`blockAnchor`).
+     * breadcrumb part's List above the list, an admonition's heading above the heading (`blockFieldAnchor`).
      */
     anchorBlock?: AttributesTarget;
     /** On a two-part bar, it acts on the outer part (an admonition's Type▾): never the first focus (`firstFocus`, #8). */
@@ -1729,8 +1729,8 @@ class ObjectToolbarView implements PluginView {
                 }
                 const size = view.state.doc.content.size;
                 if (block !== undefined) {
-                    // Under the block the field edits, as its own bar would stand (#8): the list under the list, the heading under it.
-                    return blockAnchor(view, block);
+                    // At the block the field edits (#8): above it, its lens row with it (`blockFieldAnchor`).
+                    return blockFieldAnchor(view, block);
                 }
                 if (target !== undefined) {
                     return rangeAnchor(view, Math.min(target.from, size), Math.min(target.to, size));
@@ -1740,6 +1740,7 @@ class ObjectToolbarView implements PluginView {
             valid: () => bar.editing,
             hidden: () => this.barHidden(bar, 'displaced'),
             fit: (room, fresh) => bar.fitField(room, fresh),
+            prefer: block === undefined ? undefined : () => 'above',
         }, { force: true });
     }
 
@@ -2258,7 +2259,6 @@ class ObjectToolbarView implements PluginView {
             || focusPlace(this.view).kind === 'control'
             ? null
             : this.present(object);
-        const current = this.slot.current;
         // A dismissed pointer's bar is not coming: no cue promises it.
         const dismissed = object !== null && this.slot.dismissedOf('hover@').includes(barKey('hover', object));
         // Typing hid the caret's bar and its rest is to bring it back: the pointer's bar waits too, at the cue.

@@ -36,7 +36,7 @@ import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
-import { LayerClaim, LayerSlot, Rect, REST_MS, blockAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
+import { LayerClaim, LayerSlot, Rect, REST_MS, blockFieldAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
 import { dismissRefusal, showHint, showRefusal } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
@@ -2191,10 +2191,10 @@ class ToolbarView implements PluginView {
             showHint(this.view, target.refusal, 'refusal');
             return;
         }
-        // At the block's left edge, where its own bar stands (`blockAnchor`, the bar's own rule, read for the block as it is now) — not at the caret, which a menu leaves wherever it was.
+        // At the block's left edge, above the block (`blockFieldAnchor`, read for the block as it is now) — not at the caret, which a menu leaves wherever it was.
         // A copy, followed while the field is open (#8 F7): the commit writes to it and the field stands at it, a resync above or not.
         const block = { ...target };
-        this.openFieldBar('block-attributes', block.name, 'block-attributes', attributesStep(this.view, block), undefined, () => blockAnchor(this.view, block), part === 'outer');
+        this.openFieldBar('block-attributes', block.name, 'block-attributes', attributesStep(this.view, block), undefined, () => blockFieldAnchor(this.view, block), part === 'outer');
     }
 
     /**
@@ -2413,6 +2413,8 @@ class ToolbarView implements PluginView {
                 }
             },
             fit: (room, fresh) => (this.fieldBar?.bar === bar ? this.fieldBar.row.fit(room, fresh) : undefined),
+            // A block's field (Attributes…): above the block, as from its bar.
+            prefer: anchorAt ? () => 'above' : undefined,
         }, { force: true });
         if (!granted) {
             this.closeFieldBar();

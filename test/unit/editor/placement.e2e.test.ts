@@ -351,6 +351,56 @@ suite('Editor placement (e2e)', () => {
         assert.ok(!overlap(bar, lens), 'not over the lens row');
     });
 
+    test('s6l (wave 3 follow-up): in a requirement heading mid-window, a link\'s bar keeps off its lens row, the heading\'s Attributes… field stands above both; a plain heading\'s field stands above it', async function () {
+        this.timeout(20000);
+        const filler = Array.from({ length: 10 }, (_, i) => `Paragraph ${i + 1}.`).join('\n\n');
+        const after = Array.from({ length: 12 }, (_, i) => `Paragraph ${i + 11}.`).join('\n\n');
+        await showDocument(`${filler}\n\n## FRS-RXE-041 See [the limits](https://example.com/l) of every floating layer\n\nThe paragraph under the title says what the requirement asks for.\n\n## A plain heading\n\nIts paragraph.\n\n${after}\n`, 'FRS-RXE-041');
+        const rows: LensRow[] = [{ blockIndex: 10, items: [{ id: '1.0', title: '$(check) 3 tests passing' }, { id: '1.1', title: 'Implemented' }] }];
+        await (editor as EditorPage).send({ type: 'lenses', version, blocks: 26, rows });
+        await page.waitForSelector('.mep-lens-row', { timeout: 2000 });
+        await page.evaluate(() => {
+            const h = (document.querySelector('.ProseMirror > h2') as HTMLElement).getBoundingClientRect();
+            window.scrollBy(0, h.top - window.innerHeight / 3);
+        });
+        await delay(100);
+        await clickBefore('limits', 2);
+        await waitBar();
+        const bar = await box(BAR);
+        const lens = await box('.mep-lens-row');
+        assert.ok(bar && lens);
+        assert.ok(!overlap(bar, lens), `the link's bar not over the lens row: ${JSON.stringify({ bar, lens })}`);
+        await shot(page, 'lens-row-inline-bar-1280.png');
+
+        const openAttributes = async () => {
+            await page.click('.mep-toolbar .mep-menu-face[data-menu="formatting"]');
+            await page.waitForSelector('.mep-menu[data-menu="formatting"]:not([hidden])', { timeout: 3000 });
+            await page.click('.mep-menu [data-action="block-attributes"]');
+            await page.waitForSelector(`${ROW_FIELD} .mep-inline-field`, { timeout: 2000 });
+            await delay(50);
+            return box(ROW_FIELD);
+        };
+        await clickBefore('FRS-RXE-041', 3);
+        const field = await openAttributes();
+        assert.ok(field);
+        assert.ok(!overlap(field, lens), `the heading's field not over its lens row: ${JSON.stringify({ field, lens })}`);
+        assert.ok(field.bottom <= lens.top + 1, `above the heading and its lens row: ${JSON.stringify({ field, lens })}`);
+        await shot(page, 'lens-row-heading-field-1280.png');
+        await page.keyboard.press('Escape');
+        await delay(100);
+
+        await clickBefore('plain heading', 2);
+        const plain = await openAttributes();
+        const heading = await page.evaluate(() => {
+            const r = (document.querySelectorAll('.ProseMirror > h2')[1] as HTMLElement).getBoundingClientRect();
+            return { left: r.left, top: r.top };
+        });
+        assert.ok(plain);
+        assert.ok(plain.bottom <= heading.top - GAP + 2, `a plain heading's field above it: ${JSON.stringify({ plain, heading })}`);
+        await shot(page, 'heading-field-above-1280.png');
+        await page.keyboard.press('Escape');
+    });
+
     test('s3a/s3b: a mouse selection in a note shows the bubble alone, below it; collapsed, the note\'s bar after a rest, below its line with text on both sides (#15 review 2), the bubble gone', async function () {
         this.timeout(15000);
         await s3a();
@@ -444,18 +494,18 @@ suite('Editor placement (e2e)', () => {
         assert.ok(bubble.top >= last.bottom + GAP - 1, `below the last line: ${JSON.stringify({ bubble, last })}`);
     });
 
-    test('s4: the row\'s Attributes… opens at its block\'s left edge, under the block; Insert → Link… at the caret, under its line', async function () {
+    test('s4: the row\'s Attributes… opens at its block\'s left edge, above the block; Insert → Link… at the caret, under its line', async function () {
         this.timeout(15000);
         await s4();
         const field = await box(ROW_FIELD);
-        // A block's attributes field stands where the block's own bar does, whichever route opened it (wave 2 · #13, the build critique).
+        // A block's attributes field stands above the block, whichever route opened it (Daniel, 2026-10-27: under it, it covered the next block's first line).
         const quote = await page.evaluate(() => {
             const r = (document.querySelector('.ProseMirror blockquote') as HTMLElement).getBoundingClientRect();
-            return { left: r.left, bottom: r.bottom };
+            return { left: r.left, top: r.top };
         });
         assert.ok(field);
         assert.ok(Math.abs(field.left - quote.left) <= 2, `at the block's left edge: ${JSON.stringify({ field, quote })}`);
-        assert.ok(Math.abs(field.top - (quote.bottom + GAP)) <= 2, `under the block: ${JSON.stringify({ field, quote })}`);
+        assert.ok(Math.abs(field.bottom - (quote.top - GAP)) <= 2, `above the block: ${JSON.stringify({ field, quote })}`);
         await page.keyboard.press('Escape');
         await delay(100);
 

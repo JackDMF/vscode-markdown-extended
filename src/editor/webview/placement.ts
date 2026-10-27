@@ -410,6 +410,24 @@ export function blockAnchor(view: EditorView, target: AttributesTarget): Rect | 
 }
 
 /**
+ * Where a block's attributes field stands: above the block (Daniel,
+ * 2026-10-27 — below, it covered the next block's first line; a heading's top
+ * margin takes most of it above) — and above its lens row, which is the
+ * block's own; below where above has no room (`placeStacked`, `prefer`).
+ * The block's anchor (`blockAnchor`) with its top raised over that row.
+ */
+export function blockFieldAnchor(view: EditorView, target: AttributesTarget): Rect | null {
+    const anchor = blockAnchor(view, target);
+    const current = currentTarget(view.state, target);
+    const dom = current === null ? null : view.nodeDOM(current.pos);
+    const row = dom instanceof Element && dom.parentElement === view.dom ? dom.previousElementSibling : null;
+    if (anchor === null || row === null || !row.classList.contains('mep-lens-row')) {
+        return anchor;
+    }
+    return { ...anchor, top: Math.min(anchor.top, row.getBoundingClientRect().top) };
+}
+
+/**
  * The window scrolled for a field of `height` about to open under `block`
  * (#8: an outer part's — the List's under a list far below the caret): when
  * the field would stand past the window's bottom, or the block's last line

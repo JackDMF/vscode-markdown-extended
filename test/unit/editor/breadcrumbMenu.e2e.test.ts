@@ -72,7 +72,8 @@ suite('Editor breadcrumb: the Block type menu (e2e)', () => {
         assert.strictEqual(await page.$eval(`${ROW_FIELD} .mep-object-label`, el => el.textContent), 'List · Attributes');
         const field = await rectOf(page, ROW_FIELD);
         const list = await blockRect(page, 'Confirm the sync', 'ul');
-        assert.ok(field.top >= list.bottom - 1, `under the list: field ${JSON.stringify(field)}, list ${JSON.stringify(list)}`);
+        // A block's field stands above the block (Daniel, 2026-10-27).
+        assert.ok(field.bottom <= list.top + 1, `above the list: field ${JSON.stringify(field)}, list ${JSON.stringify(list)}`);
 
         await page.keyboard.type('.x');
         await page.keyboard.press('Enter');
