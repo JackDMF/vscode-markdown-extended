@@ -759,6 +759,11 @@ function sameRect(a: Rect, b: Rect): boolean {
     return Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5 && Math.abs(a.right - b.right) < 0.5 && Math.abs(a.bottom - b.bottom) < 0.5;
 }
 
+/** Whether `a` and `b` are the same size: one is the other moved. */
+function sameSize(a: Rect, b: Rect): boolean {
+    return Math.abs((a.right - a.left) - (b.right - b.left)) < 0.5 && Math.abs((a.bottom - a.top) - (b.bottom - b.top)) < 0.5;
+}
+
 function sameFrame(a: Frame, b: Frame): boolean {
     return Math.abs(a.columnLeft - b.columnLeft) < 0.5 && Math.abs(a.layerEdge - b.layerEdge) < 0.5
         && Math.abs(a.ceiling - b.ceiling) < 0.5 && Math.abs(a.floor - b.floor) < 0.5 && Math.abs((a.columnRight ?? 0) - (b.columnRight ?? 0)) < 0.5;
@@ -1093,10 +1098,24 @@ export class LayerSlot {
             && prev.avoid.length === avoid.length && prev.avoid.every((r, i) => sameRect(r, avoid[i]))) {
             return;
         }
+        const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, avoid, prefer: claim.prefer?.(), atAnchor: claim.kind === 'bubble' };
+        if (again && prev.limited !== null && this.written?.el === claim.el && sameSize(prev.anchor, anchor)
+            && Math.abs(prev.width - width) < 0.5 && Math.abs(prev.height - height) < 0.5 && sameFrame(prev.frame, frame)) {
+            // A scroll: the layer kept short of margin content last time, its anchor only moved. Placed in that
+            // short frame as it is fitted now; kept where the same content limits it to the same edge on the
+            // same side — else fitted wide and placed again below.
+            const short: Frame = { ...frame, layerEdge: prev.limited };
+            const p = placeLayer(claim.el, anchor, { ...opts, frame: short });
+            // Probed out to the wide edge: the short layer's own band ends a gap before what kept it short.
+            const limited = p.side === this.written.at.side ? this.marginLimit(p, claim.el, anchor, frame, wide, wide.layerEdge) : null;
+            if (limited !== null && Math.abs(limited - prev.limited) < 0.5) {
+                this.write(claim, p, anchor, frame, avoid, prev.limited, appeared);
+                return;
+            }
+        }
         if (firstEdge !== wide.layerEdge) {
             fit(wide, false);
         }
-        const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, avoid, prefer: claim.prefer?.(), atAnchor: claim.kind === 'bubble' };
         let p = placeLayer(claim.el, anchor, { ...opts, frame: wide });
         let limited = this.marginLimit(p, claim.el, anchor, frame, wide);
         if (limited !== null && opts.atAnchor && frame.columnRight !== undefined && anchor.left >= frame.columnRight && p.side === 'above') {
@@ -1112,6 +1131,11 @@ export class LayerSlot {
             fit(short, false);
             p = placeLayer(claim.el, anchor, { ...opts, frame: short });
         }
+        this.write(claim, p, anchor, frame, avoid, limited, appeared);
+    }
+
+    /** The occupant placed at `p`: what it was placed from kept (`Placed`), the pointer refused where it moved. */
+    private write(claim: LayerClaim, p: Placement, anchor: Rect, frame: Frame, avoid: Rect[], limited: number | null, appeared: boolean): void {
         // Compared where it is written: a layer that scrolls with the text has not moved.
         const base = this.mount.getBoundingClientRect();
         const at: Placement = { x: p.x - base.left, y: p.y - base.top, side: p.side };
@@ -1134,13 +1158,13 @@ export class LayerSlot {
      * its subject at `anchor` passed over) less `GAP`, never left of the
      * column's right edge.
      */
-    private marginLimit(p: Placement, el: HTMLElement, anchor: Rect, frame: Frame, wide: Frame): number | null {
+    private marginLimit(p: Placement, el: HTMLElement, anchor: Rect, frame: Frame, wide: Frame, reach = p.x + el.offsetWidth): number | null {
         const column = frame.columnRight ?? frame.layerEdge;
         if (p.x + el.offsetWidth <= column + 0.5) {
             return null;
         }
-        // The band the layer takes past the column, grown by `GAP`.
-        const band = { left: Math.max(column, p.x - GAP), right: Math.min(wide.layerEdge, p.x + el.offsetWidth) + GAP, top: p.y - GAP, bottom: p.y + el.offsetHeight + GAP };
+        // The band the layer takes past the column (or out to `reach`), grown by `GAP`.
+        const band = { left: Math.max(column, p.x - GAP), right: Math.min(wide.layerEdge, reach) + GAP, top: p.y - GAP, bottom: p.y + el.offsetHeight + GAP };
         this.mount.classList.add(PROBING_CLASS);
         let left: number | null;
         try {
