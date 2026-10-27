@@ -540,6 +540,8 @@ class ToolbarView implements PluginView {
     private pointerHeld = false;
     /** Watches the row and its status for a size that changes what fits in it (`layoutRow`). */
     private rowSize: ResizeObserver | undefined;
+    /** The row's and the count's widths as `rowSize` last reported them; measured while it has not (`rowLayoutKey`). */
+    private reportedWidths = new Map<Element, number>();
     /** "…": the menu that holds what does not fit in the row (`layoutRow`), its face, and the group the face stands in. */
     private more!: Menu;
     private moreFace!: HTMLElement;
@@ -693,9 +695,15 @@ class ToolbarView implements PluginView {
         // Export: laid out again when either changes (`layoutRow`), and when a
         // font has loaded, which changes every control's width.
         if (typeof ResizeObserver !== 'undefined') {
-            this.rowSize = new ResizeObserver(() => this.layoutRow());
+            this.rowSize = new ResizeObserver(entries => {
+                for (const entry of entries) {
+                    this.reportedWidths.set(entry.target, entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width);
+                }
+                this.layoutRow();
+            });
             this.rowSize.observe(this.row);
             this.rowSize.observe(this.row.querySelector('.mep-row-status') as Element);
+            this.rowSize.observe(this.row.querySelector('.mep-row-said') as Element);
         }
         if (typeof document.fonts !== 'undefined') {
             this.listen(document.fonts, 'loadingdone', () => {
@@ -996,11 +1004,16 @@ class ToolbarView implements PluginView {
         }
     }
 
-    /** What the row's layout depends on, besides the controls themselves: its width, the count, the block type's label, the lock, the running export. */
+    /**
+     * What the row's layout depends on, besides the controls themselves: its width, the count, the block type's label, the lock, the running export.
+     * The widths as `rowSize` reported them, so a transaction forces no layout; measured only before its first report.
+     */
     private rowLayoutKey(): string {
         const said = this.row.querySelector<HTMLElement>('.mep-row-said');
+        const rowWidth = this.reportedWidths.get(this.row) ?? this.row.clientWidth;
+        const saidWidth = said === null ? 0 : this.reportedWidths.get(said) ?? said.offsetWidth;
         const blockType = this.rowMenus.get('block-type')?.face?.textContent ?? '';
-        return [this.row.clientWidth, said?.offsetWidth ?? 0, blockType, this.lockRole ?? '', this.host.exporting() ?? ''].join('|');
+        return [rowWidth, saidWidth, blockType, this.lockRole ?? '', this.host.exporting() ?? ''].join('|');
     }
 
     /** `control` back in the row, its entry in "…" hidden; a menu is top-level again. */
