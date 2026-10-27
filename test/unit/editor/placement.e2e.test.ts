@@ -587,7 +587,7 @@ suite('Editor placement (e2e)', () => {
         assert.ok(bar.top >= line.bottom - 1 && hint.bottom <= line.top + 1, `the bar under the line, the hint above it: ${JSON.stringify({ bar, hint, line })}`);
     });
 
-    test('s7b: with the table\'s bar below the table, the hint flips above the caret\'s line, and a keystroke takes it', async function () {
+    test('s7b: with the table\'s bar below the table, the hint flips above the table — over none of its rows — and a keystroke takes it', async function () {
         this.timeout(15000);
         await s7b();
         const lane = await laneEdge();
@@ -598,6 +598,9 @@ suite('Editor placement (e2e)', () => {
         assert.ok(bar.right <= lane - GAP + 1 && hint.right <= lane - GAP + 1, `short of the lane: ${JSON.stringify({ bar, hint, lane })}`);
         assert.ok(!overlap(bar, hint), `the hint keeps off the bar: ${JSON.stringify({ bar, hint })}`);
         assert.ok(hint.bottom <= line.top + 1, `the hint above the caret's line: ${JSON.stringify({ hint, line })}`);
+        // Wave 3 follow-up: above the caret's line it covered the header row; it stands above the table.
+        const table = await box('.ProseMirror table');
+        assert.ok(table && hint.bottom <= table.top + 1, `above the table, over none of its rows: ${JSON.stringify({ hint, table })}`);
         assert.strictEqual(await page.$eval('.mep-hint', el => el.hasAttribute('data-flipped')), true);
         await page.keyboard.type('x');
         await delay(100);
