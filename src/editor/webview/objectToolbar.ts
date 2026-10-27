@@ -64,7 +64,7 @@ import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
-import { clearPendingRange, showPendingRange } from './pendingRange';
+import { clearPendingRange, pendingRangeId, showPendingRange } from './pendingRange';
 import { FocusPlace, focusPlace } from './focusPlace';
 import { refocusingAfterComposition } from './sourceBlock';
 import {
@@ -1676,9 +1676,12 @@ class ObjectToolbarView implements PluginView {
             fieldDropped: () => {
                 this.fieldGone();
                 this.unreveal = null;
+                // Dropped in the view's update, where nothing may be dispatched: cleared after it — only
+                // this field's range, not one a field that took the slot meanwhile drew (the row's Link…).
+                const dropped = pendingRangeId(this.view.state);
                 setTimeout(() => {
                     if (!this.destroyed) {
-                        clearPendingRange(this.view);
+                        clearPendingRange(this.view, dropped);
                     }
                 }, 0);
             },

@@ -15,7 +15,11 @@ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 interface Pending {
     from: number;
     to: number;
+    /** Which field's range it is: kept through the mapping, so a late clear of a closed field's range leaves the next one's. */
+    id: number;
 }
+
+let lastId = 0;
 
 const key = new PluginKey<Pending | null>('mepPendingRange');
 
@@ -36,7 +40,7 @@ export function pendingRangePlugin(): Plugin {
                 }
                 const from = tr.mapping.map(value.from, 1);
                 const to = tr.mapping.map(value.to, -1);
-                return from < to ? { from, to } : null;
+                return from < to ? { from, to, id: value.id } : null;
             },
         },
         props: {
@@ -55,12 +59,22 @@ export function pendingRange(state: EditorState): Pending | null {
 
 /** Draw `from`–`to` as what the open field acts on; an empty range draws nothing. */
 export function showPendingRange(view: EditorView, from: number, to: number): void {
-    view.dispatch(view.state.tr.setMeta(key, { set: from < to ? { from, to } : null }).setMeta('addToHistory', false));
+    view.dispatch(view.state.tr.setMeta(key, { set: from < to ? { from, to, id: ++lastId } : null }).setMeta('addToHistory', false));
 }
 
-/** The field closed: nothing is pending any more. */
-export function clearPendingRange(view: EditorView): void {
-    if (key.getState(view.state)) {
+/** Which range is drawn now (`clearPendingRange`'s `only`); `null` for none. */
+export function pendingRangeId(state: EditorState): number | null {
+    return key.getState(state)?.id ?? null;
+}
+
+/**
+ * The field closed: nothing is pending any more. With `only`, the range of
+ * that field (`pendingRangeId`), cleared late: a range another field drew
+ * since stays.
+ */
+export function clearPendingRange(view: EditorView, only?: number | null): void {
+    const range = key.getState(view.state);
+    if (range && (only === undefined || range.id === only)) {
         view.dispatch(view.state.tr.setMeta(key, { set: null }).setMeta('addToHistory', false));
     }
 }
