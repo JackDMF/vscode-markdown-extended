@@ -363,7 +363,8 @@ img.mep-pending-range {
     vertical-align: 1px;
     white-space: nowrap;
     color: var(--vscode-descriptionForeground, GrayText);
-    border: 1px dashed var(--vscode-editorWidget-border, var(--vscode-contrastBorder, GrayText));
+    /* The text's own muted colour: the widget border measured 1.7:1 in Light Modern, under the 3:1 a boundary needs (AC15). */
+    border: 1px dashed var(--vscode-descriptionForeground, GrayText);
     border-radius: 3px;
     user-select: none;
 }
