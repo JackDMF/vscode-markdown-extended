@@ -9,7 +9,7 @@ import { DEFAULT_FENCE, fenceOf, savedFence, savedOpeningLine } from './fences';
 import { Environment, Token } from '../@types/markdown-it';
 import { AttrsCut, attrsCutsIn, attrsGivenTo } from '../plugin/markdownItAttrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
-import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
+import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema, footnoteSpelling } from './schema';
 import { parseDocument } from './parse';
 import { inPlaceEnv } from './footnoteEngine';
 import { NOTE_CLOSE_TOKENS, NOTE_OPEN_TOKENS } from './blocks';
@@ -1227,6 +1227,11 @@ function inlineModel(parent: Node): string {
             parts.push(`${marks}emoji(${JSON.stringify(child.attrs.source)})`);
             return;
         }
+        if (child.type.name === 'footnote_ref') {
+            // A reference by its spelling: a label read back as another, or as text, is not this one.
+            parts.push(`${marks}footnote_ref(${JSON.stringify(footnoteSpelling(child))})`);
+            return;
+        }
         parts.push(child.type.name === 'hard_break' ? 'hard_break' : `${marks}${child.type.name}(${inlineModel(child)})`);
     });
     flush();
@@ -1262,11 +1267,25 @@ class EditorMarkdownSerializer extends MarkdownSerializer {
 
 type NodeSerializers = ConstructorParameters<typeof MarkdownSerializer>[0];
 
+/**
+ * Whether what is written next stands right after a footnote reference's
+ * `[^label]` (child `index` of `parent` follows one, and no mark's delimiter
+ * came between): a `(` there would make the two a link.
+ */
+function afterFootnoteLabel(st: StateInternals, parent: Node, index: number): boolean {
+    const before = index > 0 ? parent.child(index - 1) : null;
+    return before?.type.name === 'footnote_ref' && before.attrs.label !== null && st.out.endsWith(`]${HOLD_CLOSE}`);
+}
+
 /** The inline node serializers, shared by the block serializer and the inline-only one. */
 const inlineNodes: NodeSerializers = {
-    text(state, node) {
+    text(state, node, parent, index) {
         const text = (node.text ?? '').replace(HOLD_RE, '');
         const st = internals(state);
+        if (afterFootnoteLabel(st, parent, index) && text.startsWith('(')) {
+            // `[^x](u)` is a link to the engine, whose link rule runs before the footnote's.
+            state.write('\\');
+        }
         if (st.notePart === undefined || st.inAutolink) {
             state.text(text, !st.inAutolink);
             return;
@@ -1297,6 +1316,11 @@ const inlineNodes: NodeSerializers = {
         state.write();
         atomCollector?.push({ node, at: internals(state).out.length + HOLD_OPEN.length });
         state.text(HOLD_OPEN + writtenAtom(node.attrs.source as string, internals(state)) + HOLD_CLOSE, false);
+    },
+    footnote_ref(state, node) {
+        // Its spelling, held on one line and never escaped: `[^label]` reads as the reference while the
+        // document defines the label (`readBackEnv`), `^[…]` as the inline footnote it was.
+        state.text(HOLD_OPEN + footnoteSpelling(node) + HOLD_CLOSE, false);
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
@@ -1533,6 +1557,11 @@ export function emojiBeyondAtoms(block: Node): number {
  * origin (`noteRefusal`).
  */
 export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin, causes = true): Said | null {
+    return withFootnoteLabels(doc, () => unwritableInNoteOf(doc, from, to, origin, causes));
+}
+
+/** `unwritableInNote`, with the document's footnote labels set (`withFootnoteLabels`). */
+function unwritableInNoteOf(doc: Node, from: number, to: number, origin: EditOrigin | undefined, causes: boolean): Said | null {
     let reason: Said | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
@@ -2855,10 +2884,60 @@ function ownedLiterals(tokens: readonly Token[], expected: ReadonlyMap<string, r
 
 /**
  * The environment the page reads back what it writes in: footnote definitions
- * kept where they are written, as the host's parse keeps them (`inPlaceEnv`).
+ * kept where they are written, as the host's parse keeps them, and the labels
+ * the document defines (`currentFootnoteLabels`), so a part read on its own
+ * reads `[^x]` as the reference it is in the document (`inPlaceEnv`).
  */
 function readBackEnv(): Environment {
-    return inPlaceEnv();
+    return inPlaceEnv(undefined, currentFootnoteLabels);
+}
+
+/** The labels the document being judged or written defines (`withFootnoteLabels`); none outside such a call. */
+let currentFootnoteLabels: readonly string[] = [];
+/** `currentFootnoteLabels` as part of a cache key: a text reads otherwise under other labels. */
+let footnoteLabelsKey = '';
+
+/** Each document's footnote labels (`footnoteLabelsOf`), sorted. */
+const labelsCache = new WeakMap<Node, readonly string[]>();
+
+/**
+ * Every label `doc` defines, sorted: each footnote entry's and each a source
+ * block defines (`raw_block.footnotes`). What a reference in it reads by.
+ */
+export function footnoteLabelsOf(doc: Node): readonly string[] {
+    let labels = labelsCache.get(doc);
+    if (labels === undefined) {
+        const found = new Set<string>();
+        doc.forEach(node => {
+            if (node.type.name === 'footnote_entry') {
+                found.add(node.attrs.label as string);
+            }
+            for (const label of (node.attrs.footnotes as { defines: string[] } | null | undefined)?.defines ?? []) {
+                found.add(label);
+            }
+        });
+        labels = [...found].sort();
+        labelsCache.set(doc, labels);
+    }
+    return labels;
+}
+
+/**
+ * `fn`, with the parts it reads back read with the footnote labels `doc`
+ * defines (`readBackEnv`): what writes or judges a document's text — the save,
+ * the edit filter, a literal's read-back — runs in one. The labels before are
+ * put back after, so a nested call leaves its caller's.
+ */
+export function withFootnoteLabels<T>(doc: Node, fn: () => T): T {
+    const before = { labels: currentFootnoteLabels, key: footnoteLabelsKey };
+    currentFootnoteLabels = footnoteLabelsOf(doc);
+    footnoteLabelsKey = currentFootnoteLabels.join('\u0000');
+    try {
+        return fn();
+    } finally {
+        currentFootnoteLabels = before.labels;
+        footnoteLabelsKey = before.key;
+    }
 }
 
 /**
@@ -3555,7 +3634,7 @@ function textKey(text: string): string {
  * reads as it reads in the document. Remembered by a digest of the three texts.
  */
 export function seamHolds(leader: string, separator: string, follower: string): boolean {
-    const key = `${textKey(leader)}|${JSON.stringify(separator)}|${textKey(follower)}`;
+    const key = `${textKey(leader)}|${JSON.stringify(separator)}|${textKey(follower)}|${textKey(footnoteLabelsKey)}`;
     const known = seamCache.get(key);
     if (known !== undefined) {
         seamCache.delete(key);
@@ -3779,6 +3858,9 @@ function readItems(textblock: Node): ReadItem[] {
             } else if (name === 'wiki_embed') {
                 // By the name it reads as: the writer encodes what its place needs (`&#96;`, `\|`).
                 out.push({ key: `${path}|${name}(${plainWikiEmbed(String(child.attrs.source))})`, marks });
+            } else if (name === 'footnote_ref') {
+                // By its spelling: `[^x]` read as text, or as `[^y]`, is not the reference shown.
+                out.push({ key: `${path}|${name}(${footnoteSpelling(child)})`, marks });
             } else if (child.isLeaf) {
                 out.push({ key: `${path}|${name}(${String(child.attrs.source ?? '')})`, marks });
             } else {
@@ -4118,10 +4200,12 @@ let plainDefinition: { from: InlineEngineDefinition; plain: InlineEngineDefiniti
  * choice of mark order (`readsBack`).
  */
 function comparisonDoc(text: string): Node {
-    const known = comparisonCache.get(text);
+    // Under other footnote labels a text reads otherwise (`readBackEnv`).
+    const key = `${footnoteLabelsKey}\u0001${text}`;
+    const known = comparisonCache.get(key);
     if (known !== undefined) {
-        comparisonCache.delete(text);
-        comparisonCache.set(text, known);
+        comparisonCache.delete(key);
+        comparisonCache.set(key, known);
         return known;
     }
     const definition = comparisonDefinition();
@@ -4131,15 +4215,15 @@ function comparisonDoc(text: string): Node {
     if (comparisonCache.size >= UNIT_READ_CACHE_SIZE) {
         comparisonCache.delete(comparisonCache.keys().next().value as string);
     }
-    comparisonCache.set(text, doc);
+    comparisonCache.set(key, doc);
     return doc;
 }
 
-/** What `comparisonDoc` read, by the text. */
+/** What `comparisonDoc` read, by the footnote labels and the text. */
 const comparisonCache = new Map<string, Node>();
 
-/** The last text `unitTokens` parsed, and its tokens: a part's literals and its comparison ask one after the other. */
-let lastTokens: { text: string; tokens: Token[] } | null = null;
+/** The last text `unitTokens` parsed, under which footnote labels, and its tokens: a part's literals and its comparison ask one after the other. */
+let lastTokens: { text: string; labels: string; tokens: Token[] } | null = null;
 
 /**
  * `text` with a line end, as `comparisonDoc` parses it, parsed by the page's
@@ -4148,8 +4232,8 @@ let lastTokens: { text: string; tokens: Token[] } | null = null;
  * holds a `{` is parsed once, not once per read.
  */
 function unitTokens(text: string): Token[] {
-    if (lastTokens?.text !== text) {
-        lastTokens = { text, tokens: attrsEngineFor(currentInlineDefinition()).parse(`${text}\n`, readBackEnv()) };
+    if (lastTokens?.text !== text || lastTokens.labels !== footnoteLabelsKey) {
+        lastTokens = { text, labels: footnoteLabelsKey, tokens: attrsEngineFor(currentInlineDefinition()).parse(`${text}\n`, readBackEnv()) };
     }
     return lastTokens.tokens;
 }
@@ -4168,8 +4252,10 @@ let verdictCache = new WeakMap<Node, { key: string; verdict: UnitVerdict | null 
  * node with the text.
  */
 function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
+    // Under other footnote labels the part reads otherwise (`readBackEnv`).
+    const key = `${unit.key}\u0001${footnoteLabelsKey}`;
     const known = verdictCache.get(unit.anchor);
-    if (known !== undefined && known.key === unit.key) {
+    if (known !== undefined && known.key === key) {
         return known.verdict;
     }
     let verdict: UnitVerdict | null;
@@ -4181,7 +4267,7 @@ function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
         console.error('Markdown Extended: the editor could not read a part of the document back', error);
         verdict = { lost: { literal: null, at: unit.textblocks[0]?.node ?? unit.anchor, cause: { kind: 'unread', noun: '' } }, mismatch: null };
     }
-    verdictCache.set(unit.anchor, { key: unit.key, verdict });
+    verdictCache.set(unit.anchor, { key, verdict });
     return verdict;
 }
 
@@ -4692,6 +4778,11 @@ export interface SerializedLayout {
  * (`withReadEmoji`); the position map asks without it, for the page as it is.
  */
 export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions, save = true): SerializedLayout {
+    return withFootnoteLabels(parsed.doc, () => layoutOf(parsed, options, save));
+}
+
+/** `serializeLayout`, with the document's footnote labels set (`withFootnoteLabels`). */
+function layoutOf(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions, save: boolean): SerializedLayout {
     const { doc, eol, tail } = parsed;
     const serializer = blockSerializer(options);
     const blocks: BlockSpan[] = [];

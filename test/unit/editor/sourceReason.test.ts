@@ -20,7 +20,6 @@ suite('Editor source block reason', () => {
         assert.deepStrictEqual(raw, [
             ['[[toc]]', 'table of contents'],
             ['Setext heading', 'setext heading'],
-            ['A sentence with a footnote.[^first]', 'has a footnote'],
             ['[^first]: The footnote body.', 'footnote text'],
             ['Term', 'definition list'],
             ['- [ ] An open task', 'task list'],

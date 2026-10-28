@@ -87,6 +87,11 @@ const SENTENCES: readonly [RegExp, string][] = [
     [/^container attributes/, 'container attributes'],
     [/^admonition with more than one class/, 'admonition'],
     [/^emoji /, HAS_AN_EMOJI],
+    // What keeps a footnote reference from being one atom (`footnoteNotEditable`, `blocks.ts`).
+    [/^multi-line inline footnote$/, 'has a footnote over two lines'],
+    [/^footnote inside an inline footnote$/, 'has a footnote in a footnote'],
+    [/^inline footnote in a note$/, 'has a footnote in a note'],
+    [/^footnote_ref in a table cell/, 'has a footnote in a table'],
 ];
 
 /**

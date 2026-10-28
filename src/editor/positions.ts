@@ -3,6 +3,7 @@ import { Selection, TextSelection } from 'prosemirror-state';
 import { NOTE_SYNTAX, WIKI_EMBED_MARKERS, plainWikiEmbed } from '../syntax/markers';
 import { Alignment, ENTITY, Lines, NEWLINE, NOTE_ANCHORS, Normalized, UNMATCHABLE, Unit, align, normalize } from './alignment';
 import { AtomPlace, NotePart, SerializeOptions, SerializedLayout, serializeLayout, writtenAtom } from './serialize';
+import { footnoteSpelling } from './schema';
 
 /**
  * Where a place in the page stands in the document's text, and back.
@@ -239,6 +240,14 @@ function collectUnits(block: Node): Unit[] {
             const read = node.attrs.source as string;
             const source = written ? writtenAtom(read, place) : read;
             units.push({ pos, code: source.charCodeAt(0), spelledTo: source.length > 1 ? source.slice(1) : undefined });
+            anchor(source.slice(1));
+            return;
+        }
+        if (node.type.name === 'footnote_ref') {
+            // As an emoji: the atom matches its spelling's first character, and the rest of it
+            // (`^label]`, `[…]`) anchors it and is where it runs to. Written as it is, in any place.
+            const source = footnoteSpelling(node);
+            units.push({ pos, code: source.charCodeAt(0), spelledTo: source.slice(1) });
             anchor(source.slice(1));
             return;
         }

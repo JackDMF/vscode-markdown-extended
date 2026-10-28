@@ -216,7 +216,7 @@ suite('Editor block classification (constructs.md)', () => {
         assert.deepStrictEqual(aligns, ['left', 'center', 'right']);
     });
 
-    test('what stays raw, and why: the TOC, a setext heading, footnotes, definition lists, task lists, inline HTML, abbreviations, reference definitions', () => {
+    test('what stays raw, and why: the TOC, a setext heading, a footnote definition, definition lists, task lists, inline HTML, abbreviations, reference definitions', () => {
         const raw = grouped.filter(b => b.kind === 'raw').map(b => [(b.src ?? '').split('\n')[0], b.reason]);
         assert.deepStrictEqual(raw, CONSTRUCTS_RAW);
     });
@@ -273,7 +273,6 @@ suite('Editor block classification: an emoji shortcut', () => {
 const CONSTRUCTS_RAW: [string, string][] = [
     ['[[toc]]', 'toc_open'],
     ['Setext heading', 'setext heading: its underline has no place in the heading node'],
-    ['A sentence with a footnote.[^first]', 'inline footnote_ref'],
     ['[^first]: The footnote body.', 'footnote_reference_open'],
     ['Term', 'dl_open'],
     ['- [ ] An open task', 'inline checkbox_input'],

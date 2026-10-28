@@ -25,7 +25,7 @@ import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 import { unreadEmoji } from './serialize';
 import { HAS_AN_EMOJI, sourceReasonWords } from './sourceReason';
-import { FOOTNOTES_IN_PLACE, inPlaceEnv } from './footnoteEngine';
+import { FOOTNOTES_IN_PLACE, footnoteMeta, inPlaceEnv } from './footnoteEngine';
 
 /**
  * A document as the editor holds it: the ProseMirror tree plus the two facts
@@ -312,7 +312,7 @@ export function parseDocument(md: MarkdownIt, text: string, givenEnv: Environmen
                 const [start, end] = block.tokenRange;
                 const table = start < end && tokens[start].type === 'table_open';
                 const construct = table ? (block.reason.includes('(multimd)') ? 'multimd table' : 'table') : sourceReasonWords(block.reason, block.src ?? '');
-                stream.push(synthetic('raw_block', { src: block.src ?? '', gap: block.gap, html: render(block), construct }));
+                stream.push(synthetic('raw_block', { src: block.src ?? '', gap: block.gap, html: render(block), construct, footnotes: block.footnotes }));
                 break;
             }
             case 'injected':
@@ -530,6 +530,14 @@ export function parseDocument(md: MarkdownIt, text: string, givenEnv: Environmen
             node: 'wiki_embed',
             getAttrs: tok => ({ source: ((real(tok).meta as { source?: string } | null)?.source) ?? real(tok).content }),
         },
+        // A footnote reference or an inline footnote: one atom carrying its label, or its text as written (`footnoteEngine.ts`).
+        footnote_ref: {
+            node: 'footnote_ref',
+            getAttrs: tok => {
+                const meta = footnoteMeta(real(tok));
+                return meta !== null && 'label' in meta ? { label: meta.label, source: null } : { label: null, source: meta !== null && 'source' in meta ? meta.source : '' };
+            },
+        },
         // An emoji: one atom carrying its spelling as the host read it (`markdownItEmoji.ts`), its name and glyph.
         emoji: {
             node: 'emoji',
@@ -634,7 +642,7 @@ function withUnplacedAsSource(doc: Node, blocks: readonly SourceBlock[], render:
             });
             if (block.kind === 'editable' && holds && unreadEmoji(node) === null) {
                 changed = true;
-                children.push(editorSchema.nodes.raw_block.create({ src: block.src ?? '', gap: block.gap, html: render(block), construct: HAS_AN_EMOJI }));
+                children.push(editorSchema.nodes.raw_block.create({ src: block.src ?? '', gap: block.gap, html: render(block), construct: HAS_AN_EMOJI, footnotes: block.footnotes }));
             } else {
                 children.push(node);
             }

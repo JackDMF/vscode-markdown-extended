@@ -44,16 +44,24 @@ export function characterCount(s: string): number {
 /**
  * A word that must not begin a line: at a line start it would open a list, a
  * heading, a quote, a fence, a setext underline, a table, an HTML block, a
- * definition or a container instead of continuing the paragraph.
+ * definition, a footnote's definition or a container instead of continuing
+ * the paragraph.
  */
 export function isLineStartSyntax(word: string): boolean {
     const w = word.replace(HOLD_RE, '');
     // Whole-word markers: a bullet, a setext underline (any run of `-` or `=`),
     // a thematic break, an ATX opener, an ordered-list marker, a definition's
     // `~`. `*emphasis*` or `-foo` at a line start is none of these, and nor is
-    // `~sub~` or `~~strike~~`: only three tildes open a fence.
-    return /^(?:[*+~]|-+|=+|\*{3,}|_{3,}|#{1,6}|\d{1,9}[.)])$/.test(w) || /^(?:[>|<:]|`{3,}|~{3,})/.test(w);
+    // `~sub~` or `~~strike~~`: only three tildes open a fence. A reference
+    // followed by a colon (`[^x]:`) begins a footnote's definition there.
+    return /^(?:[*+~]|-+|=+|\*{3,}|_{3,}|#{1,6}|\d{1,9}[.)])$/.test(w) || /^(?:[>|<:]|`{3,}|~{3,})/.test(w) || FOOTNOTE_DEFINITION_START.test(w);
 }
+
+/** A footnote's definition at a line start (markdown-it-footnote): `[^label]:`. */
+const FOOTNOTE_DEFINITION_START = /^\[\^[^\]\s]+\]:/;
+
+/** A footnote reference held as the writer holds it (`footnote_ref`), with the `:` after it that would make the line a definition. */
+const HELD_REFERENCE_COLON = new RegExp(`^${HOLD_OPEN}\\[\\^[^\\]\\s]+\\]${HOLD_CLOSE}(?=:)`);
 
 /**
  * Escape a word that has to begin a line anyway (the first of the paragraph, or
@@ -70,9 +78,15 @@ export function escapeLineStart(word: string): string {
 /**
  * Where `escapeLineStart` puts its backslash in `word`: before the word's
  * first character after its leading hold markers, or — an ordered-list
- * marker (`3.`, `1)`) — before its delimiter; `null` where it puts none.
+ * marker (`3.`, `1)`) — before its delimiter, or — a footnote reference
+ * followed by a colon — before the colon; `null` where it puts none.
  */
 export function lineStartEscapeAt(word: string): number | null {
+    // A reference opening the line, a `:` after it: the colon is escaped, the reference written whole.
+    const reference = HELD_REFERENCE_COLON.exec(word);
+    if (reference !== null) {
+        return reference[0].length;
+    }
     if (!isLineStartSyntax(word) || word.startsWith(HOLD_OPEN)) {
         return null;
     }

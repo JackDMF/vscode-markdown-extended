@@ -3,7 +3,7 @@ import { Plugin, PluginKey, Transaction } from 'prosemirror-state';
 import { Mapping, Transform } from 'prosemirror-transform';
 import { withoutId } from './attrs';
 import { EDITABLE_TOP_NODES } from './schema';
-import { itemTakesLiteral, literalHolder, literalsReadBack, quoteLostLiteral, unreadEmojiAsText } from './serialize';
+import { itemTakesLiteral, literalHolder, literalsReadBack, quoteLostLiteral, unreadEmojiAsText, withFootnoteLabels } from './serialize';
 
 export const fidelityPluginKey = new PluginKey('mepFidelity');
 
@@ -557,7 +557,8 @@ export function fidelityPlugin(): Plugin {
     return new Plugin({
         key: fidelityPluginKey,
         appendTransaction(transactions, oldState, newState) {
-            const plan = fidelityPlan(transactions, oldState.doc, newState.doc);
+            // A copy's literal is read back with the footnote labels of the document it is in.
+            const plan = withFootnoteLabels(newState.doc, () => fidelityPlan(transactions, oldState.doc, newState.doc));
             if (plan.updates.size === 0) {
                 return null;
             }

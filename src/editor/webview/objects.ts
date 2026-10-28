@@ -49,7 +49,7 @@ import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLitera
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, NOTE_NAMES, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
-import { LiteralLoss, SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteLiteralHost, quoteTakesLiteral, serializeInline } from '../serialize';
+import { LiteralLoss, SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteLiteralHost, quoteTakesLiteral, serializeInline, withFootnoteLabels } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 import { SOURCE_VERB_META } from './sourceBlock';
 import { VERB, quotedVerb, wording } from '../verbs';
@@ -873,12 +873,13 @@ function topBlockAt(doc: Node, pos: number): Node | null {
  */
 export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, changing?: string | null): Said | null {
     const block = topBlockAt(doc, pos);
-    const lost = block === null ? null : literalNotReadBack(block);
+    // Each block read with the footnote labels its document defines (`withFootnoteLabels`).
+    const lost = block === null ? null : withFootnoteLabels(doc, () => literalNotReadBack(block));
     if (lost === null) {
         return null;
     }
     const old = before === undefined ? null : topBlockAt(before, pos);
-    const existing = old === null ? null : literalNotReadBack(old);
+    const existing = old === null || before === undefined ? null : withFootnoteLabels(before, () => literalNotReadBack(old));
     if (existing === null && (lost.cause !== undefined || lost.literal === null)) {
         // A block read as another is the edit filter's to name, which every caller asks next (`noteRefusal`):
         // a note's or an atom's own check names it better, and speaks first there.
