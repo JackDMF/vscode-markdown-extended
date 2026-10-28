@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { closeEditorPage, computedColour, delay, EditorPage, EXTENSION_ID, openEditorPage, shot } from './pageHarness';
+import { closeEditorPage, computedColour, delay, editCommand, EditorPage, EXTENSION_ID, MOD, openEditorPage, pointAt, settle, shot, UNDO } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 /** CA-cotk22's shape: three references in a quote, the definitions in the file's order Schäfchen, liebst, drittes = 2, 1, 3, and one nothing refers to. */
@@ -132,5 +132,130 @@ suite('Editor footnotes (e2e)', () => {
         } finally {
             await applyTheme(page, LIGHT_MODERN);
         }
+    });
+
+    // --- Keys and deletes (plan step 6) ---
+
+    const hint = () => page.$eval('.mep-hint', el => ({ text: el.textContent, tone: (el as HTMLElement).dataset.tone, shown: !(el as HTMLElement).hidden }));
+    const lastText = async () => (await (editor as EditorPage).edits()).pop()?.text;
+    /** A click right before the first `needle`'s character `index`: the caret there. */
+    const caretAt = async (needle: string, index = 0) => {
+        const p = await pointAt(page, needle, index);
+        await page.mouse.click(p.x, p.y + 1);
+        await delay(120);
+    };
+    const press = async (key: 'z' | 'x' | 'v', shift = false) => {
+        await page.keyboard.down(MOD);
+        await page.keyboard.press(key, editCommand(key, shift));
+        await page.keyboard.up(MOD);
+        await settle();
+    };
+
+    test('Backspace after [3]: the first press selects it and says what a second would do; the second deletes it with its text; one undo brings both back (AC5)', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        await caretAt(' fragte, wurde');
+        await page.keyboard.press('Backspace');
+        await delay(200);
+        assert.ok(await page.$('.ProseMirror .mep-fn-ref.ProseMirror-selectednode'), 'selected');
+        assert.deepStrictEqual(await hint(), { text: 'Backspace again deletes footnote drittes with its text', tone: 'neutral', shown: true });
+        await page.keyboard.press('Backspace');
+        await settle();
+        const after = await lastText();
+        assert.ok(after !== undefined && !after.includes('[^drittes]'), 'reference and definition gone');
+        assert.deepStrictEqual(await hint(), { text: `Footnote drittes deleted with its text — ${UNDO}`, tone: 'neutral', shown: true });
+        await press('z');
+        assert.strictEqual(await lastText(), COTK, 'one undo, byte for byte');
+    });
+
+    test('Delete before a repeated reference deletes only it: footnote keeps its text, the hint says how many are left', async function () {
+        this.timeout(20000);
+        await show(COTK.replace('Mal[^drittes] fragte', 'Mal[^drittes] und liebst[^liebst] fragte'));
+        // Right before the first reference to liebst: after the word's last letter, before its atom.
+        await caretAt('liebst', 5);
+        await page.keyboard.press('ArrowRight');
+        await delay(80);
+        await page.keyboard.press('Delete');
+        await delay(150);
+        assert.ok(await page.$('.ProseMirror .mep-fn-ref.ProseMirror-selectednode'), 'the first press selects');
+        await page.keyboard.press('Delete');
+        await settle();
+        assert.deepStrictEqual(await hint(), { text: `Reference deleted, footnote liebst stays (1 more reference) — ${UNDO}`, tone: 'neutral', shown: true });
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-fn-entry', els => els.length), 4, 'the entry stays');
+    });
+
+    test('Backspace at the start of an entry\'s text is refused with the verb that deletes it; Shift+Enter breaks the line as the file does', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        await caretAt('Jesus fragte ihn');
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Backspace');
+        await delay(150);
+        assert.deepStrictEqual(await hint(), { text: 'Not deleted: a footnote goes with its references — use "Delete footnote" on its bar (Alt+Enter)', tone: 'refusal', shown: true });
+        await caretAt('hintereinander');
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Shift');
+        await settle();
+        assert.ok((await lastText())?.includes('drei Mal  \nhintereinander'), JSON.stringify(await lastText()));
+    });
+
+    test('a typed `[^liebst]` becomes the reference, Backspace right after gives the text back; a pasted one is the reference', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        await caretAt('IN 29');
+        await page.keyboard.type('Siehe[^liebst');
+        await page.keyboard.type(']');
+        await delay(150);
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-fn-ref', els => els.length), 4, 'an atom more');
+        await page.keyboard.press('Backspace');
+        await delay(150);
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-fn-ref', els => els.length), 3, 'given back as text');
+        assert.ok((await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('Siehe[^liebst]'));
+        await page.evaluate(() => {
+            const data = new DataTransfer();
+            data.setData('text/plain', ' und [^drittes]');
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+        });
+        await settle();
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-fn-ref', els => els.length), 4, 'the pasted reference is one');
+    });
+
+    test('cut the sentence with the only [^drittes], the entry stays and says so; pasted back, it is referenced again (AC3)', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        // From "Als" to the end of "traurig.", as a person drags it: the selection made in the page.
+        await page.evaluate(() => {
+            const walker = document.createTreeWalker(document.querySelector('.ProseMirror') as HTMLElement, NodeFilter.SHOW_TEXT);
+            let start: Text | null = null;
+            let end: Text | null = null;
+            for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+                start ??= n.data.includes('Als er ihn') ? n : null;
+                end = n.data.includes('traurig.') ? n : end;
+            }
+            (document.querySelector('.ProseMirror') as HTMLElement).focus();
+            window.getSelection()?.setBaseAndExtent(start as Text, (start as Text).data.indexOf('Als'), end as Text, (end as Text).data.indexOf('traurig.') + 'traurig.'.length);
+        });
+        await delay(150);
+        await page.evaluate(() => {
+            document.addEventListener('cut', e => {
+                (window as unknown as { cut: unknown }).cut = { html: e.clipboardData?.getData('text/html'), text: e.clipboardData?.getData('text/plain') };
+            }, { once: true });
+        });
+        await press('x');
+        assert.deepStrictEqual(await hint(), { text: 'Footnote drittes no longer referenced — its text stays', tone: 'neutral', shown: true });
+        assert.ok(await page.$('.ProseMirror .mep-fn-entry[data-mep-fn-entry="drittes"].mep-fn-orphan'), 'not referenced');
+        const cut = await page.evaluate(() => (window as unknown as { cut?: { html: string; text: string } }).cut);
+        assert.ok(cut?.html.includes('data-mep-fn'), 'the copy keeps the atom');
+        await caretAt('IN 29');
+        await page.evaluate(c => {
+            const data = new DataTransfer();
+            data.setData('text/html', c.html);
+            data.setData('text/plain', c.text);
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+        }, cut as { html: string; text: string });
+        await settle();
+        assert.strictEqual(await page.$('.ProseMirror .mep-fn-entry[data-mep-fn-entry="drittes"].mep-fn-orphan'), null, 'referenced again');
+        assert.strictEqual(await page.$eval('.ProseMirror .mep-fn-entry[data-mep-fn-entry="drittes"] .mep-fn-num', el => el.textContent), '3.');
     });
 });

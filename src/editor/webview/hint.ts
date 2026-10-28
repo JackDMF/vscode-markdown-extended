@@ -494,7 +494,7 @@ export function showHint(view: EditorView, text: Said, tone: HintTone, near?: El
  * text — Ctrl+Z`), beside the caret of `view`: neutral, and gone at the next
  * change of the document, which makes it stale.
  */
-export function showChangeHint(view: EditorView, text: string, near?: Element): void {
+export function showChangeHint(view: EditorView, text: Said, near?: Element): void {
     hints.get(view)?.show(text, 'neutral', near, 'change');
 }
 

@@ -10,7 +10,7 @@ import { DEFAULT_FENCE } from '../fences';
 import { fidelityPlugin } from '../fidelity';
 import { REDO_BINDINGS, UNDO_BINDING } from '../keys';
 import { emojiKeymap, emojiPlugin } from './emoji';
-import { footnoteIndexPlugin } from './footnotes';
+import { footnoteIndexPlugin, footnoteInputRules, footnoteKeymap } from './footnotes';
 import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
@@ -149,6 +149,8 @@ export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds
         // (and any transaction that would remove it, `filterTransaction`).
         sourceBlockPlugin(),
         markdownInputRules(),
+        // `[^x]` typed, `x` a label the document defines: the reference.
+        footnoteInputRules(),
         // `![[name]]` typed: an embed atom, where the engine reads embeds; a plugin of its own,
         // which a note's own text insertion runs and no other rule (`wikiEmbeds.ts`).
         embedInput,
@@ -157,6 +159,8 @@ export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds
         // and Tab, Enter and Shift+Enter in a table cell (a sidebar in a cell keeps its own keys).
         // Before the note's keys: an arrow beside an emoji steps over it, wherever it stands.
         emojiKeymap(),
+        // Before the note's keys: Backspace and Delete beside a reference, an entry's edge and Enter in one (a reference in a note's text included).
+        footnoteKeymap(),
         noteKeymap(),
         wrapperKeymap(),
         tableKeymap(),
