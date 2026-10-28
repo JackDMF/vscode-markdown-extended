@@ -1044,6 +1044,19 @@ function createNoteTokens(state: MarkdownItState, text: string, note: string, co
 // ============================================================================
 
 /**
+ * The environment a note's part is read in: of its own, but for the document's footnotes, so a
+ * reference in it finds the definitions and an inline footnote in it is listed, numbered in the
+ * written order. markdown-it-footnote creates and replaces `footnotes`; both reach the document's.
+ */
+function noteEnv(state: MarkdownItState): FootnoteEnv & Record<string, unknown> {
+    const env = (state.env ?? {}) as FootnoteEnv;
+    return {
+        get footnotes() { return env.footnotes; },
+        set footnotes(footnotes) { env.footnotes = footnotes; },
+    };
+}
+
+/**
  * Process text with inline markdown support.
  * 
  * This function recursively parses markdown within a note's reference and
@@ -1096,8 +1109,7 @@ function processTextWithMarkdown(state: MarkdownItState, content: string, at = 0
         // Use parseInline for proper inline markdown processing
         // This creates a temporary environment and parses the content,
         // producing inline tokens (text, strong, em, code, link, etc.)
-        const tempEnv = {};
-        const tokens = state.md.parseInline(content, tempEnv);
+        const tokens = state.md.parseInline(content, noteEnv(state));
         
         if (tokens && tokens[0] && tokens[0].children) {
             // Transfer the resulting inline tokens to our token stream

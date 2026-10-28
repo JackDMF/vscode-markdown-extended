@@ -11,6 +11,7 @@
 - A block's Attributes… field opens above the block (and above its lens row), so it no longer covers the next block's first line; below only where above has no room.
 - The completion list at the caret stands where the other floating bars do: under the toolbar, inside the editor, never over an open bar.
 - A refusal hint in a table stands above or below the table, not over the next row.
+- A footnote reference (`[^x]`) or inline footnote (`^[…]`) in a sidenote's or marginal note's text is a footnote in the preview and export, numbered where it is written and listed with the others; it was literal text, its definition left out.
 
 ## v4.10.0 — Says Why, Keeps Its Place
 
