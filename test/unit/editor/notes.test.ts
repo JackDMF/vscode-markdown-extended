@@ -231,7 +231,7 @@ suite('Editor notes: the reference carries its kind\'s anchor, which the Markdow
                 if (entry.isDirectory()) {
                     walk(full);
                 } else if (entry.name.endsWith('.ts') && full !== path.join(srcRoot, 'editor', 'schema.ts')
-                    && /note_ref\.create/.test(fs.readFileSync(full, 'utf8'))) {
+                    && /(?<![a-z_])note_ref\.create/.test(fs.readFileSync(full, 'utf8'))) {
                     offenders.push(path.relative(srcRoot, full));
                 }
             }

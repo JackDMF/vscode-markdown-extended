@@ -7,7 +7,7 @@ import { closeEditorPage, computedColour, delay, EditorPage, EXTENSION_ID, openE
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 import { installedWebviewDefaultStyles, WEBVIEW_DEFAULT_STYLES, WEBVIEW_DEFAULT_STYLES_ID, webviewPageFile } from './webviewDefaults';
 
-/** A link, a footnote reference and the footnote's back-link: all three are `<a>`, the reference inside `sup.footnote-ref`. */
+/** A link: an `<a>`, as VS Code's webview defaults colour it. */
 const LINKS = 'A [link](https://example.com) and a claim that needs a source.\n';
 
 /** CSS with its whitespace collapsed, so a re-indented copy compares equal to its original. */

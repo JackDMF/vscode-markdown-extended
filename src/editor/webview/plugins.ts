@@ -10,6 +10,7 @@ import { DEFAULT_FENCE } from '../fences';
 import { fidelityPlugin } from '../fidelity';
 import { REDO_BINDINGS, UNDO_BINDING } from '../keys';
 import { emojiKeymap, emojiPlugin } from './emoji';
+import { footnoteIndexPlugin } from './footnotes';
 import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
@@ -167,6 +168,8 @@ export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds
         dropCursor(),
         gapCursor(),
         hintPlugin(),
+        // The footnotes' numbers, counted as the engine counts them, and the views that draw them.
+        footnoteIndexPlugin(),
         // After the hint's own update, which clears the previous change's hint.
         sourceBlockHintPlugin(),
         notesPlugin(embedInput),

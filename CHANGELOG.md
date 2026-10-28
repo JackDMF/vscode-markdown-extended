@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Footnotes are edited in place: references as numbers in the text, their text where it is written.
 - A code block's `{…}` written right after its info string (```` ```js title={.a} ````) stays without a space when the block changes.
 - An `@` right after a letter or digit (`a@b.de`, `Text@`) is saved as written, not as `\@`; it opens no sidebar.
 - A list made in the visual editor (typing `- `, `1. ` or from the toolbar) is written tight, without blank lines between items.
