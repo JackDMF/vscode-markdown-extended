@@ -97,7 +97,7 @@ suite('Editor source block reason', () => {
         const editorCss = fs.readFileSync(path.join(styles, 'editor.css'), 'utf8');
         assert.ok(editorCss.includes('.ProseMirror .mep-raw-chip::before { content: "source" / ""; }'), 'editor.css draws it, inside the editor');
         // What the preview and an export render: the host's HTML, which knows no source block.
-        const html = hostEngine().render('A sentence with a footnote.[^1]\n\n[^1]: The body.\n');
+        const html = hostEngine().render('Term\n: A definition, of HTML.\n\n*[HTML]: HyperText Markup Language\n');
         assert.ok(!/mep-|>source</.test(html), html);
         // Only the editor's page links editor.css; the exporters and the preview never do.
         const linking = grepSources(path.join(repoRoot, 'src'), /editor\.css['"]/);

@@ -292,7 +292,7 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
 
     test('D17: a rendering from the host is not the person\'s edit — a fresh source-block refusal stands through it', async function () {
         this.timeout(30000);
-        await fresh('Plain top here.\n\nFirst para[^1] one.\n\nPlain bottom.\n\n[^1]: note one\n', 'Plain top');
+        await fresh('Plain top here.\n\nFirst para HTML one.\n\nPlain bottom.\n\n*[HTML]: note one\n', 'Plain top');
         const raw = await page.$eval('.mep-raw-block', el => { const r = el.getBoundingClientRect(); return { x: r.left + 40, y: r.top + r.height / 2 }; });
         await page.mouse.click(raw.x, raw.y, { clickCount: 2 });
         await page.waitForSelector('.mep-raw-editor', { timeout: 3000 });
@@ -314,7 +314,7 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         await page.keyboard.type('x');
         await delay(250);
         assert.deepStrictEqual([await shown(), (await hint()).tone], [true, 'refusal'], 'the keystroke over the selected source block is refused');
-        await (editor as EditorPage).send({ type: 'rendered', requestId: request.requestId, html: '<p>First para<sup>1</sup> one more.</p>' } as never);
+        await (editor as EditorPage).send({ type: 'rendered', requestId: request.requestId, html: '<p>First para <abbr title="note one">HTML</abbr> one more.</p>' } as never);
         await delay(200);
         assert.deepStrictEqual([await shown(), (await hint()).tone], [true, 'refusal'], 'the host\'s rendering left it');
     });
