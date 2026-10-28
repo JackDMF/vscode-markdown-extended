@@ -25,6 +25,7 @@ import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 import { unreadEmoji } from './serialize';
 import { HAS_AN_EMOJI, sourceReasonWords } from './sourceReason';
+import { FOOTNOTES_IN_PLACE, inPlaceEnv } from './footnoteEngine';
 
 /**
  * A document as the editor holds it: the ProseMirror tree plus the two facts
@@ -59,10 +60,20 @@ export function parsedDocumentFromJSON(json: ParsedDocumentJSON): ParsedDocument
  * content): entry `i` is the document's child `i`, because `parseDocument`
  * builds its children from the same grouping and refuses a document whose
  * counts disagree. What the lens rows are placed by (`host/lenses.ts`).
- * `definition` as `parseDocument` takes it, so the two group alike.
+ * `definition` as `parseDocument` takes it, and footnotes in place as it reads
+ * them (`placed`), so the two group alike.
  */
 export function blockLineRanges(md: MarkdownIt, text: string, env: Environment = {}, definition: InlineEngineDefinition = definitionOf(md)): ([number, number] | null)[] {
-    return groupSourceBlocks(md.parse(text, env), splitLines(text), definition).blocks.map(b => b.lineRange);
+    return groupSourceBlocks(md.parse(text, placed(env)), splitLines(text), definition).blocks.map(b => b.lineRange);
+}
+
+/**
+ * `env` for a parse of the editor's: footnote definitions kept where they are
+ * written (`FOOTNOTES_IN_PLACE`), each one a block of its own. One the caller
+ * made for it (`inPlaceEnv`, with the labels a part is read with) is kept.
+ */
+function placed(env: Environment): Environment {
+    return env[FOOTNOTES_IN_PLACE] === true ? env : inPlaceEnv(env);
 }
 
 /**
@@ -238,22 +249,25 @@ function copyToken(token: Token): Token {
  * preview uses, other extensions' rules included, which is why parsing runs in
  * the extension host. `env` is handed to markdown-it and to every render of a
  * raw or injected block, so rules that keep per-document state there (footnotes,
- * Req Explorer's index lookups) see one document.
+ * Req Explorer's index lookups) see one document. Footnote definitions are
+ * read where they are written (`placed`), each a block of its own.
  *
  * `definition` is what the page's engine is built from for `md`
  * (`inlineEngineDefinition`), by default read off `md` (`definitionOf`): the
  * literals the parse finds are judged with it (`groupSourceBlocks`), as the
  * page judges the literals it writes, so both answer alike under any setting.
  *
- * `parsed`, where given, is `md.parse(text, env)` already made, which the
+ * `parsed`, where given, is `md.parse(text, env)` already made — `env` one
+ * with footnotes in place (`inPlaceEnv`) — which the
  * page's save reads too: a block rendered from it is rendered from a copy, as
  * a renderer may write to the tokens it renders (an image's `alt`).
  *
  * Throws when the document cannot be represented without losing a byte; the
  * caller then keeps the text editor.
  */
-export function parseDocument(md: MarkdownIt, text: string, env: Environment = {}, definition: InlineEngineDefinition = definitionOf(md), parsed?: Token[]): ParsedDocument {
+export function parseDocument(md: MarkdownIt, text: string, givenEnv: Environment = {}, definition: InlineEngineDefinition = definitionOf(md), parsed?: Token[]): ParsedDocument {
     const engine = md as EngineWithOptions;
+    const env = placed(givenEnv);
     const tokens = parsed ?? md.parse(text, env);
     const lines = splitLines(text);
     const { blocks, tail } = groupSourceBlocks(tokens, lines, definition);

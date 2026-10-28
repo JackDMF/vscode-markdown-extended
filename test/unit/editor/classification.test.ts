@@ -2,6 +2,8 @@ import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { groupSourceBlocks, parseDocument, splitLines } from '../../../src/editor';
 import { definitionOf } from '../../../src/editor/inlineEngine';
+import { inPlaceEnv } from '../../../src/editor/footnoteEngine';
+import { entriesDocument } from './footnoteSample';
 import { conformanceDocument, constructsFixture, hostEngine, readText, topChildren } from './helpers';
 
 /** FR-CON's raw blocks: each one's first line and the reason `blocks.ts` gives. */
@@ -155,7 +157,8 @@ suite('Editor block classification (FR-CON.md)', () => {
  */
 suite('Editor block classification (constructs.md)', () => {
     const text = readText(constructsFixture).replace(/\r\n/g, '\n');
-    const grouped = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text), definitionOf(hostEngine())).blocks;
+    // Grouped as the parse groups them: footnote definitions where they are written.
+    const grouped = groupSourceBlocks(hostEngine().parse(text, inPlaceEnv()), splitLines(text), definitionOf(hostEngine())).blocks;
     const blocks = topChildren(parseDocument(hostEngine(), text).doc);
 
     /** The one top-level block whose source starts with `prefix`, and its classification. */
@@ -271,7 +274,7 @@ const CONSTRUCTS_RAW: [string, string][] = [
     ['[[toc]]', 'toc_open'],
     ['Setext heading', 'setext heading: its underline has no place in the heading node'],
     ['A sentence with a footnote.[^first]', 'inline footnote_ref'],
-    ['[^first]: The footnote body.', 'source lines no token accounts for'],
+    ['[^first]: The footnote body.', 'footnote_reference_open'],
     ['Term', 'dl_open'],
     ['- [ ] An open task', 'inline checkbox_input'],
     ['Press <kbd>Ctrl</kbd> or [[Ctrl+S]], ==mark== this, H~2~O and x^2^, :smile:, ~~gone~~.', 'inline html_inline'],
@@ -279,3 +282,24 @@ const CONSTRUCTS_RAW: [string, string][] = [
     ['An abbreviation: HTML.', 'inline abbr_open'],
     ['[ref]: https://example.net/ref', 'source lines no token accounts for'],
 ];
+
+suite('Editor block classification: footnote definitions where they are written', () => {
+    const text = entriesDocument();
+    const md = hostEngine();
+
+    test('each of the fourteen definitions is a block of its own with its lines, "footnote text"; no list of them follows the blocks', () => {
+        const grouped = groupSourceBlocks(md.parse(text, inPlaceEnv()), splitLines(text), definitionOf(md)).blocks;
+        const definitions = grouped.filter(b => (b.src ?? '').startsWith('[^'));
+        assert.strictEqual(definitions.length, 14);
+        assert.ok(definitions.every(b => b.kind === 'raw' && b.reason === 'footnote_reference_open' && (b.src as string).split('\n').length === 3), JSON.stringify(definitions.map(b => [b.reason, b.src])));
+        assert.ok(!grouped.some(b => b.kind === 'injected'), 'nothing generated');
+        const blocks = topChildren(parseDocument(md, text).doc);
+        assert.deepStrictEqual(blocks.filter(b => (b.attrs.src as string | undefined)?.startsWith('[^')).map(b => [b.type.name, b.attrs.construct]),
+            Array.from({ length: 14 }, () => ['raw_block', 'footnote text']));
+    });
+
+    test('gap + src of every block, and the tail, rebuild the file', () => {
+        const { blocks, tail } = groupSourceBlocks(md.parse(text, inPlaceEnv()), splitLines(text), definitionOf(md));
+        assert.strictEqual(blocks.map(b => b.gap + (b.src ?? '')).join('') + tail, text);
+    });
+});

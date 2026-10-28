@@ -13,6 +13,8 @@ import { INLINE_LITERAL_HOLDERS, NOTE_NAMES, namesOf } from './inlineLiterals';
 /** A token type the editor does not edit, by what a person calls it: with its article where a block can hold one. */
 const TOKEN_WORDS: ReadonlyMap<string, { noun: string; article: string }> = new Map([
     ['footnote_ref', { noun: 'footnote', article: 'a ' }],
+    // A definition (`[^x]: …`), a block of its own where it is written (`FOOTNOTES_IN_PLACE`).
+    ['footnote_reference_open', { noun: 'footnote text', article: '' }],
     ['dl_open', { noun: 'definition list', article: 'a ' }],
     ['toc_open', { noun: 'table of contents', article: 'a ' }],
     ['abbr_open', { noun: 'abbreviation', article: 'an ' }],

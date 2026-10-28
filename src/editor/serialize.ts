@@ -6,11 +6,12 @@ import type { Mapping } from 'prosemirror-transform';
 import { ALPHANUMERIC, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, opensInsideWords, plainWikiEmbed, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { AttrPair, NOTE_SYNTAX_CHARS, fenceHolder, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
 import { DEFAULT_FENCE, fenceOf, savedFence, savedOpeningLine } from './fences';
-import { Token } from '../@types/markdown-it';
+import { Environment, Token } from '../@types/markdown-it';
 import { AttrsCut, attrsCutsIn, attrsGivenTo } from '../plugin/markdownItAttrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { parseDocument } from './parse';
+import { inPlaceEnv } from './footnoteEngine';
 import { NOTE_CLOSE_TOKENS, NOTE_OPEN_TOKENS } from './blocks';
 import { INLINE_LITERAL_HOLDERS, holderOfCarrier, namesOf } from './inlineLiterals';
 import { markNoun, noteNoun, partLabel } from './refusal';
@@ -2853,6 +2854,14 @@ function ownedLiterals(tokens: readonly Token[], expected: ReadonlyMap<string, r
 }
 
 /**
+ * The environment the page reads back what it writes in: footnote definitions
+ * kept where they are written, as the host's parse keeps them (`inPlaceEnv`).
+ */
+function readBackEnv(): Environment {
+    return inPlaceEnv();
+}
+
+/**
  * What the page's engine with markdown-it-attrs cuts off text in `text`
  * (`LiteralCuts`), `expected` the literals of the textblock's marks
  * (`markLiteralsOf`): a cut that is the first after a mark's closing tag is
@@ -2862,7 +2871,7 @@ function ownedLiterals(tokens: readonly Token[], expected: ReadonlyMap<string, r
  */
 function literalCutsIn(text: string, expected: ReadonlyMap<string, readonly (string | null)[]> = new Map()): LiteralCuts {
     const found: LiteralCuts = { tryable: [], excess: 0, spans: 0, owned: 0 };
-    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, readBackEnv());
     const candidates: AttrsCut[] = [];
     for (const token of tokens) {
         if (token.type !== 'inline') {
@@ -3556,7 +3565,7 @@ export function seamHolds(leader: string, separator: string, follower: string): 
     // markdown-it reads `\r\n` as one line break, so counting `\n` counts its lines.
     const line = ((leader + separator).match(/\n/g) ?? []).length;
     const md = attrsEngineFor(currentInlineDefinition());
-    const tokens = md.parse(leader + separator + follower, {});
+    const tokens = md.parse(leader + separator + follower, readBackEnv());
     const mapOf = (token: Token) => token.map as number[] | null;
     let holds = !tokens.some(token => {
         const map = mapOf(token);
@@ -3564,7 +3573,7 @@ export function seamHolds(leader: string, separator: string, follower: string): 
     });
     if (holds && !tokens.some(token => token.level === 0 && mapOf(token)?.[0] === line)) {
         const next = tokens.findIndex(token => token.level === 0 && (mapOf(token)?.[0] ?? -1) >= line);
-        holds = readingOf(next < 0 ? tokens : tokens.slice(0, next)) === readingOf(md.parse(leader, {}));
+        holds = readingOf(next < 0 ? tokens : tokens.slice(0, next)) === readingOf(md.parse(leader, readBackEnv()));
     }
     if (seamCache.size >= SEAM_CACHE_SIZE) {
         seamCache.delete(seamCache.keys().next().value as string);
@@ -3575,7 +3584,7 @@ export function seamHolds(leader: string, separator: string, follower: string): 
 
 /** The kind and marker (`-`, `*`, `+`, or the delimiter `.`, `)`) of the top-level list `text` opens with, or with `last` ends with; `null` where it does not. */
 function listMarkerOf(text: string, last: boolean): { kind: string; marker: string } | null {
-    const top = attrsEngineFor(currentInlineDefinition()).parse(text, {}).filter(token => token.level === 0);
+    const top = attrsEngineFor(currentInlineDefinition()).parse(text, readBackEnv()).filter(token => token.level === 0);
     const token = last ? top[top.length - 1] : top[0];
     const kind = /^(bullet|ordered)_list_(?:open|close)$/.exec(token?.type ?? '');
     return kind === null ? null : { kind: kind[1], marker: token.markup };
@@ -3600,7 +3609,7 @@ function remarkedList(leader: string, follower: string, next: () => string | nul
     const after = listMarkerOf(next() ?? '', false);
     const markers = (opens.kind === 'bullet' ? ['-', '*', '+'] : ['.', ')']).filter(m => m !== ends.marker);
     markers.sort((a, b) => Number(a === after?.marker) - Number(b === after?.marker));
-    const tokens = attrsEngineFor(currentInlineDefinition()).parse(follower, {});
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(follower, readBackEnv());
     const close = tokens.findIndex(token => token.level === 0 && token.nesting === -1);
     const items = tokens.slice(0, close).filter(token => token.type === 'list_item_open' && token.level === 1);
     const out: string[] = [];
@@ -3620,7 +3629,7 @@ function remarkedList(leader: string, follower: string, next: () => string | nul
         }
         // Still the same list, read by the parser: `- ***` re-marked is `* ***`, a thematic break.
         const text = lines.join('\n');
-        const again = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+        const again = attrsEngineFor(currentInlineDefinition()).parse(text, readBackEnv());
         const end = again.findIndex(token => token.level === 0 && token.nesting === -1);
         const count = again.slice(0, end).filter(token => token.type === 'list_item_open' && token.level === 1).length;
         if (again[0]?.type === `${opens.kind}_list_open` && again[0].markup === marker && count === items.length) {
@@ -4118,7 +4127,7 @@ function comparisonDoc(text: string): Node {
     const definition = comparisonDefinition();
     // Without the typographer the comparison reads with the page's own engine: the tokens `readUnit` read are these.
     const tokens = definition === currentInlineDefinition() ? unitTokens(text) : undefined;
-    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition, tokens).doc;
+    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, readBackEnv(), definition, tokens).doc;
     if (comparisonCache.size >= UNIT_READ_CACHE_SIZE) {
         comparisonCache.delete(comparisonCache.keys().next().value as string);
     }
@@ -4140,7 +4149,7 @@ let lastTokens: { text: string; tokens: Token[] } | null = null;
  */
 function unitTokens(text: string): Token[] {
     if (lastTokens?.text !== text) {
-        lastTokens = { text, tokens: attrsEngineFor(currentInlineDefinition()).parse(`${text}\n`, {}) };
+        lastTokens = { text, tokens: attrsEngineFor(currentInlineDefinition()).parse(`${text}\n`, readBackEnv()) };
     }
     return lastTokens.tokens;
 }

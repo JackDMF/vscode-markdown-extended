@@ -1,6 +1,7 @@
 import frontMatter from 'markdown-it-front-matter';
 import { MarkdownIt } from '../@types/markdown-it';
 import { DefinedPlugin, baseEngine, recordInlineDefinition } from './inlineEngine';
+import { useFootnotesInPlace } from './footnoteEngine';
 
 /**
  * One entry of a plugin registry, in the shape `src/plugin/plugins.ts` exports
@@ -69,6 +70,9 @@ function sameRules(a: readonly unknown[], b: readonly unknown[]): boolean {
  * embeds" in ARCHITECTURE.md), and `EMOJI_PLACES_OPTION`, under which each
  * emoji token records where it stands (`markdownItEmoji.ts`), which nothing
  * renders. Text read from tokens goes through `tokenText`, which reads both alike.
+ * And the footnote plugin keeps definitions where they are written in a parse
+ * whose environment asks for it (`FOOTNOTES_IN_PLACE`, `footnoteEngine.ts`),
+ * which only the editor's own parses do.
  *
  * The front-matter rule is registered here and nowhere else. The preview engine
  * must not get one from this extension — VS Code's own preview already
@@ -109,6 +113,8 @@ export function createEditorEngine(options: EditorEngineOptions): MarkdownIt {
             }
         }
     }
+    // The editor's own reading of the footnote plugin, which no parse without its flag sees (`footnoteEngine.ts`).
+    useFootnotesInPlace(md);
     for (const extend of options.extend ?? []) {
         md = extend(md) || md;
     }

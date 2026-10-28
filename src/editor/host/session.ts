@@ -20,6 +20,7 @@ import { LinksAndImages } from './linksImages';
 import { fragmentHeading, fragmentLine, headingAnchors, resolveLinkTarget } from './links';
 import { minimalReplacement } from './minimalEdit';
 import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
+import { inPlaceEnv } from '../footnoteEngine';
 
 /** What a session needs from the extension, injected so a test can drive one without a webview. */
 export interface SessionHost {
@@ -785,7 +786,8 @@ export class VisualEditorSession implements vscode.Disposable {
         let html: string;
         try {
             const md = await this.host.engine();
-            html = md.render(src, this.env());
+            // As the parse drew it: a definition where it is written, no list of footnotes after it.
+            html = md.render(src, inPlaceEnv(this.env()));
         } catch (error) {
             this.host.log(`[ERROR] Visual Editor: rendering a raw block failed: ${message(error)}`);
             html = `<pre>${escapeHtml(src)}</pre>`;
