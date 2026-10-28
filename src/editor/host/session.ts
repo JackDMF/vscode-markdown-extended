@@ -103,6 +103,13 @@ export function revealInVisualEditor(uri: vscode.Uri, reveal: Reveal): void {
     }
 }
 
+/** The palette's "Sort Footnotes" for the Visual Editor over `uri`: its page sorts them (`sortFootnotes`). Whether one is open. */
+export function sortFootnotesIn(uri: vscode.Uri): boolean {
+    const session = sessions.get(uri.toString());
+    session?.sortFootnotes();
+    return session !== undefined;
+}
+
 /**
  * One rich editor over one `TextDocument`: the host half of the protocol in
  * `../protocol.ts`.
@@ -227,6 +234,11 @@ export class VisualEditorSession implements vscode.Disposable {
      * the queue holds, once the page has a document — at once when it has,
      * else right after the first document is posted (`post`).
      */
+    /** Ask the page to sort its footnotes: behind whatever the queue holds, so it sorts the document it has. */
+    sortFootnotes(): void {
+        this.enqueue(() => this.postQuietly({ type: 'sortFootnotes' }));
+    }
+
     reveal(reveal: Reveal): void {
         this.pendingReveal = reveal;
         this.enqueue(async () => {

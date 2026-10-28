@@ -57,11 +57,15 @@ import type { Completion } from '../completions';
 import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, languageOf, savedOpeningLine } from '../fences';
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
-import { HintTone, RefusalPlace, applyKey, dismissRefusal, showChangeHint, showHint, showRefusal, undoHint, undoKey } from './hint';
+import { HintTone, RefusalPlace, announceHint, applyKey, dismissRefusal, macKeys, showChangeHint, showHint, showRefusal, undoHint, undoKey } from './hint';
 import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, crumbName, crumbPartName, emojiWayBack, firstFocus, overflowOrder, quotedVerb, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
 import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
+import {
+    backToReferenceTransaction, deleteFootnoteEntryTransaction, deleteFootnoteRefTransaction, entryAt, footnoteIndexOf, goToFootnoteTransaction,
+    labelRefusal, orphanChip, refAt, referencesOf, renameFootnoteTransaction, sortFootnotesTransaction,
+} from './footnotes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
 import { clearPendingRange, pendingRangeId, showPendingRange } from './pendingRange';
@@ -215,6 +219,8 @@ export interface Verb {
     anchorBlock?: AttributesTarget;
     /** On a two-part bar, it acts on the outer part (an admonition's Type▾): never the first focus (`firstFocus`, #8). */
     outer?: true;
+    /** One of a reversible jump pair (a footnote's Go to footnote text / Back to reference): it may take the first focus (`firstFocus`, #5b). */
+    jump?: true;
     /** What a table's set-verb acts on, tinted while it is active (`ObjectBar.activeAxis`): Row the caret's row, Column and Align its column. */
     axis?: 'row' | 'column';
 }
@@ -229,7 +235,11 @@ function drawVerbLabel(el: HTMLElement, verb: Verb, text: string): void {
 
 /** A verb as the bars' model reads it (`verbs.ts`): whether it opens in place is read from which of its ways it has. */
 function slotted(verb: Verb): Slotted {
-    return { slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box), ...(verb.outer ? { outer: true as const } : {}) };
+    return {
+        slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box),
+        ...(verb.outer ? { outer: true as const } : {}),
+        ...(verb.jump ? { jump: true as const } : {}),
+    };
 }
 
 /** One entry of a set-verb's menu. */
@@ -276,6 +286,8 @@ interface Presentation {
     short?: string;
     /** Written after the label in the editor's code font: an atom's spelling (`Emoji :)`). */
     code?: string;
+    /** Written after `code`, in the label's font: what a footnote's title says of it (` · 2 references`). */
+    after?: string;
     title: string;
     verbs: Verb[];
     /** The breadcrumb in the title's place (#8): the outer part, then the current one — the bar's object. */
@@ -1073,6 +1085,9 @@ class ObjectBar {
             code.textContent = presentation.code;
             label.append(' ', code);
         }
+        if (presentation.after !== undefined) {
+            label.append(presentation.after);
+        }
         // What the object is, on a rest: the title is a label, not a control — no focus, no press.
         this.tips.attach(label, () => (presentation.title === '' ? null : plainTip(presentation.title)));
         this.fitted = '';
@@ -1081,7 +1096,7 @@ class ObjectBar {
         if (presentation.crumbs === undefined) {
             this.parts = [];
         }
-        this.name = presentation.name ?? barName(presentation.label, presentation.code);
+        this.name = presentation.name ?? `${barName(presentation.label, presentation.code)}${presentation.after ?? ''}`;
         const parts = this.parts.filter(p => p.view.verb !== null && !p.view.verb.refusal).length;
         this.el.setAttribute('aria-label', barDescription(this.name, parts + presentation.verbs.filter(v => !v.refusal).length));
         this.buttons = presentation.verbs.map(verb => {
@@ -3088,6 +3103,9 @@ class ObjectToolbarView implements PluginView {
                     }),
                 };
             }
+            case 'footnote':
+            case 'footnote_entry':
+                return this.footnotePresentation(object);
             case 'badge': {
                 const mark = object.node.attrs.mark as { rule?: unknown } | null;
                 return {
@@ -3488,6 +3506,155 @@ class ObjectToolbarView implements PluginView {
             }
             return tr !== null;
         }, hint);
+    }
+
+    /**
+     * A footnote's bar (wave 4 #5b): a reference's — Go to footnote text ·
+     * Label… · Delete footnote, its last reference, else Delete reference — an
+     * inline footnote's, and an entry's — Back to reference · Label… · Sort
+     * footnotes, while they are out of order · Delete footnote. The title
+     * says the number and, in the code font, the label; the hints name the
+     * label, which stays while numbers change.
+     */
+    private footnotePresentation(object: EditorObject): Presentation {
+        const view = this.view;
+        const node = (object as Extract<EditorObject, { node: unknown }>).node;
+        const index = footnoteIndexOf(view.state);
+        const label = node.attrs.label as string | null;
+        const said = (done: { tr: Transaction; hint: Said } | null) => {
+            if (done !== null) {
+                view.dispatch(done.tr);
+                showChangeHint(view, done.hint);
+            }
+            return done !== null;
+        };
+        const labelVerb = (heading: string, mayJoin: boolean): Verb => {
+            const step: FieldStep = {
+                value: label ?? '',
+                label: 'Label',
+                heading: fieldHeading(heading, 'Label'),
+                keys: '↵ set · Esc cancel',
+                followed: [object],
+                commit: typed => {
+                    const now = currentObject(view.state, object);
+                    if (now === null || typed === label) {
+                        this.act(object, () => false);
+                        return;
+                    }
+                    const refusal = labelRefusal(view.state, typed, label, mayJoin);
+                    if (refusal !== null) {
+                        return refusedStep(step, typed, refusal);
+                    }
+                    const done = renameFootnoteTransaction(view.state, now.from, typed);
+                    const unwritable = done === null ? null : noteRefusal(done.tr);
+                    if (unwritable !== null) {
+                        return refusedStep(step, typed, unwritable);
+                    }
+                    this.act(object, current => said(renameFootnoteTransaction(view.state, current.from, typed)));
+                },
+            };
+            return { id: 'footnote-label', label: 'Label…', title: 'Its label: the references and its text keep it as they change places (Enter to set, Esc to cancel).', slot: 'edit', field: step };
+        };
+        if (object.kind === 'footnote') {
+            const ref = refAt(index, object.from);
+            if (label === null) {
+                const number = ref?.number ?? null;
+                return {
+                    label: number === null ? 'Inline footnote' : `Inline footnote ${number}`,
+                    short: 'Inline footnote',
+                    title: `An inline footnote: ^[${node.attrs.source as string}]`,
+                    verbs: [
+                        { id: 'delete-footnote', label: 'Delete footnote', short: 'Delete', title: `Deletes the footnote and its text — ${undoKey()}`, slot: 'destroy', run: () => this.act(object, current => said(deleteFootnoteRefTransaction(view.state, current.from))) },
+                    ],
+                };
+            }
+            if (ref === undefined || ref.number === null) {
+                return {
+                    label: 'Footnote ·',
+                    code: label,
+                    after: ' · no text',
+                    title: `No footnote ${label} — the preview shows it as text. Label… gives it one that is there.`,
+                    verbs: [
+                        labelVerb('Footnote', true),
+                        { id: 'delete-reference', label: 'Delete reference', short: 'Delete', title: `Deletes the reference — ${undoKey()}`, slot: 'destroy', run: () => this.act(object, current => said(deleteFootnoteRefTransaction(view.state, current.from))) },
+                    ],
+                };
+            }
+            const others = referencesOf(index, label).length - 1;
+            const last = others === 0;
+            return {
+                label: `Footnote ${ref.number} ·`,
+                short: `Footnote ${ref.number}`,
+                code: label,
+                title: `Footnote ${ref.number}, written [^${label}]: its text stands where the file has it.`,
+                verbs: [
+                    {
+                        id: 'go-to-footnote', label: 'Go to footnote text', short: 'Go to text', slot: 'open', jump: true,
+                        title: `The caret to its text; Back to reference there, or ↩, brings it back (${macKeys() ? 'Cmd' : 'Ctrl'}+click goes too).`,
+                        run: () => this.act(object, current => {
+                            const done = goToFootnoteTransaction(view.state, current.from);
+                            if (done !== null) {
+                                view.dispatch(done.tr);
+                                announceHint(view, done.number === null ? 'Footnote text' : `Footnote ${done.number} text`);
+                            }
+                            return done !== null;
+                        }),
+                    },
+                    labelVerb(`Footnote ${ref.number}`, false),
+                    last
+                        ? { id: 'delete-footnote', label: 'Delete footnote', short: 'Delete', title: `Deletes the reference and its text — ${undoKey()}`, slot: 'destroy', run: () => this.act(object, current => said(deleteFootnoteRefTransaction(view.state, current.from))) }
+                        : { id: 'delete-reference', label: 'Delete reference', short: 'Delete', title: `Footnote text stays — ${others} more reference${others === 1 ? '' : 's'}`, slot: 'destroy', run: () => this.act(object, current => said(deleteFootnoteRefTransaction(view.state, current.from))) },
+                ],
+            };
+        }
+        const entry = entryAt(index, object.from);
+        const number = entry?.number ?? null;
+        const count = entry?.refCount ?? 0;
+        const chip = entry === undefined || number !== null ? null : orphanChip(entry);
+        const verbs: Verb[] = [
+            {
+                id: 'back-to-reference', label: 'Back to reference', short: 'Back', slot: 'open', jump: true,
+                title: 'The caret back to the reference you came from, else its first.',
+                refusal: number === null ? 'No reference to go back to — this footnote is not referenced' : null,
+                run: () => this.act(object, current => {
+                    const done = backToReferenceTransaction(view.state, current.from);
+                    if (done !== null) {
+                        view.dispatch(done.tr);
+                        announceHint(view, done.number === null ? 'Reference' : `Reference ${done.number}`);
+                    }
+                    return done !== null;
+                }),
+            },
+            labelVerb(number === null ? 'Footnote' : `Footnote ${number}`, false),
+        ];
+        if (index.outOfOrder) {
+            verbs.push({
+                id: 'sort-footnotes', label: 'Sort footnotes', short: 'Sort', slot: 'type',
+                title: `The footnotes' texts in number order, after the last one; unreferenced ones last — ${undoKey()}`,
+                run: () => this.act(object, () => {
+                    const tr = sortFootnotesTransaction(view.state);
+                    if (tr !== null) {
+                        view.dispatch(tr);
+                        showChangeHint(view, `Footnotes sorted — ${undoKey()}`);
+                    }
+                    return tr !== null;
+                }),
+            });
+        }
+        const refs = number === null ? 0 : count;
+        verbs.push({
+            id: 'delete-footnote', label: 'Delete footnote', short: 'Delete', slot: 'destroy',
+            title: refs === 0 ? `Deletes its text — ${undoKey()}` : `Deletes its text and ${refs === 1 ? 'its reference' : `${refs} references`} — ${undoKey()}`,
+            run: () => this.act(object, current => said(deleteFootnoteEntryTransaction(view.state, current.from))),
+        });
+        return {
+            label: number === null ? 'Footnote ·' : `Footnote ${number} ·`,
+            short: number === null ? 'Footnote' : `Footnote ${number}`,
+            code: label ?? '',
+            after: chip !== null ? ` · ${chip.text}` : count > 1 ? ` · ${count} references` : undefined,
+            title: chip !== null ? chip.title : `The text of footnote ${number as number}, where the file writes it.`,
+            verbs,
+        };
     }
 
     private remove(object: EditorObject, hint: string): void {

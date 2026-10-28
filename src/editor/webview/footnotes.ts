@@ -4,6 +4,7 @@ import { keymap } from 'prosemirror-keymap';
 import { Command, EditorState, NodeSelection, Plugin, PluginKey, TextSelection, Transaction } from 'prosemirror-state';
 import { AttrStep, ReplaceAroundStep, ReplaceStep, Step, Transform } from 'prosemirror-transform';
 import { Decoration, DecorationSet, EditorView, NodeView } from 'prosemirror-view';
+import { PRESERVE_SOURCE_META } from '../fidelity';
 import { currentInlineEngine } from '../inlineEngine';
 import { editorSchema, footnoteSpelling } from '../schema';
 import { Said, said, value } from '../tips';
@@ -592,6 +593,10 @@ export function footnoteIndexPlugin(): Plugin<FootnoteIndex> {
                         next = { ...next, cameFrom: pos.deleted ? null : { ...next.cameFrom, pos: pos.pos } };
                     }
                 }
+                const asked = tr.getMeta(footnoteIndexKey) as { cameFrom: FootnoteIndex['cameFrom'] } | undefined;
+                if (asked !== undefined) {
+                    next = { ...next, cameFrom: asked.cameFrom };
+                }
                 return next;
             },
         },
@@ -1039,4 +1044,198 @@ export function footnoteInputRules(): Plugin {
             return state.tr.replaceWith(start, end, editorSchema.nodes.footnote_ref.create({ label: match[1] }, null, $start.marks())).setMeta(FOOTNOTES_CHANGED, true);
         })],
     });
+}
+
+// ---------------------------------------------------------------------------
+// Label…, Sort footnotes
+// ---------------------------------------------------------------------------
+
+/** The number a label's footnote has, or `null`: what a refusal names it by. */
+function numberOfLabel(state: EditorState, label: string): number | null {
+    return footnoteIndexOf(state).refs.find(r => r.label === label && r.number !== null)?.number ?? null;
+}
+
+/**
+ * Why `typed` cannot be the label of the footnote `own` names (#13: on Enter):
+ * none, a space, a `]`, or a label another footnote has. A reference whose
+ * label nothing defines may take a label that is there: that is how it finds
+ * its text again (`mayJoin`).
+ */
+export function labelRefusal(state: EditorState, typed: string, own: string | null, mayJoin = false): Said | null {
+    if (typed === '') {
+        return 'Not set: a footnote needs a label';
+    }
+    if (/\s/.test(typed)) {
+        return said`Not set: a label has no spaces — use ${value('_')} instead`;
+    }
+    if (typed.includes(']')) {
+        return said`Not set: a label can't hold ${value(']')}`;
+    }
+    if (typed === own || mayJoin) {
+        return null;
+    }
+    const index = footnoteIndexOf(state);
+    if (index.labels.has(typed) || index.refs.some(r => r.label === typed)) {
+        const number = numberOfLabel(state, typed);
+        return number === null
+            ? said`Not set: ${value(typed)} is used by another footnote — choose another`
+            : said`Not set: ${value(typed)} is used by footnote ${String(number)} — choose another`;
+    }
+    return null;
+}
+
+/**
+ * The footnote at `pos` — a reference or an entry — renamed to `to`, in one
+ * step: a live footnote everywhere (every reference and its entry), an entry
+ * the preview leaves out alone, a reference whose label nothing defines
+ * alone. A `[^to]` written as text then is the reference it now is.
+ */
+export function renameFootnoteTransaction(state: EditorState, pos: number, to: string): { tr: Transaction; hint: Said } | null {
+    const node = state.doc.nodeAt(pos);
+    const label = (node?.attrs.label as string | null | undefined) ?? null;
+    if (node === null || label === null || (node.type !== editorSchema.nodes.footnote_ref && node.type !== editorSchema.nodes.footnote_entry)) {
+        return null;
+    }
+    const index = footnoteIndexOf(state);
+    const entry = node.type === editorSchema.nodes.footnote_entry ? entryAt(index, pos) : liveEntryOf(state, label) === null ? undefined : entryAt(index, (liveEntryOf(state, label) as { pos: number }).pos);
+    const whole = entry !== undefined && entry.live;
+    const tr = state.tr;
+    const rename = (at: number) => {
+        const target = tr.doc.nodeAt(at) as Node;
+        tr.setNodeMarkup(at, undefined, { ...target.attrs, label: to });
+    };
+    if (whole) {
+        for (const ref of referencesOf(index, label)) {
+            rename(ref.pos);
+        }
+        rename((entry as FootnoteEntry).pos);
+    } else {
+        rename(pos);
+    }
+    connectLiterals(tr, new Set([...index.labels, to]));
+    tr.setMeta(FOOTNOTES_CHANGED, true);
+    return { tr, hint: said`Footnote ${value(label)} renamed to ${value(to)} — ${undoKey()}` };
+}
+
+/**
+ * Every top-level entry in number order (`FootnoteCount.outOfOrder`): gathered
+ * after the last one, the numbered ones by number, then the ones the preview
+ * leaves out in their order. Each body stays the very text it was (its `src`,
+ * `PRESERVE_SOURCE_META`); a run of entries keeps its blank lines, place by
+ * place; one moved from elsewhere gets a blank line. The caret stays in its
+ * entry, at its place there. One step, one undo. `null` when they are in order.
+ */
+export function sortFootnotesTransaction(state: EditorState): Transaction | null {
+    const index = footnoteIndexOf(state);
+    if (!index.outOfOrder) {
+        return null;
+    }
+    const placed = index.entries.map(e => ({ entry: e, node: state.doc.nodeAt(e.pos) as Node }));
+    const adjacent = placed.every((p, k) => k === 0 || placed[k - 1].entry.pos + placed[k - 1].node.nodeSize === p.entry.pos);
+    const order = [
+        ...placed.filter(p => p.entry.number !== null).sort((a, b) => (a.entry.number as number) - (b.entry.number as number)),
+        ...placed.filter(p => p.entry.number === null),
+    ];
+    const gaps = placed.map(p => p.node.attrs.gap as string | null);
+    const sorted = order.map((p, k) => p.node.type.create({ ...p.node.attrs, gap: adjacent ? gaps[k] : null }, p.node.content, p.node.marks));
+    // Where the caret is: which entry, and how far into it.
+    const sel = state.selection;
+    const inEntry = placed.findIndex(p => sel.from > p.entry.pos && sel.to < p.entry.pos + p.node.nodeSize);
+    const tr = state.tr;
+    const last = placed[placed.length - 1];
+    const end = last.entry.pos + last.node.nodeSize;
+    if (adjacent) {
+        tr.replaceWith(placed[0].entry.pos, end, sorted);
+    } else {
+        for (const p of [...placed].reverse()) {
+            tr.delete(p.entry.pos, p.entry.pos + p.node.nodeSize);
+        }
+        tr.insert(tr.mapping.map(end, -1), sorted);
+    }
+    if (inEntry >= 0) {
+        const k = order.indexOf(placed[inEntry]);
+        let start = adjacent ? placed[0].entry.pos : tr.mapping.map(end, -1) - sorted.reduce((n, node) => n + node.nodeSize, 0);
+        for (let i = 0; i < k; i++) {
+            start += sorted[i].nodeSize;
+        }
+        const offset = sel.from - placed[inEntry].entry.pos;
+        tr.setSelection(TextSelection.create(tr.doc, start + offset, start + offset + (sel.to - sel.from)));
+    }
+    return tr.setMeta(PRESERVE_SOURCE_META, true).setMeta(FOOTNOTES_CHANGED, true).scrollIntoView();
+}
+
+// ---------------------------------------------------------------------------
+// Between a reference and its text
+// ---------------------------------------------------------------------------
+
+/** Where the text of the footnote `label` starts: its live entry's first textblock, or the source block defining it. */
+function textOf(state: EditorState, label: string): { caret: number } | { block: number } | null {
+    const entry = liveEntryOf(state, label);
+    if (entry !== null) {
+        let caret: number | null = null;
+        entry.node.descendants((node, rel) => {
+            if (caret === null && node.isTextblock) {
+                caret = entry.pos + 1 + rel + 1;
+            }
+            return caret === null;
+        });
+        return caret === null ? null : { caret };
+    }
+    let block: number | null = null;
+    state.doc.forEach((node, offset) => {
+        block = definesOf(node).includes(label) ? offset : block;
+    });
+    return block === null ? null : { block };
+}
+
+/**
+ * "Go to footnote text" from the reference at `pos`: the caret at the start
+ * of its entry's text, scrolled to — a definition in a source block selected
+ * instead — and the reference remembered for "Back to reference"
+ * (`cameFrom`). With the number the landing is announced by; `null` where
+ * the label has no text.
+ */
+export function goToFootnoteTransaction(state: EditorState, pos: number): { tr: Transaction; number: number | null } | null {
+    const node = state.doc.nodeAt(pos);
+    const label = node?.type === editorSchema.nodes.footnote_ref ? node.attrs.label as string | null : null;
+    const target = label === null ? null : textOf(state, label);
+    if (label === null || target === null) {
+        return null;
+    }
+    const tr = state.tr.setSelection('caret' in target ? TextSelection.create(state.doc, target.caret) : NodeSelection.create(state.doc, target.block));
+    tr.setMeta(footnoteIndexKey, { cameFrom: { label, pos } }).setMeta('addToHistory', false).scrollIntoView();
+    return { tr, number: refAt(footnoteIndexOf(state), pos)?.number ?? null };
+}
+
+/**
+ * "Back to reference" from the entry at `pos`: to the reference "Go to
+ * footnote text" came from, when it is still there and of this label — else
+ * its `k`-th (1-based; the first by default). The caret right after it.
+ */
+export function backToReferenceTransaction(state: EditorState, pos: number, k?: number): { tr: Transaction; number: number | null } | null {
+    const node = state.doc.nodeAt(pos);
+    if (node?.type !== editorSchema.nodes.footnote_entry) {
+        return null;
+    }
+    const index = footnoteIndexOf(state);
+    const refs = referencesOf(index, node.attrs.label as string);
+    if (refs.length === 0) {
+        return null;
+    }
+    const came = index.cameFrom;
+    const fromThere = k === undefined && came !== null && came.label === node.attrs.label ? refs.find(r => r.pos === came.pos) : undefined;
+    const ref = fromThere ?? refs[Math.max(0, Math.min(refs.length, k ?? 1) - 1)];
+    const tr = state.tr.setSelection(TextSelection.create(state.doc, ref.pos + 1)).setMeta('addToHistory', false).scrollIntoView();
+    return { tr, number: ref.number };
+}
+
+/** "Sort Footnotes" from the palette (`sortFootnotes`): the entries in number order, or a neutral word that they are. */
+export function sortFootnotesCommand(view: EditorView): void {
+    const tr = sortFootnotesTransaction(view.state);
+    if (tr === null) {
+        showHint(view, footnoteIndexOf(view.state).entries.length === 0 ? 'This document has no footnotes' : 'Footnotes are in number order', 'neutral');
+        return;
+    }
+    view.dispatch(tr);
+    showChangeHint(view, `Footnotes sorted — ${undoKey()}`);
 }

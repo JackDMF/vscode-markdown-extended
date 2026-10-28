@@ -57,7 +57,7 @@ import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_LITERAL_REFU
 
 const nodes = editorSchema.nodes;
 
-export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'code_block' | 'block_attrs' | 'heading' | 'list_item' | 'raw_block' | 'injected_block' | 'front_matter';
+export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'footnote' | 'footnote_entry' | 'container' | 'admonition' | 'table' | 'code_block' | 'block_attrs' | 'heading' | 'list_item' | 'raw_block' | 'injected_block' | 'front_matter';
 
 /**
  * The objects that are a mark's run in its textblock rather than a node. A
@@ -84,7 +84,7 @@ export function isMarkObject(object: EditorObject): object is Extract<EditorObje
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
 
 /** The caret objects that are blocks: their bar sits at the block's right edge, as a block object's does. */
-const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'code_block', 'block_attrs', 'heading', 'list_item']);
+const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'code_block', 'block_attrs', 'heading', 'list_item', 'footnote_entry']);
 
 export function isBlockObject(object: EditorObject): boolean {
     return BLOCK_OBJECTS.has(object.kind);
@@ -134,6 +134,9 @@ const NODE_KINDS: Readonly<Record<string, NodeObjectKind>> = {
     inline_atom: 'badge',
     wiki_embed: 'wiki_embed',
     emoji: 'emoji',
+    // A footnote's reference (wave 4 #5b), selected as a whole; its entry, which a caret in its text names last.
+    footnote_ref: 'footnote',
+    footnote_entry: 'footnote_entry',
     container: 'container',
     admonition: 'admonition',
     table: 'table',
@@ -452,7 +455,16 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     if (from !== null && to !== null && from.noteBefore === to.noteBefore) {
         return objectOfNode(from.note, from.noteBefore);
     }
-    return codeBlockAt(state) ?? wrapperAt(state) ?? tableObjectAt(state) ?? nestedHeadingAt(state) ?? listItemAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
+    return codeBlockAt(state) ?? wrapperAt(state) ?? tableObjectAt(state) ?? nestedHeadingAt(state) ?? listItemAt(state) ?? blockAttrsAt(state) ?? headingAt(state) ?? footnoteEntryAt(state);
+}
+
+/** The footnote entry the selection is in, both its ends: the last object a caret in its text names, so a link, a note or a list item in it wins. */
+function footnoteEntryAt(state: EditorState): EditorObject | null {
+    const { $from, $to } = state.selection;
+    if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1) || $from.node(1).type !== nodes.footnote_entry) {
+        return null;
+    }
+    return objectOfNode($from.node(1), $from.before(1));
 }
 
 /**

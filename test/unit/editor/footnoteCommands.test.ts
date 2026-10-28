@@ -7,7 +7,9 @@ import { EditorView } from 'prosemirror-view';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
-import { FOOTNOTE_KEYS, connectLiterals, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf } from '../../../src/editor/webview/footnotes';
+import { FOOTNOTE_KEYS, connectLiterals, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction } from '../../../src/editor/webview/footnotes';
+import { saidText } from '../../../src/editor/tips';
+import { firstFocus } from '../../../src/editor/verbs';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, topChildren } from './helpers';
 
@@ -195,4 +197,71 @@ suite('Editor footnote keys and deletes', () => {
         });
         assert.deepStrictEqual(kinds, ['paragraph', '"a"', 'footnote_ref', '" "', '"[^liebst]"']);
     });
+
+    test('Sort footnotes: 2, 1, 3 become 1, 2, 3, each text byte for byte, the blank lines as they were; one undo restores the order (AC2)', () => {
+        const cotk = COTK.replace('[^Schäfchen]: *Schäfchen*: Kleine Schafe.\n[^liebst]: *liebst*: Agapáō.\n', '[^Schäfchen]: *Schäfchen*: Kleine Schafe.\n\n[^liebst]: *liebst*: Agapáō.\n');
+        let state = stateOf(cotk);
+        // Caret in "Agapáō", entry liebst: it stays in its entry.
+        state = caret(state, at(state.doc, 'Agap'));
+        const tr = sortFootnotesTransaction(state);
+        assert.ok(tr !== null);
+        state = state.apply(tr);
+        assert.strictEqual(text(state), cotk.replace(/\[\^Schäfchen\]: .*\n\n\[\^liebst\]: .*\n\[\^drittes\]: .*\n/,
+            '[^liebst]: *liebst*: Agapáō.\n\n[^Schäfchen]: *Schäfchen*: Kleine Schafe.\n[^drittes]: *drittes*: Dreimal.\n'));
+        assert.deepStrictEqual(footnoteIndexOf(state).entries.map(e => e.number), [1, 2, 3]);
+        assert.strictEqual(state.selection.$from.node(1).attrs.label, 'liebst', 'the caret stays in its entry');
+        assert.strictEqual(sortFootnotesTransaction(state), null, 'in order: nothing to sort');
+        state = run(state, undo) as EditorState;
+        assert.strictEqual(text(state), cotk);
+    });
+
+    test('Sort footnotes gathers a scattered entry after the last one, unreferenced ones last', () => {
+        const scattered = 'A[^b] B[^a].\n\n[^a]: Eins.\n\nZwischen.\n\n[^allein]: Allein.\n\n[^b]: Zwei.\n';
+        let state = stateOf(scattered);
+        state = state.apply(sortFootnotesTransaction(state) as Transaction);
+        assert.strictEqual(text(state), 'A[^b] B[^a].\n\nZwischen.\n\n[^b]: Zwei.\n\n[^a]: Eins.\n\n[^allein]: Allein.\n');
+    });
+
+    test('Label… refuses an empty label, a space, a `]` and one another footnote has; a reference whose label is gone may take one that is there (AC10)', () => {
+        const state = stateOf(COTK);
+        const refused = (typed: string, own: string | null = 'liebst', join = false) => {
+            const r = labelRefusal(state, typed, own, join);
+            return r === null ? null : saidText(r);
+        };
+        assert.strictEqual(refused(''), 'Not set: a footnote needs a label');
+        // The values as a screen reader is given them (`saidText`: a lone sign quoted, a word as it is); drawn in the code font.
+        assert.strictEqual(refused('zwei Worte'), 'Not set: a label has no spaces — use "_" instead');
+        assert.strictEqual(refused('a]b'), 'Not set: a label can\'t hold "]"');
+        assert.strictEqual(refused('drittes'), 'Not set: drittes is used by footnote 3 — choose another');
+        assert.strictEqual(refused('lieben'), null);
+        assert.strictEqual(refused('drittes', 'fehlt', true), null);
+    });
+
+    test('Label… renames every reference and the text in one step; one undo; a `[^lieben]` written as text joins it', () => {
+        let state = stateOf(COTK.replace('Zweiter Absatz.', 'Zweiter Absatz \\[^lieben\\].'));
+        let liebst = -1;
+        state.doc.forEach((node, offset) => {
+            liebst = node.type.name === 'footnote_entry' && node.attrs.label === 'liebst' ? offset : liebst;
+        });
+        const before = text(state);
+        const done = renameFootnoteTransaction(state, liebst, 'lieben');
+        assert.ok(done !== null);
+        assert.match(saidText(done.hint), /^Footnote liebst renamed to lieben — (Ctrl|Cmd)\+Z$/);
+        state = state.apply(done.tr);
+        assert.strictEqual(text(state), before.replace(/\[\^liebst\]/g, '[^lieben]').replace('\\[^lieben\\]', '[^lieben]'));
+        assert.deepStrictEqual(footnoteIndexOf(state).entries.find(e => e.label === 'lieben')?.refCount, 3);
+        state = run(state, undo) as EditorState;
+        assert.strictEqual(text(state), before);
+    });
+
+    test('a jump verb takes the first focus unless refused (#5b exception to #14); then the rule', () => {
+        const verbs = [
+            { slot: 'open' as const, opensInPlace: false, jump: true as const },
+            { slot: 'edit' as const, opensInPlace: true },
+            { slot: 'destroy' as const, opensInPlace: false },
+        ];
+        assert.strictEqual(firstFocus(verbs), 0);
+        assert.strictEqual(firstFocus([{ ...verbs[0], refusal: 'No reference' }, verbs[1], verbs[2]]), 1);
+    });
 });
+

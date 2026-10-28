@@ -6,6 +6,8 @@
 - Backspace or Delete beside a footnote reference selects it; pressed again it deletes it, with its text if it was the last.
 - Cutting or deleting text with a reference keeps the footnote's text; pasting the reference connects it again.
 - In a footnote's text Shift+Enter breaks the line as the file does; Enter on an empty last line leaves it.
+- Sort footnotes puts footnote texts in number order (bar and command palette).
+- A footnote's bar: Go to footnote text or Back to reference, Label… (renames every reference), Delete footnote or reference.
 - A code block's `{…}` written right after its info string (```` ```js title={.a} ````) stays without a space when the block changes.
 - An `@` right after a letter or digit (`a@b.de`, `Text@`) is saved as written, not as `\@`; it opens no sidebar.
 - A list made in the visual editor (typing `- `, `1. ` or from the toolbar) is written tight, without blank lines between items.

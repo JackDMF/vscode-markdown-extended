@@ -48,6 +48,13 @@ export interface Slotted {
      * current part is the heading inside it. Never the first focus.
      */
     outer?: true;
+    /**
+     * One of a reversible jump pair — a footnote's "Go to footnote text" and
+     * "Back to reference" (#5b): it moves the caret, and the other half brings
+     * it back. The one recorded exception to "changes nothing and stays put"
+     * (#14): such a verb takes the first focus when it is not refused.
+     */
+    jump?: true;
 }
 
 /**
@@ -77,13 +84,19 @@ export function arrange<V extends Pick<Slotted, 'slot' | 'separated' | 'outer'>>
 }
 
 /**
- * Where `Alt+Enter` puts the focus: the index of the first verb that opens in
+ * Where `Alt+Enter` puts the focus: a jump verb that is not refused (`jump`),
+ * else the index of the first verb that opens in
  * place and is not refused — never Open, never another extension's, never one
  * that acts at once, and on a two-part bar never one acting on the outer part
  * (#8: the first in-place verb acting on the current part) — or `-1`, the bar
  * itself.
  */
 export function firstFocus(verbs: readonly Slotted[]): number {
+    // #5b: a reversible jump pair (Go to footnote text / Back to reference) may take first focus.
+    const jump = verbs.findIndex(v => v.jump === true && !v.refusal);
+    if (jump >= 0) {
+        return jump;
+    }
     return verbs.findIndex(v => v.opensInPlace && !v.refusal && !v.outer && v.slot !== 'open' && v.slot !== 'actions' && v.slot !== 'destroy');
 }
 

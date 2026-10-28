@@ -258,4 +258,145 @@ suite('Editor footnotes (e2e)', () => {
         assert.strictEqual(await page.$('.ProseMirror .mep-fn-entry[data-mep-fn-entry="drittes"].mep-fn-orphan'), null, 'referenced again');
         assert.strictEqual(await page.$eval('.ProseMirror .mep-fn-entry[data-mep-fn-entry="drittes"] .mep-fn-num', el => el.textContent), '3.');
     });
+
+    // --- Bars, Label…, Delete verbs, Sort (plan step 7) ---
+
+    const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
+    const bar = () => page.$eval(BAR, el => ({
+        label: el.querySelector('.mep-object-label')?.textContent ?? '',
+        verbs: Array.from(el.querySelectorAll<HTMLButtonElement>('button[data-verb]')).map(b => [b.dataset.verb, b.getAttribute('aria-disabled') === 'true']),
+        focus: (document.activeElement as HTMLElement | null)?.dataset.verb ?? '',
+    }));
+    const pressAlt = async (key: puppeteer.KeyInput) => {
+        await page.keyboard.down('Alt');
+        await page.keyboard.press(key);
+        await page.keyboard.up('Alt');
+        await delay(200);
+    };
+    const clickAtom = async (n: number) => {
+        const box = await (await page.$$('.ProseMirror .mep-fn-ref'))[n].boundingBox();
+        assert.ok(box);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForSelector(`${BAR}[data-object="footnote"]`, { timeout: 2000 });
+        await delay(300);
+    };
+    /** The caret in the entry's text at `needle`, and its bar after the rest. */
+    const restIn = async (needle: string) => {
+        await caretAt(needle);
+        await page.mouse.move(2, 2);
+        await page.waitForSelector(`${BAR}[data-object="footnote_entry"]`, { timeout: 3000 });
+        await delay(300);
+    };
+    const clickVerb = async (verb: string) => {
+        const box = await (await page.waitForSelector(`${BAR} [data-verb="${verb}"]`, { visible: true, timeout: 2000 }))?.boundingBox();
+        assert.ok(box, verb);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await delay(200);
+    };
+
+    test('a reference\'s bar: Go to footnote text first focus, Label…, Delete footnote for the last reference, Delete reference when more remain (AC6)', async function () {
+        this.timeout(20000);
+        await show(COTK.replace('fragte, wurde', 'und liebst[^liebst] fragte, wurde'));
+        await clickAtom(1);
+        assert.deepStrictEqual(await bar(), { label: 'Footnote 2 · Schäfchen', verbs: [['go-to-footnote', false], ['footnote-label', false], ['delete-footnote', false]], focus: '' });
+        await pressAlt('Enter');
+        assert.strictEqual((await bar()).focus, 'go-to-footnote', 'the jump takes the first focus (#14 exception)');
+        await page.keyboard.press('Escape');
+        await clickAtom(0);
+        assert.deepStrictEqual((await bar()).verbs.map(v => v[0]), ['go-to-footnote', 'footnote-label', 'delete-reference']);
+        await shot(page, 'footnotes-atom-bar.png');
+    });
+
+    test('an entry\'s bar on a caret rest: Back to reference first focus, Label…, Sort footnotes while out of order, Delete footnote; an orphan\'s Back is refused', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        await restIn('Verkleinerungsform');
+        assert.deepStrictEqual(await bar(), {
+            label: 'Footnote 2 · Schäfchen',
+            verbs: [['back-to-reference', false], ['footnote-label', false], ['sort-footnotes', false], ['delete-footnote', false]],
+            focus: '',
+        });
+        await pressAlt('Enter');
+        assert.strictEqual((await bar()).focus, 'back-to-reference');
+        await page.keyboard.press('Escape');
+        await restIn('Senfpflanze');
+        const orphan = await bar();
+        assert.deepStrictEqual([orphan.label, orphan.verbs[0]], ['Footnote · Senfkorn · not referenced', ['back-to-reference', true]]);
+        await pressAlt('Enter');
+        assert.strictEqual((await bar()).focus, 'footnote-label', 'Back is refused: Label… first');
+        await page.keyboard.press('Escape');
+    });
+
+    test('Sort footnotes on the bar puts them in number order and leaves the bar; from the palette, a sorted document says so (AC2)', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        await restIn('Verkleinerungsform');
+        await clickVerb('sort-footnotes');
+        await settle();
+        assert.deepStrictEqual(await page.$$eval('.ProseMirror .mep-fn-num', els => els.map(e => e.textContent)), ['1.', '2.', '3.', '']);
+        assert.deepStrictEqual(await hint(), { text: `Footnotes sorted — ${UNDO}`, tone: 'neutral', shown: true });
+        await restIn('Verkleinerungsform');
+        assert.ok(!(await bar()).verbs.some(v => v[0] === 'sort-footnotes'), 'in order: no Sort');
+        await press('z');
+        assert.strictEqual(await lastText(), COTK);
+        await (editor as EditorPage).send({ type: 'sortFootnotes' } as never);
+        await settle();
+        assert.deepStrictEqual(await page.$$eval('.ProseMirror .mep-fn-num', els => els.map(e => e.textContent)), ['1.', '2.', '3.', '']);
+        await (editor as EditorPage).send({ type: 'sortFootnotes' } as never);
+        await delay(200);
+        assert.deepStrictEqual(await hint(), { text: 'Footnotes are in number order', tone: 'neutral', shown: true });
+    });
+
+    test('Label… refuses a space and a taken label in the field, amber; a valid one renames every reference and the text in one undo (AC10)', async function () {
+        this.timeout(20000);
+        await show(COTK.replace('fragte, wurde', 'und liebst[^liebst] fragte, wurde'));
+        await clickAtom(0);
+        await clickVerb('footnote-label');
+        const input = 'input.mep-inline-field';
+        await page.waitForSelector(input, { visible: true });
+        const refusal = async (typed: string) => {
+            await page.keyboard.down(MOD);
+            await page.keyboard.press('a', editCommand('a'));
+            await page.keyboard.up(MOD);
+            await page.keyboard.type(typed);
+            await page.keyboard.press('Enter');
+            await delay(200);
+            return page.$eval(input, el => ({ invalid: el.getAttribute('aria-invalid'), reason: document.getElementById(el.getAttribute('aria-describedby') ?? '')?.textContent ?? '' }));
+        };
+        assert.deepStrictEqual(await refusal('zwei Worte'), { invalid: 'true', reason: 'Not set: a label has no spaces — use "_" instead' });
+        assert.deepStrictEqual(await refusal('drittes'), { invalid: 'true', reason: 'Not set: drittes is used by footnote 3 — choose another' });
+        await shot(page, 'footnotes-label-refusal.png');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a', editCommand('a'));
+        await page.keyboard.up(MOD);
+        await page.keyboard.type('lieben');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual(await page.$('input.mep-inline-field'), null, 'set: the field closes');
+        const renamed = await lastText();
+        assert.ok(renamed !== undefined && !renamed.includes('liebst]') && (renamed.match(/\[\^lieben\]/g) ?? []).length === 3, renamed);
+        await press('z');
+        assert.ok((await lastText())?.includes('[^liebst]:'));
+    });
+
+    test('at 520 px every footnote bar keeps its verbs whole and inside the window', async function () {
+        this.timeout(20000);
+        await page.setViewport({ width: 520, height: 900 });
+        try {
+            await show(COTK);
+            const whole = () => page.$eval(BAR, el => ({
+                inside: el.getBoundingClientRect().right <= document.documentElement.clientWidth - 16 + 0.5 && el.getBoundingClientRect().left >= -0.5,
+                whole: Array.from(el.querySelectorAll<HTMLButtonElement>('button[data-verb]')).every(b => b.scrollWidth <= b.clientWidth),
+            }));
+            await clickAtom(0);
+            assert.deepStrictEqual(await whole(), { inside: true, whole: true }, 'the reference\'s bar');
+            await shot(page, 'footnotes-atom-bar-520.png');
+            await restIn('Verkleinerungsform');
+            assert.deepStrictEqual(await whole(), { inside: true, whole: true }, 'the entry\'s bar');
+            await shot(page, 'footnotes-entry-bar-520.png');
+        } finally {
+            await page.setViewport({ width: 1280, height: 900 });
+        }
+    });
 });
+
