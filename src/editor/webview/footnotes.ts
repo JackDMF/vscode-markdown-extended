@@ -8,7 +8,7 @@ import { PRESERVE_SOURCE_META } from '../fidelity';
 import { currentInlineEngine } from '../inlineEngine';
 import { editorSchema, footnoteSpelling } from '../schema';
 import { Said, said, value } from '../tips';
-import { macKeys, showChangeHint, showHint, showRefusal, undoKey } from './hint';
+import { announceHint, macKeys, showChangeHint, showHint, showRefusal, undoKey } from './hint';
 
 /**
  * Footnotes edited in place (wave 4 #5b): the numbers.
@@ -604,6 +604,18 @@ export function footnoteIndexPlugin(): Plugin<FootnoteIndex> {
             decorations: state => footnoteIndexOf(state).decorations,
             // A `[^x]` pasted as text, whose label the document defines, is that reference again.
             transformPasted: (slice, view) => connectedSlice(slice, footnoteIndexOf(view.state).labels),
+            handleDOMEvents: {
+                // A Ctrl/Cmd+press on a reference, or any press on a ↩, is the jump's: no selection made first.
+                mousedown: (view, event) => {
+                    const target = event.target as Element | null;
+                    if (target?.closest?.('.mep-fn-back') || (isModified(event) && target?.closest?.('.mep-fn-ref') && view.dom.contains(target))) {
+                        event.preventDefault();
+                        return true;
+                    }
+                    return false;
+                },
+                click: (view, event) => jumpOnClick(view, event),
+            },
             nodeViews: {
                 // eslint-disable-next-line @typescript-eslint/naming-convention -- the schema's node names
                 footnote_ref: (node, view, getPos) => new FootnoteRefView(node, view, getPos),
@@ -1238,4 +1250,97 @@ export function sortFootnotesCommand(view: EditorView): void {
     }
     view.dispatch(tr);
     showChangeHint(view, `Footnotes sorted — ${undoKey()}`);
+}
+
+/** Ctrl or Cmd held, as a link is followed (`links.ts`). */
+function isModified(event: MouseEvent): boolean {
+    return event.ctrlKey || event.metaKey;
+}
+
+/**
+ * A click that jumps: Ctrl/Cmd on a reference goes to its text, as a link is
+ * followed and as the preview's `[1]` goes; a click on a `↩` back to its own
+ * reference. A plain click on a reference selects it (ProseMirror's).
+ */
+function jumpOnClick(view: EditorView, event: MouseEvent): boolean {
+    const target = event.target as Element | null;
+    const back = target?.closest?.('.mep-fn-back') as HTMLElement | null;
+    if (back !== null && back !== undefined && view.dom.contains(back)) {
+        const entry = back.closest('.mep-fn-entry');
+        const pos = footnoteIndexOf(view.state).entries.find(e => view.nodeDOM(e.pos) === entry)?.pos ?? -1;
+        const done = pos < 0 ? null : backToReferenceTransaction(view.state, pos, Number(back.dataset.k ?? '1'));
+        if (done !== null) {
+            view.focus();
+            view.dispatch(done.tr);
+            announceHint(view, done.number === null ? 'Reference' : `Reference ${done.number}`);
+        }
+        event.preventDefault();
+        return true;
+    }
+    const ref = isModified(event) ? target?.closest?.('.mep-fn-ref') as HTMLElement | null : null;
+    if (ref === null || ref === undefined || !view.dom.contains(ref)) {
+        return false;
+    }
+    const at = footnoteIndexOf(view.state).refs.find(r => r.raw !== true && view.nodeDOM(r.pos) === ref)?.pos;
+    const done = at === undefined ? null : goToFootnoteTransaction(view.state, at);
+    event.preventDefault();
+    if (done !== null) {
+        view.focus();
+        view.dispatch(done.tr);
+        announceHint(view, done.number === null ? 'Footnote text' : `Footnote ${done.number} text`);
+    }
+    return true;
+}
+
+/**
+ * The pointer card's first section for the reference at `pos` (`hover.ts`):
+ * "Footnote 1 · liebst", its text as the entry shows it (the widgets left
+ * out) or an inline footnote's rendered, and how to go there; for a label
+ * nothing defines, that the preview shows it as text. `null` for no reference.
+ */
+export function footnoteCardSection(view: EditorView, pos: number, render: (html: string) => HTMLElement): HTMLElement | null {
+    const node = view.state.doc.nodeAt(pos);
+    if (node?.type !== editorSchema.nodes.footnote_ref) {
+        return null;
+    }
+    const index = footnoteIndexOf(view.state);
+    const ref = refAt(index, pos);
+    const label = node.attrs.label as string | null;
+    const section = document.createElement('div');
+    section.className = 'mep-card-section mep-card-footnote';
+    const title = document.createElement('div');
+    title.className = 'mep-card-message mep-card-footnote-title';
+    const code = (text: string) => {
+        const el = document.createElement('span');
+        el.className = 'mep-card-code';
+        el.textContent = text;
+        return el;
+    };
+    if (label !== null && (ref === undefined || ref.number === null)) {
+        title.append('No footnote ', code(label), ' — the preview shows it as text');
+        section.append(title);
+        return section;
+    }
+    if (label === null) {
+        title.append(`Inline footnote ${ref?.number ?? ''}`.trim());
+        section.append(title, render(currentInlineEngine().renderInline(node.attrs.source as string)));
+        return section;
+    }
+    title.append(`Footnote ${ref?.number ?? ''} · `, code(label));
+    section.append(title);
+    const entry = liveEntryOf(view.state, label);
+    const dom = entry === null ? null : view.nodeDOM(entry.pos);
+    const body = dom instanceof HTMLElement ? dom.querySelector('.mep-fn-body') : null;
+    if (body !== null) {
+        const copy = body.cloneNode(true) as HTMLElement;
+        copy.querySelectorAll('.ProseMirror-widget, .mep-fn-back, .mep-fn-chip, .ProseMirror-trailingBreak').forEach(el => el.remove());
+        copy.className = 'mep-card-footnote-body';
+        copy.removeAttribute('contenteditable');
+        section.append(copy);
+    }
+    const foot = document.createElement('div');
+    foot.className = 'mep-card-source';
+    foot.textContent = `${macKeys() ? 'Cmd' : 'Ctrl'}+click goes to the text`;
+    section.append(foot);
+    return section;
 }

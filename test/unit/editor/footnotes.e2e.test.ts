@@ -398,5 +398,105 @@ suite('Editor footnotes (e2e)', () => {
             await page.setViewport({ width: 1280, height: 900 });
         }
     });
+
+    // --- Between a reference and its text (plan step 8) ---
+
+    /** Whether a letter typed now stands right after `before` in the file; the letter undone again. */
+    const typedAfter = async (before: string) => {
+        await page.keyboard.type('Q');
+        await settle();
+        const holds = (await lastText())?.includes(`${before}Q`) ?? false;
+        await press('z');
+        return holds;
+    };
+    /** Where the caret is: the entry it is in, and whether it stands right after the `n`th reference. */
+    const caretState = (n: number) => page.evaluate(k => {
+        const sel = window.getSelection();
+        const node = sel?.anchorNode ?? null;
+        const el = node === null ? null : (node.nodeType === 1 ? node as Element : node.parentElement);
+        const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).getClientRects()[0] ?? sel.getRangeAt(0).getBoundingClientRect() : null;
+        const atom = document.querySelectorAll('.ProseMirror .mep-fn-ref')[k]?.getBoundingClientRect();
+        return {
+            entry: el?.closest('.mep-fn-entry')?.getAttribute('data-mep-fn-entry') ?? null,
+            current: document.querySelector('.ProseMirror .mep-fn-entry.mep-fn-current')?.getAttribute('data-mep-fn-entry') ?? null,
+            afterAtom: range !== null && atom !== undefined && Math.abs(range.left - atom.right) < 4 && Math.abs(range.top - atom.top) < 20,
+        };
+    }, n);
+
+    test('Go to footnote text on [1] lands at its text, tinted, announced; Back to reference returns right after the same [1]; from the second of two references, to the second (AC7)', async function () {
+        this.timeout(25000);
+        await show(COTK.replace('fragte, wurde', 'und liebst[^liebst] fragte, wurde'));
+        await clickAtom(0);
+        await pressAlt('Enter');
+        await page.keyboard.press('Enter');
+        await delay(300);
+        assert.deepStrictEqual(await caretState(0), { entry: 'liebst', current: 'liebst', afterAtom: false });
+        assert.strictEqual(await page.$eval('.mep-live', el => el.textContent), 'Footnote 1 text');
+        await page.waitForSelector(`${BAR}[data-object="footnote_entry"]`, { timeout: 3000 });
+        await pressAlt('Enter');
+        assert.strictEqual((await bar()).focus, 'back-to-reference');
+        await page.keyboard.press('Enter');
+        await delay(300);
+        assert.deepStrictEqual(await caretState(0), { entry: null, current: null, afterAtom: (await caretState(0)).afterAtom });
+        assert.ok(await typedAfter('*liebst*[^liebst]'), 'right after the same [1]');
+        // The second reference to liebst ([4]): back to it, not to the first.
+        await clickAtom(3);
+        await pressAlt('Enter');
+        await page.keyboard.press('Enter');
+        await delay(300);
+        await page.waitForSelector(`${BAR}[data-object="footnote_entry"]`, { timeout: 3000 });
+        await pressAlt('Enter');
+        await page.keyboard.press('Enter');
+        await delay(300);
+        assert.ok(await typedAfter('und liebst[^liebst]'), 'back to the second reference');
+    });
+
+    test('Ctrl/Cmd+click on [2] goes to its text; each ↩ goes back to its own reference (AC8)', async function () {
+        this.timeout(25000);
+        await show(COTK.replace('fragte, wurde', 'und liebst[^liebst] fragte, wurde'));
+        const box = await (await page.$$('.ProseMirror .mep-fn-ref'))[1].boundingBox();
+        assert.ok(box);
+        await page.keyboard.down(MOD);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await page.keyboard.up(MOD);
+        await delay(300);
+        assert.strictEqual((await caretState(1)).entry, 'Schäfchen');
+        const backs = await page.$$('.ProseMirror .mep-fn-entry[data-mep-fn-entry="liebst"] .mep-fn-back');
+        assert.strictEqual(backs.length, 2, 'one ↩ per reference');
+        for (const [k, atom] of [[0, 0], [1, 3]] as [number, number][]) {
+            const b = await backs[k].boundingBox();
+            assert.ok(b);
+            await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+            await delay(300);
+            assert.ok(await typedAfter(atom === 0 ? '*liebst*[^liebst]' : 'und liebst[^liebst]'), `↩ ${k + 1} goes to its reference`);
+        }
+    });
+
+    test('the pointer on a reference shows its text in the card, with how to go there; on an inline footnote its text rendered', async function () {
+        this.timeout(25000);
+        await show(`${COTK}\nEine Anleitung^[Oder *Lenkung*.] hier.\n`);
+        const card = async (n: number) => {
+            await page.mouse.move(2, 2);
+            await delay(200);
+            const box = await (await page.$$('.ProseMirror .mep-fn-ref'))[n].boundingBox();
+            assert.ok(box);
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+            await page.waitForFunction(want => {
+                const title = document.querySelector('.mep-language-card .mep-card-footnote .mep-card-footnote-title') as HTMLElement | null;
+                return title !== null && title.offsetParent !== null && title.textContent?.startsWith(want);
+            }, { timeout: 3000 }, n === 3 ? 'Inline' : 'Footnote');
+            return page.$eval('.mep-language-card .mep-card-footnote', el => ({
+                title: el.querySelector('.mep-card-footnote-title')?.textContent,
+                body: (el.querySelector('.mep-card-footnote-body, .mep-card-hover') as HTMLElement | null)?.textContent?.trim(),
+                foot: el.querySelector('.mep-card-source')?.textContent ?? null,
+            }));
+        };
+        const first = await card(0);
+        assert.deepStrictEqual(first, { title: 'Footnote 1 · liebst', body: 'liebst: Jesus fragte ihn drei Mal hintereinander, ob er ihn wirklich liebt.', foot: `${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+click goes to the text` });
+        await shot(page, 'footnotes-hover.png');
+        const inline = await card(3);
+        assert.deepStrictEqual([inline.title, inline.body], ['Inline footnote 4', 'Oder Lenkung.']);
+        await page.mouse.move(2, 2);
+    });
 });
 

@@ -17,6 +17,7 @@ import { MODIFIER_KEYS } from '../keys';
 import { PositionMap, SourceRange, holdsText } from '../positions';
 import type { CodeActionItem, DiagnosticEntry, HostMessage, WebviewMessage } from '../protocol';
 import { completionOpen } from './completion';
+import { footnoteCardSection } from './footnotes';
 import { SEVERITY_ICON, diagnosticsAt, diagnosticsPlacedOn } from './diagnostics';
 import { CardAnchor, LanguageCard, hoverSection } from './languageCard';
 import { lensLabel, lensLabelNodes } from './lenses';
@@ -114,6 +115,8 @@ interface Shown {
     hoverRequest: number | null;
     hoverHtml: string;
     anchor: CardAnchor;
+    /** The page's own first section: the footnote the pointer rests on (`footnoteCardSection`), or `null`. */
+    footnote: HTMLElement | null;
 }
 
 class PointerCard implements PluginView {
@@ -314,7 +317,9 @@ class PointerCard implements PluginView {
             return;
         }
         const diagnostics = (probe.onText || probe.whole) ? diagnosticsAt(this.view.state, probe.pos) : [];
-        if (diagnostics.length === 0 && !probe.onText) {
+        // A footnote's reference shows its text: the page knows it, no host round trip.
+        const footnote = footnoteCardSection(this.view, probe.pos, hoverSection);
+        if (diagnostics.length === 0 && !probe.onText && footnote === null) {
             return;
         }
         const inline = diagnostics.find(d => this.view.state.doc.resolve(d.from).parent.inlineContent);
@@ -330,6 +335,7 @@ class PointerCard implements PluginView {
             hoverRequest: null,
             hoverHtml: '',
             anchor: inline ? this.anchorAt(inline.from, pointer) : probe.onText ? this.anchorAt(probe.pos, pointer) : pointer,
+            footnote,
         };
         this.hide();
         this.shown = next;
@@ -380,7 +386,7 @@ class PointerCard implements PluginView {
         if (!shown) {
             return;
         }
-        const sections = shown.diagnostics.map((d, i) => diagnosticSection(d.entry, shown.fixes.get(i)));
+        const sections = [...(shown.footnote === null ? [] : [shown.footnote]), ...shown.diagnostics.map((d, i) => diagnosticSection(d.entry, shown.fixes.get(i)))];
         if (shown.hoverHtml.trim() !== '') {
             sections.push(hoverSection(shown.hoverHtml));
         }

@@ -2165,6 +2165,10 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     color: var(--vscode-descriptionForeground, #888);
 }
 .mep-card-source { padding-left: 20px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
+/* A footnote's section (wave 4 #5b): its title, its text as the entry shows it, how to go there — no severity icon to align with. */
+.mep-card-footnote .mep-card-source { padding-left: 0; }
+.mep-card-footnote-body { margin: 4px 0; }
+.mep-card-footnote-body > p { margin: 0 0 4px; }
 .mep-card-fixes-label { padding-left: 20px; margin-top: 2px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
 .mep-card-fix { padding-left: 20px; }
 .mep-language-card a {
