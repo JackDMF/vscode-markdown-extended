@@ -340,6 +340,13 @@ img.mep-pending-range {
     box-shadow: inset 0 0 0 1px var(--vscode-editor-lineHighlightBorder, var(--vscode-contrastActiveBorder, transparent));
 }
 
+/* An entry with no text yet (Insert › Footnote without a selection): what to type, drawn, not text. */
+.ProseMirror .mep-fn-entry .mep-fn-body > p:only-child:has(> br.ProseMirror-trailingBreak:only-child)::before {
+    content: "Footnote text";
+    color: var(--vscode-input-placeholderForeground, GrayText);
+    pointer-events: none;
+}
+
 /* Not referenced: a dashed edge and a muted chip say why the preview leaves it out; the text keeps its colour (contrast). */
 .ProseMirror .mep-fn-orphan .mep-fn-body { border-left: 2px dashed var(--vscode-descriptionForeground, GrayText); padding-left: 6px; }
 

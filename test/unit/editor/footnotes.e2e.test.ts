@@ -498,5 +498,42 @@ suite('Editor footnotes (e2e)', () => {
         assert.deepStrictEqual([inline.title, inline.body], ['Inline footnote 4', 'Oder Lenkung.']);
         await page.mouse.move(2, 2);
     });
+
+    // --- Insert › Footnote in place (plan step 9) ---
+
+    /** The DOM selection over the first `needle`, as a person drags it. */
+    const selectText = (needle: string) => page.evaluate(n => {
+        const walker = document.createTreeWalker(document.querySelector('.ProseMirror') as HTMLElement, NodeFilter.SHOW_TEXT);
+        for (let t = walker.nextNode() as Text | null; t; t = walker.nextNode() as Text | null) {
+            const at = t.data.indexOf(n);
+            if (at >= 0) {
+                (document.querySelector('.ProseMirror') as HTMLElement).focus();
+                window.getSelection()?.setBaseAndExtent(t, at, t, at + n.length);
+                return;
+            }
+        }
+    }, needle);
+
+    test('Insert › Footnote on `Petrus traurig.`: the reference after the word, its entry after the last one prefilled, the caret there; the hint names it (AC9)', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        await selectText('Petrus traurig');
+        await delay(200);
+        await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
+        await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden]) [data-action="footnote-reference"]');
+        await page.click('.mep-menu[data-menu="annotation"] [data-action="footnote-reference"]');
+        await settle();
+        assert.deepStrictEqual(await hint(), { text: `Footnote Petrus_traurig added — type its text; ↩ goes back · ${UNDO}`, tone: 'neutral', shown: true });
+        await page.keyboard.type('Er weinte.');
+        await settle();
+        const out = await lastText();
+        // The longer line wraps where the paragraph was written, as any changed one.
+        assert.ok(/wurde Petrus\s+traurig\[\^Petrus_traurig\]\./.test(out ?? ''), out);
+        assert.ok(out?.includes('[^Petrus_traurig]: *Petrus traurig*: Er weinte.\n'), out);
+        // After the last entry, written as it is: no blank line between entries that had none.
+        assert.ok(out?.includes('Samenkorn.\n\n[^Petrus_traurig]:'), out);
+        assert.strictEqual(await page.$eval('.ProseMirror .mep-fn-entry[data-mep-fn-entry="Petrus_traurig"] .mep-fn-num', el => el.textContent), '4.');
+        await shot(page, 'footnotes-insert.png');
+    });
 });
 

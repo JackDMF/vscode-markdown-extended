@@ -1344,3 +1344,83 @@ export function footnoteCardSection(view: EditorView, pos: number, render: (html
     section.append(foot);
     return section;
 }
+
+// ---------------------------------------------------------------------------
+// Insert › Footnote
+// ---------------------------------------------------------------------------
+
+/** What Insert › Footnote takes off the ends of the selected text for its label: white space, punctuation, symbols (`Taufe“.` → `Taufe`). */
+const LABEL_EDGES = /^[\s\p{P}\p{S}]+|[\s\p{P}\p{S}]+$/gu;
+
+/** Every label `state` holds: its definitions', its references' and those written as text (`[^x]`). */
+function labelsInUse(state: EditorState): Set<string> {
+    const index = footnoteIndexOf(state);
+    const used = new Set<string>([...index.labels, ...index.refs.flatMap(r => (r.label === null ? [] : [r.label]))]);
+    state.doc.descendants(node => {
+        for (const m of node.isText ? (node.text ?? '').matchAll(LITERAL) : []) {
+            used.add(m[1]);
+        }
+        return true;
+    });
+    return used;
+}
+
+/** `base` made a label nothing in `state` uses yet: itself, else `base_2`, `base_3` … (`Taufe_2`). */
+export function freeLabel(state: EditorState, base: string): string {
+    const used = labelsInUse(state);
+    if (!used.has(base)) {
+        return base;
+    }
+    let n = 2;
+    while (used.has(`${base}_${n}`)) {
+        n++;
+    }
+    return `${base}_${n}`;
+}
+
+/** The first number nothing in `state` uses as a label. */
+function freeNumber(state: EditorState): string {
+    const used = labelsInUse(state);
+    let n = 1;
+    while (used.has(String(n))) {
+        n++;
+    }
+    return String(n);
+}
+
+/**
+ * Insert › Footnote, in place (F4, AC9). With a selection, its word — the
+ * selected text without the white space, quotes and punctuation at its ends —
+ * is the label (white space as `_`, made unique: `Taufe_2`); the reference
+ * goes right after the word's last character, with no marks, and its entry,
+ * prefilled `*word*: `, after the last entry (else at the end), written as
+ * that entry is written (F5). Without one, the next free number at the caret,
+ * and an empty entry. The caret after the prefill. One step, one undo.
+ */
+export function insertFootnoteTransaction(state: EditorState): { tr: Transaction; hint: Said } | null {
+    const sel = state.selection;
+    if (!(sel instanceof TextSelection) || !sel.$from.sameParent(sel.$to) || !sel.$from.parent.isTextblock || sel.$from.parent.type.spec.code === true || sel.$from.depth < 1) {
+        return null;
+    }
+    const selected = state.doc.textBetween(sel.from, sel.to, undefined, '￼');
+    const word = selected.replace(LABEL_EDGES, '');
+    const base = word === '' || word.includes('￼') ? null : word.replace(/\s+/g, '_').replace(/\]/g, '');
+    const label = base === null ? freeNumber(state) : freeLabel(state, base);
+    // Right after the word's last character: the selection less what was trimmed at its end.
+    const trailing = base === null ? 0 : selected.length - selected.replace(/[\s\p{P}\p{S}]+$/u, '').length;
+    const at = base === null ? sel.to : sel.to - trailing;
+    // Written as the last entry is: its space, its continuation, its hard break (F5).
+    const entries = footnoteIndexOf(state).entries;
+    const last = entries.length === 0 ? null : state.doc.nodeAt(entries[entries.length - 1].pos);
+    const spelling = last === null ? {} : { space: last.attrs.space, continuation: last.attrs.continuation, breakStyle: last.attrs.breakStyle };
+    const em = editorSchema.marks.em.create({ markup: '*' });
+    const text = base === null ? null : editorSchema.nodes.paragraph.create(null, [editorSchema.text(word, [em]), editorSchema.text(': ')]);
+    const entry = editorSchema.nodes.footnote_entry.create({ label, ...spelling }, text ?? editorSchema.nodes.paragraph.create());
+    const tr = state.tr;
+    tr.insert(at, editorSchema.nodes.footnote_ref.create({ label }, null, []));
+    const after = last === null ? tr.doc.content.size : tr.mapping.map(entries[entries.length - 1].pos + last.nodeSize);
+    tr.insert(after, entry);
+    tr.setSelection(TextSelection.create(tr.doc, after + entry.nodeSize - 2));
+    tr.setMeta(FOOTNOTES_CHANGED, true).scrollIntoView();
+    return { tr, hint: said`Footnote ${value(label)} added — type its text; ↩ goes back · ${undoKey()}` };
+}

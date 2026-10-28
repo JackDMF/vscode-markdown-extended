@@ -137,13 +137,12 @@ export type ActionApply =
     /** A new pipe table after the current block, edited in place: a header row of `columns` cells and `rows` body rows, the first header cell's text selected. */
     | { kind: 'insert-table'; columns: number; rows: number }
     /**
-     * The selection's text wrapped in `open` … `close` as literal source
-     * (`placeholder` when nothing is selected); the block comes back from the
-     * host as a source block. `definition`, when set, is a source block of its
-     * own inserted after it (a footnote's text) — the one inline construct the
-     * editor still writes this way, since a footnote is two blocks.
+     * A footnote, in place (wave 4 #5b, `insertFootnoteTransaction`): a
+     * reference after the selected word, labelled with it, and its entry after
+     * the last one, prefilled with the word (`*word*: `); without a selection,
+     * the next free number and an empty entry.
      */
-    | { kind: 'wrap-source'; open: string; close: string; placeholder: string; definition?: string }
+    | { kind: 'footnote' }
     /** A new source block holding `template`, inserted after the current block, its source opened. */
     | { kind: 'insert-source'; template: string }
     /**
@@ -230,7 +229,7 @@ export const SOURCE_FOOTNOTE = `¹ ${SOURCE_NOTE.charAt(0).toLowerCase()}${SOURC
 
 /** Whether the action writes source the editor shows as a source block, not as rich text. */
 export function isSourceAction(action: ToolbarAction): boolean {
-    return action.apply.kind === 'wrap-source' || action.apply.kind === 'insert-source';
+    return action.apply.kind === 'insert-source';
 }
 
 export function inRow(action: ToolbarAction): boolean {
@@ -635,13 +634,11 @@ const annotations: ToolbarAction[] = [
     noteAction('left-sidebar', 'left_sidebar', LS.marker, LS.marker, el(`span.${LS.cssClass}`, 'left'), sidebarPreview(LS.marker, LS.cssClass), 'text', false),
     noteAction('right-sidebar', 'right_sidebar', RS.marker, RS.marker, el(`span.${RS.cssClass}`, 'right'), sidebarPreview(RS.marker, RS.cssClass), 'text', false),
     {
-        // A footnote label cannot hold the selected prose (no spaces), and a
-        // reference without a definition renders as its literal text; so the
-        // reference goes after the selection with the first free number, and
-        // its definition is a source block of its own below the paragraph.
-        id: 'footnote-reference', place: { menu: 'annotation' }, label: 'Footnote', syntax: `text[^1] … [^1]: ${FOOTNOTE_TEXT}`, column: 'text[^1]', separated: true,
+        // In place (wave 4 #5b): the reference after the selected word, labelled
+        // with it, its text an entry after the last one, prefilled `*word*: `.
+        id: 'footnote-reference', place: { menu: 'annotation' }, label: 'Footnote', syntax: `word[^word] … [^word]: *word*: ${FOOTNOTE_TEXT}`, column: 'text[^1]', separated: true,
         sample: el('sup.footnote-ref', el('a', '[1]')),
-        apply: { kind: 'wrap-source', open: '', close: `[^${FOOTNOTE_LABEL}]`, placeholder: '', definition: `[^${FOOTNOTE_LABEL}]: ${FOOTNOTE_TEXT}` },
+        apply: { kind: 'footnote' },
         example: withLabel(`text[^${FOOTNOTE_LABEL}]\n\n[^${FOOTNOTE_LABEL}]: ${FOOTNOTE_TEXT}`),
         preview: {
             markdown: 'A claim that needs a source.[^1]\n\n[^1]: The source it rests on.',

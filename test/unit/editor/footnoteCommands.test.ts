@@ -7,7 +7,7 @@ import { EditorView } from 'prosemirror-view';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
-import { FOOTNOTE_KEYS, connectLiterals, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction } from '../../../src/editor/webview/footnotes';
+import { FOOTNOTE_KEYS, connectLiterals, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, insertFootnoteTransaction, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction } from '../../../src/editor/webview/footnotes';
 import { saidText } from '../../../src/editor/tips';
 import { firstFocus } from '../../../src/editor/verbs';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -262,6 +262,39 @@ suite('Editor footnote keys and deletes', () => {
         ];
         assert.strictEqual(firstFocus(verbs), 0);
         assert.strictEqual(firstFocus([{ ...verbs[0], refusal: 'No reference' }, verbs[1], verbs[2]]), 1);
+    });
+
+    test('Insert › Footnote on `Taufe“.`: `[^Taufe]` right after the word, `[^Taufe]: *Taufe*: ` after the last entry, the caret after it; a second time `Taufe_2` (AC9)', () => {
+        const doc = 'Die Bitte zur Taufe“. Und mehr.\n\n[^a]: *a*  \nErklärung.\n\nDanach.\n';
+        let state = stateOf(doc);
+        const from = at(state.doc, 'Taufe', true);
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, from, from + 'Taufe“.'.length)));
+        let done = insertFootnoteTransaction(state);
+        assert.ok(done !== null);
+        state = state.apply(done.tr);
+        assert.strictEqual(text(state), 'Die Bitte zur Taufe[^Taufe]“. Und mehr.\n\n[^a]: *a*  \nErklärung.\n\n[^Taufe]: *Taufe*:\n\nDanach.\n');
+        assert.strictEqual(state.selection.$from.parent.textContent, 'Taufe: ');
+        assert.strictEqual(state.selection.$from.parentOffset, 'Taufe: '.length, 'the caret after the prefill');
+        assert.match(saidText(done.hint), /^Footnote Taufe added — type its text; ↩ goes back · (Ctrl|Cmd)\+Z$/);
+        state = state.apply(state.tr.insertText('Untertauchen.'));
+        assert.ok(text(state).includes('[^Taufe]: *Taufe*: Untertauchen.\n'), text(state));
+        const again = at(state.doc, 'Taufe', true);
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, again, again + 'Taufe'.length)));
+        done = insertFootnoteTransaction(state) as NonNullable<typeof done>;
+        state = state.apply(done.tr);
+        assert.ok(text(state).includes('Taufe[^Taufe_2][^Taufe]“.') && text(state).includes('[^Taufe_2]: *Taufe*:'), text(state));
+        state = run(run(state, undo) as EditorState, undo) as EditorState;
+    });
+
+    test('Insert › Footnote at a caret: the next free number, an empty entry at the end, the caret in it', () => {
+        let state = stateOf('Ein Satz[^1] hier.\n\n[^1]: Eins.\n');
+        state = caret(state, at(state.doc, 'hier'));
+        const done = insertFootnoteTransaction(state);
+        assert.ok(done !== null);
+        state = state.apply(done.tr);
+        assert.strictEqual(text(state), 'Ein Satz[^1] hier[^2].\n\n[^1]: Eins.\n\n[^2]:\n');
+        assert.strictEqual(state.selection.$from.node(1).attrs.label, '2');
+        assert.deepStrictEqual(footnoteIndexOf(state).entries.map(e => e.number), [1, 2]);
     });
 });
 

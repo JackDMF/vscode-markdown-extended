@@ -37,7 +37,8 @@ import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { LayerClaim, LayerSlot, Rect, REST_MS, blockFieldAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
-import { dismissRefusal, showHint, showRefusal } from '../hint';
+import { dismissRefusal, showChangeHint, showHint, showRefusal } from '../hint';
+import { insertFootnoteTransaction } from '../footnotes';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
 import { chevronNode, lensLabelNodes } from '../lenses';
@@ -66,7 +67,7 @@ import { macKeys } from '../hint';
 import { Tooltips, describeAs, partNode } from '../tooltip';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertPropertiesTransaction, insertSourceTransaction, insertWrapperTransaction, isCurrent,
-    markActive, markRefusal, toggleMarkup, wrapSourceTransaction,
+    markActive, markRefusal, toggleMarkup,
 } from './commands';
 
 /** What the toolbar needs from the page. */
@@ -368,7 +369,7 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
             const active = reason === null && isCurrent(currentBlock(state), apply.node, apply.level);
             return { enabled: reason === null && (active || blockCommand(apply.node, apply.level)(state)), active, reason };
         }
-        case 'wrap-source': {
+        case 'footnote': {
             const enabled = canWrapSource(state);
             return { enabled, active: false, reason: enabled ? null : WRAP_LOCK };
         }
@@ -2063,20 +2064,13 @@ class ToolbarView implements PluginView {
                 blockCommand(apply.node, apply.level)(view.state, view.dispatch);
                 view.focus();
                 return;
-            case 'wrap-source': {
-                const tr = wrapSourceTransaction(view.state, apply, this.host.sourceContext());
-                if (!tr) {
-                    return;
+            case 'footnote': {
+                const done = insertFootnoteTransaction(view.state);
+                if (done !== null) {
+                    view.dispatch(done.tr);
+                    showChangeHint(view, done.hint);
                 }
-                view.dispatch(tr);
-                // The block is source now; the host parses it and sends it back
-                // rendered as the preview renders it.
-                this.host.flushReparse();
-                if (apply.definition !== undefined && tr.selection instanceof NodeSelection) {
-                    editRawSourceAt(view, tr.selection.to);
-                } else {
-                    view.focus();
-                }
+                view.focus();
                 return;
             }
             case 'insert-source': {

@@ -18,7 +18,8 @@ import {
 } from '../../../src/editor/webview/notes';
 import { convertNoteRefusal, deleteObjectRefusal, objectAtSelection, removeLinkRefusal, removeSpanRefusal } from '../../../src/editor/webview/objects';
 import { TOOLBAR_ACTIONS } from '../../../src/editor/webview/toolbar/actions';
-import { inlineSourceTransaction, markRefusal, toggleMarkup, wrapSourceTransaction } from '../../../src/editor/webview/toolbar/commands';
+import { inlineSourceTransaction, markRefusal, toggleMarkup } from '../../../src/editor/webview/toolbar/commands';
+import { insertFootnoteTransaction } from '../../../src/editor/webview/footnotes';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { createEditorEngine } from '../../../src/editor';
@@ -508,11 +509,11 @@ suite('Editor notes: a character reference glued to a sidebar\'s marker is text,
         const source = 'See &#120;$y$ and the claim.\n';
         const state = caretAt(stateOf(source), posOf(stateOf(source).doc, 'claim') + 'claim'.length);
         const footnote = TOOLBAR_ACTIONS.find(a => a.id === 'footnote-reference')?.apply;
-        assert.ok(footnote?.kind === 'wrap-source');
-        const tr = wrapSourceTransaction(state, footnote, { eol: '\n', defaultWrap: 90, documentText: source });
-        assert.ok(tr);
-        const noted = state.apply(tr);
-        assert.strictEqual(noted.doc.child(0).attrs.src, 'See x\\$y\\$ and the claim[^1].\n');
+        assert.ok(footnote?.kind === 'footnote');
+        const done = insertFootnoteTransaction(state);
+        assert.ok(done);
+        const noted = state.apply(done.tr);
+        assert.strictEqual(text(noted), 'See x\\$y\\$ and the claim[^1].\n\n[^1]:\n');
         assert.deepStrictEqual(notesAfterSave(noted), []);
         const withNote = 'See &#120;$y$ and the ++claim|old++.\n';
         const inNote = caretAt(stateOf(withNote), posOf(stateOf(withNote).doc, 'claim') + 1);

@@ -9,6 +9,7 @@
 - Sort footnotes puts footnote texts in number order (bar and command palette).
 - A footnote's bar: Go to footnote text or Back to reference, Label… (renames every reference), Delete footnote or reference.
 - Ctrl/Cmd+click on a footnote number goes to its text, each ↩ back to its reference; pointing at it shows the text.
+- Insert › Footnote takes its label from the selected word and prefills the text.
 - A code block's `{…}` written right after its info string (```` ```js title={.a} ````) stays without a space when the block changes.
 - An `@` right after a letter or digit (`a@b.de`, `Text@`) is saved as written, not as `\@`; it opens no sidebar.
 - A list made in the visual editor (typing `- `, `1. ` or from the toolbar) is written tight, without blank lines between items.

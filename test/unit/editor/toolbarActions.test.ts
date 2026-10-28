@@ -15,7 +15,7 @@ import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
 import { tipText } from '../../../src/editor/tips';
 import {
     ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, TABLE_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
-    insertSourceTransaction, insertWrapperTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup, wrapSourceTransaction,
+    insertSourceTransaction, insertWrapperTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup,
 } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_FAMILIES, ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { HOVER_SECTION_CLASS } from '../../../src/editor/webview/languageCard';
@@ -375,11 +375,11 @@ suite('Editor toolbar: every action makes the element it shows', () => {
 
     test('a source action says in its tooltip that it is edited as source; a native one does not', () => {
         for (const action of TOOLBAR_ACTIONS) {
-            const source = action.apply.kind === 'wrap-source' || action.apply.kind === 'insert-source';
+            const source = action.apply.kind === 'insert-source';
             assert.strictEqual(tipText(tipOf(action)).includes(SOURCE_FOOTNOTE), source, action.id);
         }
-        const sourceIds = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'wrap-source').map(a => a.id);
-        assert.deepStrictEqual(sourceIds, ['footnote-reference'], 'of the inline constructs only the footnote is written as source');
+        // Since wave 4 #5b no inline construct is written as source: the footnote is edited in place too.
+        assert.deepStrictEqual(TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'footnote').map(a => [a.id, isSourceAction(a)]), [['footnote-reference', false]]);
         const inserted = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'insert-source').map(a => a.id);
         assert.deepStrictEqual(inserted, ['task-list', 'definition-list', 'abbreviation', 'table-of-contents'],
             'admonitions, the container and the table are inserted as rich text');
@@ -434,12 +434,6 @@ function run(state: EditorState, command: Command): EditorState {
 
 const CONTEXT = { eol: '\n' as const, defaultWrap: 90, documentText: SOURCE };
 
-function action(id: string): ToolbarAction {
-    const found = TOOLBAR_ACTIONS.find(a => a.id === id);
-    assert.ok(found, id);
-    return found;
-}
-
 suite('Editor toolbar: commands', () => {
     const em = editorSchema.marks.em;
 
@@ -462,30 +456,7 @@ suite('Editor toolbar: commands', () => {
         assert.ok(text(state).includes('Alpha beta gamma.'), text(state));
     });
 
-    test('wrap-source writes the markers unescaped around the selection and makes the block a source block', () => {
-        const state = select(stateOf(SOURCE), 'beta ');
-        // The footnote is the one inline construct still written this way; the
-        // mechanism is the same for any markers.
-        const apply = { kind: 'wrap-source' as const, open: '++', close: '|note++', placeholder: '' };
-        const tr = wrapSourceTransaction(state, apply, CONTEXT);
-        assert.ok(tr);
-        const next = state.apply(tr);
-        const block = next.doc.child(1);
-        assert.strictEqual(block.type.name, 'raw_block');
-        assert.strictEqual(block.attrs.src, 'Alpha ++beta|note++ gamma.\n', 'the space the selection ended with stays outside');
-        assert.strictEqual(block.attrs.gap, '\n', 'the blank line above it is kept');
-        assert.ok(next.selection instanceof NodeSelection);
-        assert.strictEqual(text(next), SOURCE.replace('beta', '++beta|note++'), 'every other byte is as it was');
-    });
-
-    test('a footnote goes after the selection with the first free label, and its definition below', () => {
-        const state = select(stateOf(SOURCE), 'gamma');
-        const apply = action('footnote-reference').apply as Extract<ToolbarAction['apply'], { kind: 'wrap-source' }>;
-        const tr = wrapSourceTransaction(state, apply, { ...CONTEXT, documentText: `${SOURCE}[^1]: taken\n` });
-        assert.ok(tr);
-        const next = state.apply(tr);
-        assert.strictEqual(next.doc.child(1).attrs.src, 'Alpha beta gamma[^2].\n');
-        assert.strictEqual(next.doc.child(2).attrs.src, '[^2]: Footnote text\n');
+    test('a source template\'s footnote label is the first number the text does not use', () => {
         assert.strictEqual(freeFootnoteLabel('a[^1] b[^2] [^x]'), '3');
     });
 
