@@ -566,5 +566,25 @@ suite('Editor footnotes (e2e)', () => {
         await press('z');
         assert.strictEqual(await lastText(), doc);
     });
+
+    // --- A `[^x]` written as text (plan step 11) ---
+
+    test('a misspelt `[^Schaefchen]` is dotted and says so on hover; changed, the paragraph keeps it as written', async function () {
+        this.timeout(20000);
+        const doc = 'Meine Schäfchen[^Schaefchen] hüten.\n\n[^Schäfchen]: *Schäfchen*: Kleine Schafe.\n';
+        await show(doc);
+        assert.deepStrictEqual(await page.$eval('.ProseMirror .mep-fn-literal', el => [el.textContent, getComputedStyle(el).textDecorationStyle]), ['[^Schaefchen]', 'dotted']);
+        const box = await (await page.$('.ProseMirror .mep-fn-literal'))?.boundingBox();
+        assert.ok(box);
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForSelector('.mep-language-card .mep-card-footnote', { visible: true, timeout: 3000 });
+        assert.strictEqual(await page.$eval('.mep-language-card .mep-card-footnote-title', el => el.textContent), 'No footnote Schaefchen — Label… on the orphan fixes it');
+        await shot(page, 'footnotes-literal-dotted.png');
+        await page.mouse.move(2, 2);
+        await caretAt(' hüten');
+        await page.keyboard.type(' gern');
+        await settle();
+        assert.strictEqual(await lastText(), doc.replace(' hüten', ' gern hüten'));
+    });
 });
 

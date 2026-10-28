@@ -304,3 +304,38 @@ suite('Editor footnote entries', () => {
         }
     });
 });
+
+/** A `[^x]` written as text (wave 4 #5b, Q2 = yes): kept as written when nothing defines `x`. */
+suite('Editor footnote literals', () => {
+    test('a changed paragraph keeps `[^fehlt]` as written, not `\\[\\^fehlt\\]`; it reads back as the same text', () => {
+        const doc = parsed('Siehe[^fehlt] und mehr.\n');
+        const [p] = topChildren(doc.doc);
+        assert.deepStrictEqual(references(p), [], 'text, as the preview reads it');
+        const touchedDoc = replaceChild(doc.doc, 0, touched(p, p.content.append(Fragment.from(editorSchema.text(' Neu.')))));
+        const out = write(doc, touchedDoc);
+        assert.strictEqual(out, 'Siehe[^fehlt] und mehr. Neu.\n');
+        assert.strictEqual(topChildren(parsed(out).doc)[0].textContent, 'Siehe[^fehlt] und mehr. Neu.');
+    });
+
+    test('one whose label the document defines is escaped: unescaped it would become the reference', () => {
+        const doc = parsed('Erst[^a].\n\n[^a]: A.\n');
+        const para = editorSchema.nodes.paragraph.create(null, editorSchema.text('Text [^a] als Text.'));
+        const out = write(doc, replaceChild(doc.doc, 0, para));
+        assert.ok(out.startsWith('Text \\[\\^a\\] als Text.\n'), JSON.stringify(out));
+    });
+
+    test('one that would start a line followed by a colon is escaped there: no definition is made', () => {
+        const doc = parsed('Seed.\n');
+        const para = editorSchema.nodes.paragraph.create(null, editorSchema.text('[^neu]: kein Eintrag'));
+        const out = write(doc, replaceChild(doc.doc, 0, para));
+        const [back, ...rest] = topChildren(parsed(out).doc);
+        assert.deepStrictEqual([back.type.name, back.textContent, rest.length], ['paragraph', '[^neu]: kein Eintrag', 0], JSON.stringify(out));
+    });
+
+    test('two of them in one paragraph are escaped as before: unescaped, their carets would pair as a superscript', () => {
+        const doc = parsed('Seed.\n');
+        const para = editorSchema.nodes.paragraph.create(null, editorSchema.text('[^a] und [^b]'));
+        assert.ok(write(doc, replaceChild(doc.doc, 0, para)).startsWith('\\[\\^a\\] und \\[\\^b\\]\n'));
+    });
+});
+

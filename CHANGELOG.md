@@ -11,6 +11,7 @@
 - Ctrl/Cmd+click on a footnote number goes to its text, each ↩ back to its reference; pointing at it shows the text.
 - Insert › Footnote takes its label from the selected word and prefills the text.
 - An inline footnote's text is edited with Edit text… on its bar; empty text or a stray `]` is refused there.
+- A `[^x]` written as text with no footnote of that label is dotted, says why on hover, and is saved as written.
 - A code block's `{…}` written right after its info string (```` ```js title={.a} ````) stays without a space when the block changes.
 - An `@` right after a letter or digit (`a@b.de`, `Text@`) is saved as written, not as `\@`; it opens no sidebar.
 - A list made in the visual editor (typing `- `, `1. ` or from the toolbar) is written tight, without blank lines between items.

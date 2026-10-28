@@ -79,6 +79,8 @@ export interface FootnoteIndex extends FootnoteCount {
     cameFrom: { label: string; pos: number } | null;
     /** The widgets: a `↩` per reference, the chip of an unreferenced entry, the rule before a run of entries. */
     decorations: DecorationSet;
+    /** The dotted line under each `[^x]` written as text whose label nothing defines (`literalDecorations`). */
+    literals: DecorationSet;
 }
 
 export const footnoteIndexKey = new PluginKey<FootnoteIndex>('mepFootnotes');
@@ -244,7 +246,7 @@ function signature(count: FootnoteCount): string {
 
 /** The count of `state` (`footnoteIndexPlugin`); an empty one in a state without the plugin. */
 export function footnoteIndexOf(state: EditorState): FootnoteIndex {
-    return footnoteIndexKey.getState(state) ?? { refs: [], entries: [], labels: new Set(), outOfOrder: false, version: 0, cameFrom: null, decorations: DecorationSet.empty, orphaned: [] };
+    return footnoteIndexKey.getState(state) ?? { refs: [], entries: [], labels: new Set(), outOfOrder: false, version: 0, cameFrom: null, decorations: DecorationSet.empty, literals: DecorationSet.empty, orphaned: [] };
 }
 
 /** The reference at `pos` in the count, or `undefined`. */
@@ -549,7 +551,7 @@ export class FootnoteEntryView implements NodeView {
 function counted(doc: Node, before: FootnoteIndex | null, cameFrom: FootnoteIndex['cameFrom']): FootnoteIndex {
     const count = countFootnotes(doc);
     const same = before !== null && signature(before) === signature(count);
-    return { ...count, version: before === null ? 0 : same ? before.version : before.version + 1, cameFrom, decorations: footnoteDecorations(doc, count), orphaned: [] };
+    return { ...count, version: before === null ? 0 : same ? before.version : before.version + 1, cameFrom, decorations: footnoteDecorations(doc, count), literals: literalDecorations(doc, count.labels, 0, doc.content.size), orphaned: [] };
 }
 
 /** The labels whose live entry had references in `before` and has none in `after`, its entry still there. */
@@ -566,8 +568,57 @@ function mapped(index: FootnoteIndex, tr: Transaction): FootnoteIndex {
         refs: index.refs.map(r => ({ ...r, pos: map(r.pos) })),
         entries: index.entries.map(e => ({ ...e, pos: map(e.pos) })),
         decorations: index.decorations.map(tr.mapping, tr.doc),
+        literals: literalsAfter(index.literals, tr, index.labels),
         orphaned: [],
     };
+}
+
+/**
+ * The dotted underline under each `[^x]` written as text in `doc` between
+ * `from` and `to` whose label `labels` lacks (`mep-fn-missing`): the preview
+ * shows it as text, and nothing says so else. Not in code, superscript or
+ * subscript, where it is that text's.
+ */
+function literalDecorations(doc: Node, labels: ReadonlySet<string>, from: number, to: number): DecorationSet {
+    const found: Decoration[] = [];
+    doc.nodesBetween(from, to, (node, pos) => {
+        if (node.isText && !rawText(node)) {
+            for (const m of (node.text ?? '').matchAll(LITERAL)) {
+                if (!labels.has(m[1])) {
+                    const at = pos + (m.index ?? 0);
+                    found.push(Decoration.inline(at, at + m[0].length, { class: 'mep-fn-literal', 'data-label': m[1] }, { label: m[1] }));
+                }
+            }
+        }
+        return node.type.spec.code !== true;
+    });
+    return DecorationSet.create(doc, found);
+}
+
+/** `set` mapped through `tr`, the textblocks it changed searched again: typing elsewhere searches nothing. */
+function literalsAfter(set: DecorationSet, tr: Transaction, labels: ReadonlySet<string>): DecorationSet {
+    let next = set.map(tr.mapping, tr.doc);
+    const ranges: [number, number][] = [];
+    tr.mapping.maps.forEach((map, i) => {
+        map.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
+            const later = tr.mapping.slice(i + 1);
+            ranges.push([later.map(newStart, -1), later.map(newEnd, 1)]);
+        });
+    });
+    for (const [a, b] of ranges) {
+        const $a = tr.doc.resolve(Math.max(0, Math.min(a, tr.doc.content.size)));
+        const $b = tr.doc.resolve(Math.max(0, Math.min(b, tr.doc.content.size)));
+        const from = $a.depth > 0 ? $a.start($a.depth) : a;
+        const to = $b.depth > 0 ? $b.end($b.depth) : b;
+        next = next.remove(next.find(from, to)).add(tr.doc, literalDecorations(tr.doc, labels, from, to).find());
+    }
+    return next;
+}
+
+/** The `[^x]` written as text the pointer or the caret is on at `pos`, whose label nothing defines, or `null`. */
+export function literalAt(state: EditorState, pos: number): string | null {
+    const found = footnoteIndexOf(state).literals.find(pos, pos);
+    return found.length === 0 ? null : (found[0].spec as { label: string }).label;
 }
 
 /**
@@ -602,7 +653,10 @@ export function footnoteIndexPlugin(): Plugin<FootnoteIndex> {
             },
         },
         props: {
-            decorations: state => footnoteIndexOf(state).decorations,
+            decorations: state => {
+                const index = footnoteIndexOf(state);
+                return index.literals === DecorationSet.empty ? index.decorations : index.decorations.add(state.doc, index.literals.find());
+            },
             // A `[^x]` pasted as text, whose label the document defines, is that reference again.
             transformPasted: (slice, view) => connectedSlice(slice, footnoteIndexOf(view.state).labels),
             handleDOMEvents: {
@@ -1306,7 +1360,7 @@ function jumpOnClick(view: EditorView, event: MouseEvent): boolean {
 export function footnoteCardSection(view: EditorView, pos: number, render: (html: string) => HTMLElement): HTMLElement | null {
     const node = view.state.doc.nodeAt(pos);
     if (node?.type !== editorSchema.nodes.footnote_ref) {
-        return null;
+        return literalCardSection(view.state, pos);
     }
     const index = footnoteIndexOf(view.state);
     const ref = refAt(index, pos);
@@ -1480,4 +1534,23 @@ export function editInlineFootnote(state: EditorState, pos: number, typed: strin
         return { refusal: 'Not set: the preview would not read this as a footnote' };
     }
     return { tr };
+}
+
+/** The card's section for a `[^x]` written as text that no footnote defines: what the preview does with it, and the fix when an unreferenced entry is there. */
+function literalCardSection(state: EditorState, pos: number): HTMLElement | null {
+    const label = literalAt(state, pos);
+    if (label === null) {
+        return null;
+    }
+    const orphan = footnoteIndexOf(state).entries.some(e => e.number === null && e.duplicateOf === null);
+    const section = document.createElement('div');
+    section.className = 'mep-card-section mep-card-footnote';
+    const title = document.createElement('div');
+    title.className = 'mep-card-message mep-card-footnote-title';
+    const code = document.createElement('span');
+    code.className = 'mep-card-code';
+    code.textContent = label;
+    title.append('No footnote ', code, orphan ? ' — Label… on the orphan fixes it' : ' — the preview shows it as text');
+    section.append(title);
+    return section;
 }

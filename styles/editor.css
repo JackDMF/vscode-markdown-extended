@@ -316,6 +316,9 @@ img.mep-pending-range {
     cursor: text;
 }
 
+/* A `[^x]` written as text whose label nothing defines: the same muted dotted line (the preview shows it as text). */
+.ProseMirror .mep-fn-literal { text-decoration: underline dotted var(--vscode-descriptionForeground, GrayText); }
+
 /* The rule above a run of entries: the preview's footnotes-sep, drawn by the editor, not text. */
 .ProseMirror .mep-fn-sep { margin: 18px 0 10px; }
 

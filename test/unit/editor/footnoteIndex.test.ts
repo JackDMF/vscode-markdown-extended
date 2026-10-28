@@ -3,7 +3,7 @@ import { Node } from 'prosemirror-model';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
-import { FOOTNOTES_CHANGED, FootnoteIndex, countFootnotes, footnoteIndexOf, touchesFootnotes } from '../../../src/editor/webview/footnotes';
+import { FOOTNOTES_CHANGED, FootnoteIndex, countFootnotes, footnoteIndexOf, literalAt, touchesFootnotes } from '../../../src/editor/webview/footnotes';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine } from './helpers';
 
@@ -245,6 +245,19 @@ suite('Editor footnote numbers', () => {
         const b = keys(plain);
         process.stdout.write(`      [footnotes] 1000 blocks: a key ${a.toFixed(3)} ms with 31 references, ${b.toFixed(3)} ms with none\n`);
         assert.ok(a <= b + 0.2, `a key costs ${a.toFixed(3)} ms with footnotes and ${b.toFixed(3)} ms without`);
+    });
+
+    test('a `[^x]` written as text whose label nothing defines is underlined; one that is defined, or in code, is not; a typed one is found, a fixed one loses it', () => {
+        let state = stateOf('Siehe[^Schaefchen] und `[^code]`.\n\n[^Schäfchen]: *Schäfchen*: X.\n');
+        const at = after(state.doc, 'Siehe') + 2;
+        assert.strictEqual(literalAt(state, at), 'Schaefchen');
+        assert.strictEqual(literalAt(state, after(state.doc, '[^co')), null);
+        state = state.apply(state.tr.insertText(' [^neu]', after(state.doc, 'und')));
+        assert.strictEqual(literalAt(state, after(state.doc, '[^n')), 'neu', 'found where it was typed');
+        // Two literals in one paragraph are written escaped (their carets would pair), so the edit goes through.
+        // Fixed: the label as the entry has it.
+        state = state.apply(state.tr.insertText('ä', at + 'Sch'.length, at + 'Schae'.length));
+        assert.strictEqual(literalAt(state, at), null);
     });
 });
 

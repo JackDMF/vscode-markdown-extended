@@ -1269,6 +1269,48 @@ class EditorMarkdownSerializer extends MarkdownSerializer {
 
 type NodeSerializers = ConstructorParameters<typeof MarkdownSerializer>[0];
 
+/** A reference written as text: `[^label]`. */
+const LITERAL_REFERENCE = /\[\^([^\]\s]+)\]/g;
+
+/**
+ * `text`, a text node's, cut where it holds `[^label]` with a label the
+ * document being written does not define (`currentFootnoteLabels`, known only
+ * inside `withFootnoteLabels`) — those
+ * parts `literal`, written unescaped (Q2, Daniel 2026-10-28); none in code,
+ * superscript or subscript, whose text is written as it is anyway, and none
+ * in a textblock holding another caret, which it would pair with as a
+ * superscript. `[]` where it holds none.
+ */
+function undefinedLiterals(text: string, node: Node, parent: Node): { text: string; literal: boolean }[] {
+    if (!footnoteLabelsKnown || !text.includes('[^') || node.marks.some(m => m.type.spec.code === true || m.type.name === 'sup' || m.type.name === 'sub')) {
+        return [];
+    }
+    // Two carets unescaped in one textblock pair as a superscript (markdown-it-sup-alt): `[^a] … [^b]`. Escaped, as before Q2.
+    if ((parent.textContent.match(/\^/g) ?? []).length > 1) {
+        return [];
+    }
+    const parts: { text: string; literal: boolean }[] = [];
+    let last = 0;
+    for (const m of text.matchAll(LITERAL_REFERENCE)) {
+        if (currentFootnoteLabels.includes(m[1])) {
+            continue;
+        }
+        const at = m.index ?? 0;
+        if (at > last) {
+            parts.push({ text: text.slice(last, at), literal: false });
+        }
+        parts.push({ text: m[0], literal: true });
+        last = at + m[0].length;
+    }
+    if (parts.length === 0) {
+        return [];
+    }
+    if (last < text.length) {
+        parts.push({ text: text.slice(last), literal: false });
+    }
+    return parts;
+}
+
 /**
  * Whether what is written next stands right after a footnote reference's
  * `[^label]` (child `index` of `parent` follows one, and no mark's delimiter
@@ -1288,16 +1330,26 @@ const inlineNodes: NodeSerializers = {
             // `[^x](u)` is a link to the engine, whose link rule runs before the footnote's.
             state.write('\\');
         }
+        // A `[^x]` written as text whose label the document does not define stays as written (Q2): escaped,
+        // a definition written later would no longer find it. Read back as the text it is (`readItems`).
+        const literals = st.inAutolink ? [] : undefinedLiterals(text, node, parent);
         if (st.notePart === undefined || st.inAutolink) {
-            state.text(text, !st.inAutolink);
+            if (literals.length === 0) {
+                state.text(text, !st.inAutolink);
+                return;
+            }
+            for (const part of literals) {
+                state.text(part.text, !part.literal);
+            }
             return;
         }
         // Superscript and subscript in a sidebar keep the backslash escape:
         // their plugins read no character reference, the sidebar rule reads
         // an escaped marker as no end, and the plugins unescape it.
         const sidebarRaw = (st.notePart === 'left' || st.notePart === 'right') && node.marks.some(m => m.type.name === 'sup' || m.type.name === 'sub');
+        const escaped = literals.length === 0 ? state.esc(text, false) : literals.map(part => (part.literal ? part.text : state.esc(part.text, false))).join('');
         // Never at a line start: the note's opening marker is before it.
-        state.text(sidebarRaw ? state.esc(text, false) : partText(st.notePart, state.esc(text, false)), false);
+        state.text(sidebarRaw ? escaped : partText(st.notePart, escaped), false);
     },
     wiki_embed(state, node) {
         const st = internals(state);
@@ -2941,6 +2993,27 @@ function readBackEnv(): Environment {
 let currentFootnoteLabels: readonly string[] = [];
 /** `currentFootnoteLabels` as part of a cache key: a text reads otherwise under other labels. */
 let footnoteLabelsKey = '';
+/** Whether a document's labels are known (`withFootnoteLabels`): outside, every `[^x]` written as text is escaped, as before Q2. */
+let footnoteLabelsKnown = false;
+
+/** Under which labels the written texts the node-keyed caches hold were written (`writtenUnder`). */
+let writtenLabels = '';
+
+/**
+ * The written texts kept by node (a textblock's, a cell's, a part's) are
+ * forgotten when the labels they are written under change: a `[^x]` written
+ * as text is escaped or not by them (`undefinedLiterals`). Labels change
+ * rarely — a footnote added, deleted, renamed — so the caches mostly stay.
+ */
+function writtenUnder(labels: string): void {
+    if (labels === writtenLabels) {
+        return;
+    }
+    writtenLabels = labels;
+    writtenCache = new WeakMap();
+    cellCache = new WeakMap();
+    forgetReadBack(false);
+}
 
 /** Each document's footnote labels (`footnoteLabelsOf`), sorted. */
 const labelsCache = new WeakMap<Node, readonly string[]>();
@@ -2974,14 +3047,18 @@ export function footnoteLabelsOf(doc: Node): readonly string[] {
  * put back after, so a nested call leaves its caller's.
  */
 export function withFootnoteLabels<T>(doc: Node, fn: () => T): T {
-    const before = { labels: currentFootnoteLabels, key: footnoteLabelsKey };
+    const before = { labels: currentFootnoteLabels, key: footnoteLabelsKey, known: footnoteLabelsKnown };
     currentFootnoteLabels = footnoteLabelsOf(doc);
     footnoteLabelsKey = currentFootnoteLabels.join('\u0000');
+    footnoteLabelsKnown = true;
+    writtenUnder(`\u0001${footnoteLabelsKey}`);
     try {
         return fn();
     } finally {
         currentFootnoteLabels = before.labels;
         footnoteLabelsKey = before.key;
+        footnoteLabelsKnown = before.known;
+        writtenUnder(before.known ? `\u0001${before.key}` : '');
     }
 }
 

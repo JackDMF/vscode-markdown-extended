@@ -743,8 +743,9 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   selected text becomes its reference and the note starts as `note`, selected, so what you
   type next is the note (with nothing selected, the reference starts as `reference`,
   selected — a note needs one). A sidebar takes the selected text as its own. A footnote
-  is written after the selection with the first free number (`[^2]`), and its definition
-  goes below the paragraph with its source open for the text.
+  takes the selected word as its label (`Taufe“.` → `[^Taufe]`, made unique as `Taufe_2`),
+  goes right after the word, and its text — prefilled `*Taufe*: ` — after the last footnote,
+  the caret there; with nothing selected, the next free number and an empty footnote.
 - **Insert** — **Link…** and **Image…** (above, *Links*); horizontal rule; admonition, a submenu of the eleven types the admonition plugin
   draws apart (note, summary, info, tip, success, question, warning, failure, danger,
   example, quote), each with its colour and icon, then **More types… (16)**, which shows the
@@ -780,11 +781,24 @@ swaps `*` for `_` rather than nesting one inside the other.
 one's text selected, so typing names the column) and two empty rows.
 
 **The other block constructs go in as source.** A task list, a definition list,
-an abbreviation, the table of contents and the footnote are edited as Markdown: a block one
-is inserted after the current block as a source block with its **Edit source** box open,
-and the footnote's paragraph becomes a source block rendered as the preview renders it.
-The card of each such entry says *edited as source, in a source block*. One `Ctrl+Z`
-takes it back.
+an abbreviation and the table of contents are edited as Markdown: each is inserted after
+the current block as a source block with its **Edit source** box open. The card of each
+such entry says *edited as source, in a source block*. One `Ctrl+Z` takes it back.
+
+**Footnotes are edited in place.** A reference shows the number the preview gives it
+(`[1]`), its label in its bar and its tooltip; the footnote's text (`[^label]: …`) is edited
+where the file writes it, numbered and with a `↩` per reference, so no list is generated
+and nothing moves in the file. Numbers follow the references as they move; labels change
+only by **Label…**. A footnote's text nothing refers to says *not referenced* (preview and
+export leave it out), and a `[^x]` written as text whose label no footnote has is dotted.
+Backspace or Delete beside a reference selects it; pressed again it deletes it — with its
+text when it was the last reference. A cut or a deleted sentence leaves the text, and the
+reference pasted back finds it again. In a footnote's text `Shift+Enter` breaks the line as
+the file does (two spaces, then the next line), `Enter` on an empty last line leaves it.
+`Ctrl+click` (`Cmd+click`) on a number goes to its text, each `↩` and **Back to reference**
+back. Files that write the texts in another order than the numbers get **Sort footnotes**
+on the footnote's bar, and *Markdown: Sort Footnotes* in the command palette. An inline
+footnote (`^[…]`) is edited with **Edit text…** on its bar.
 
 **Include… lists what the extension that resolves includes offers.** The snippets and the
 directive's syntax are not this extension's: they belong to the extension whose preview
@@ -858,7 +872,7 @@ place — each for a reason:
   which opens the file it came from, and **Change snippet…**, which puts another one in its
   place; the file itself keeps the one directive line.
 - **Tables using markdown-it-multimd-table's extensions, raw HTML and the rest of the extended syntax** — the table of contents,
-  footnotes and their definitions, definition lists, task lists, abbreviations, reference
+  a footnote's text inside another block, definition lists, task lists, abbreviations, reference
   definitions, setext headings — are *source blocks*, and so is a block whose attributes
   the editor could not write back where they stand: on a block inside another, a
   container, or an admonition's title; an element whose `{…}` holds a quoted `}`, which
