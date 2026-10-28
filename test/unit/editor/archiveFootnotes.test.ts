@@ -9,6 +9,9 @@ import { inPlaceEnv } from '../../../src/editor/footnoteEngine';
 import { definitionOf } from '../../../src/editor/inlineEngine';
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
+import { EditorState } from 'prosemirror-state';
+import { sortFootnotesTransaction } from '../../../src/editor/webview/footnotes';
+import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, replaceChild, topChildren, touched } from './helpers';
 
 /**
@@ -233,4 +236,29 @@ suite('Editor footnotes: Daniel\'s archive round-trips (gated, MEP_ARCHIVE_ROOT)
         const children = tokens.flatMap(t => t.children ?? []);
         assert.ok(children.some(c => c.type === 'sup_open') && !children.some(c => c.type === 'footnote_ref'), 'a superscript, no footnote');
     });
+
+    test('Sort footnotes on a copy in memory: only definition lines move, as whole blocks; the set of lines is the same', () => {
+        let sorted = 0;
+        for (const file of files) {
+            const src = fs.readFileSync(file, 'utf8');
+            const parsed = parseDocument(hostEngine(), src, {});
+            const state = EditorState.create({ doc: parsed.doc, plugins: editorPlugins(() => true) });
+            const tr = sortFootnotesTransaction(state);
+            if (tr === null) {
+                continue;
+            }
+            sorted++;
+            const out = write(parsed, state.apply(tr).doc);
+            const name = path.relative(ROOT as string, file);
+            const lines = (t: string) => t.split('\n').filter(l => l.trim() !== '');
+            assert.deepStrictEqual([...lines(out)].sort(), [...lines(src)].sort(), `${name}: the same lines`);
+            const definitionLines = (t: string) => lines(t).filter((_l, i, all) => !all.slice(0, i + 1).some(x => x.startsWith('[^')));
+            assert.deepStrictEqual(definitionLines(out), definitionLines(src), `${name}: everything before the first definition stays in place`);
+            const blocks = (t: string) => t.slice(t.indexOf('\n[^') + 1).split(/\n(?=\[\^)/).map(b => b.trimEnd()).sort();
+            assert.deepStrictEqual(blocks(out), blocks(src), `${name}: each definition moved whole`);
+            console.log(`${name}: sorted, ${blocks(src).length} definitions moved as whole blocks`);
+        }
+        assert.ok(sorted > 0, 'a file whose footnotes are out of order');
+    });
 });
+
