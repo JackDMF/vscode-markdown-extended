@@ -216,7 +216,7 @@ suite('Editor block classification (constructs.md)', () => {
         assert.deepStrictEqual(aligns, ['left', 'center', 'right']);
     });
 
-    test('what stays raw, and why: the TOC, a setext heading, a footnote definition, definition lists, task lists, inline HTML, abbreviations, reference definitions', () => {
+    test('what stays raw, and why: the TOC, a setext heading, definition lists, task lists, inline HTML, abbreviations, reference definitions', () => {
         const raw = grouped.filter(b => b.kind === 'raw').map(b => [(b.src ?? '').split('\n')[0], b.reason]);
         assert.deepStrictEqual(raw, CONSTRUCTS_RAW);
     });
@@ -273,7 +273,6 @@ suite('Editor block classification: an emoji shortcut', () => {
 const CONSTRUCTS_RAW: [string, string][] = [
     ['[[toc]]', 'toc_open'],
     ['Setext heading', 'setext heading: its underline has no place in the heading node'],
-    ['[^first]: The footnote body.', 'footnote_reference_open'],
     ['Term', 'dl_open'],
     ['- [ ] An open task', 'inline checkbox_input'],
     ['Press <kbd>Ctrl</kbd> or [[Ctrl+S]], ==mark== this, H~2~O and x^2^, :smile:, ~~gone~~.', 'inline html_inline'],
@@ -286,15 +285,15 @@ suite('Editor block classification: footnote definitions where they are written'
     const text = entriesDocument();
     const md = hostEngine();
 
-    test('each of the fourteen definitions is a block of its own with its lines, "footnote text"; no list of them follows the blocks', () => {
+    test('each of the fourteen definitions is an entry of its own with its lines; no list of them follows the blocks; no block is source', () => {
         const grouped = groupSourceBlocks(md.parse(text, inPlaceEnv()), splitLines(text), definitionOf(md)).blocks;
         const definitions = grouped.filter(b => (b.src ?? '').startsWith('[^'));
         assert.strictEqual(definitions.length, 14);
-        assert.ok(definitions.every(b => b.kind === 'raw' && b.reason === 'footnote_reference_open' && (b.src as string).split('\n').length === 3), JSON.stringify(definitions.map(b => [b.reason, b.src])));
-        assert.ok(!grouped.some(b => b.kind === 'injected'), 'nothing generated');
+        assert.ok(definitions.every(b => b.kind === 'editable' && (b.src as string).split('\n').length === 3), JSON.stringify(definitions.map(b => [b.reason, b.src])));
+        assert.ok(!grouped.some(b => b.kind === 'injected' || b.kind === 'raw'), JSON.stringify(grouped.filter(b => b.kind !== 'editable').map(b => b.reason)));
         const blocks = topChildren(parseDocument(md, text).doc);
-        assert.deepStrictEqual(blocks.filter(b => (b.attrs.src as string | undefined)?.startsWith('[^')).map(b => [b.type.name, b.attrs.construct]),
-            Array.from({ length: 14 }, () => ['raw_block', 'footnote text']));
+        assert.deepStrictEqual(blocks.filter(b => (b.attrs.src as string | undefined)?.startsWith('[^')).map(b => b.type.name),
+            Array.from({ length: 14 }, () => 'footnote_entry'));
     });
 
     test('gap + src of every block, and the tail, rebuild the file', () => {

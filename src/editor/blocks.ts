@@ -223,11 +223,17 @@ export const CONTAINER_CLOSE = 'container_container_close';
  */
 const CONTAINER_ATTRS_REASON = 'container attributes (on its ::: line or the line before its closing :::), which the container node does not keep';
 
+/** The tokens of a footnote's definition (markdown-it-footnote), a block of its own in a parse in place (`footnoteEngine.ts`). */
+export const FOOTNOTE_OPEN = 'footnote_reference_open';
+const FOOTNOTE_CLOSE = 'footnote_reference_close';
+
 /** Top-level tokens that can open an editable block. Anything else at top level is a raw block. */
 export const EDITABLE_TOP_LEVEL_TOKENS: ReadonlySet<string> = new Set([
     'paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open',
     'blockquote_open', 'fence', 'code_block', 'hr',
     CONTAINER_OPEN, 'admonition_open', 'table_open',
+    // A footnote's definition where it is written (`FOOTNOTES_IN_PLACE`): top level only.
+    FOOTNOTE_OPEN,
 ]);
 
 /** Every block-level token an editable block may contain, at any depth. */
@@ -633,8 +639,13 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
     }
     /** The first line after each enclosing container's or admonition's own lines, innermost last. */
     const wrapperEnds: number[] = [];
+    // A footnote's definition is editable where it opens the group; one inside a block is not (`nested …`).
+    const ownDefinition = (i: number) => tokens[group.start].type === FOOTNOTE_OPEN && (i === group.start || (i === group.end - 1 && tokens[i].type === FOOTNOTE_CLOSE));
     for (let i = group.start; i < group.end; i++) {
         const t = tokens[i];
+        if (ownDefinition(i)) {
+            continue;
+        }
         if (!EDITABLE_BLOCK_TOKENS.has(t.type)) {
             return `nested ${t.type}`;
         }

@@ -94,6 +94,8 @@ interface StateInternals {
     noteMarker?: string;
     /** Whether a table cell is being written (`writeTable`); this module's own field. */
     inTableCell?: boolean;
+    /** How a hard break is written in the footnote entry being written (`footnote_entry`), when one is; this module's own field. */
+    entryBreak?: string;
     /** prosemirror-markdown's own: the block whose separator is still to be written, if any. */
     closed: unknown;
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
@@ -2549,8 +2551,32 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
             const wrapped = wrapInline(paragraphMarkdown(node), limit - column, limit - characterCount(st.delim)).join('\n');
-            state.text(escapedLiterals(node, wrapped, 'paragraph').text, false);
+            const text = escapedLiterals(node, wrapped, 'paragraph').text;
+            state.text(st.entryBreak === undefined ? text : withHardBreaks(text, st.entryBreak), false);
             state.closeBlock(node);
+        },
+        footnote_entry(state, node) {
+            // `[^label]: ` and the first block on its line, that block's next lines prefixed as the file had
+            // them (`continuation`: lazy, as Daniel writes them, or indented); every later block indented by
+            // four. A hard break in it is written as the entry writes one (`breakStyle`, two spaces by default).
+            const st = internals(state);
+            const outer = st.entryBreak;
+            st.entryBreak = (node.attrs.breakStyle as string | null) ?? ENTRY_BREAK;
+            try {
+                node.forEach((child, _offset, i) => {
+                    if (i > 0) {
+                        state.wrapBlock(ENTRY_INDENT, null, node, () => state.render(child, node, i));
+                        return;
+                    }
+                    const paragraph = child.type.name === 'paragraph';
+                    // An empty text is `[^label]:` alone: no space after it at a line's end.
+                    const head = `[^${node.attrs.label as string}]:${paragraph && child.content.size === 0 ? '' : node.attrs.space as string}`;
+                    const continuation = paragraph ? (node.attrs.continuation as string | null) ?? '' : ENTRY_INDENT;
+                    state.wrapBlock(continuation, head, node, () => state.render(child, node, 0));
+                });
+            } finally {
+                st.entryBreak = outer;
+            }
         },
         heading(state, node) {
             const suffix = node.attrs.attrsSuffix as string | null;
@@ -2675,6 +2701,25 @@ function listMarkers(node: Node): { indent: string; marker: (i: number) => strin
             return ' '.repeat(maxWidth - n.length) + n + delimiter + ' ';
         },
     };
+}
+
+/** How far a footnote entry's blocks after its first are indented: markdown-it-footnote reads them at `blkIndent + 4`. */
+const ENTRY_INDENT = '    ';
+
+/** How a hard break in a footnote entry is written when the entry read none: as Daniel's files write them. */
+const ENTRY_BREAK = '  ';
+
+/**
+ * `text`, a paragraph as the save writes it, with each hard break — a line
+ * ending in an odd run of backslashes, the last one the break — written as
+ * `style` instead (`'  '`, two spaces; `'\\'` leaves it as it is).
+ */
+function withHardBreaks(text: string, style: string): string {
+    const lines = text.split('\n');
+    return lines.map((line, i) => {
+        const run = (/\\*$/.exec(line) as RegExpExecArray)[0].length;
+        return i < lines.length - 1 && run % 2 === 1 ? line.slice(0, -1) + style : line;
+    }).join('\n');
 }
 
 /** How far an admonition's body is indented: `markdownItAdmonition.ts` reads it at `blkIndent + 4`. */

@@ -37,7 +37,10 @@ import { EMBED_WAY_BACK, VERB } from './verbs';
  * Footnotes (wave 4 #5b): a reference, `[^label]` or an inline `^[…]`, is an
  * inline atom (`footnote_ref`) wherever text may stand — a paragraph at any
  * depth, a heading, a table cell, a note's reference or body. Its number is
- * the page's to count, never an attribute (`webview/footnotes.ts`).
+ * the page's to count, never an attribute (`webview/footnotes.ts`). A
+ * definition, `[^label]: …`, is a `footnote_entry` where the file writes it,
+ * at the top level, holding blocks as a list item does; an unused one and a
+ * repeated label are entries too, which the page marks.
  *
  * Two editable nodes hold blocks of their own and mirror their plugin's DOM:
  * `container` (`::: name info` … `:::`, a `div` with the info's classes) and
@@ -57,7 +60,7 @@ import { EMBED_WAY_BACK, VERB } from './verbs';
 /** The top-level editable node types, whose `src` the fidelity plugin clears on change. */
 export const EDITABLE_TOP_NODES: ReadonlySet<string> = new Set([
     'paragraph', 'heading', 'bullet_list', 'ordered_list', 'blockquote', 'code_block', 'horizontal_rule',
-    'container', 'admonition', 'table',
+    'container', 'admonition', 'table', 'footnote_entry',
 ]);
 
 /** The nodes that hold blocks and are written around them: a container and an admonition. */
@@ -647,6 +650,36 @@ export const editorSchema = new Schema({
             ...tableSpecs.table,
             attrs: { ...sourceAttrs, ...suffixAttrs },
             toDOM(node): DOMOutputSpec { return ['table', withSuffix(node), ['tbody', 0]]; },
+        },
+        // A footnote's text where the file writes it, `[^label]: …` (wave 4 #5b): a
+        // top-level block holding blocks, the first written on the definition's
+        // line, the others indented by four. Drawn as an item of the rendered
+        // list is drawn; its number is the page's (`webview/footnotes.ts`).
+        // Top level only (`top_block`): a definition inside another block stays source.
+        footnote_entry: {
+            group: 'top_block',
+            content: 'block+',
+            defining: true,
+            isolating: true,
+            attrs: {
+                /** The label of `[^label]:`. */
+                label: {},
+                ...sourceAttrs,
+                /** What stands between `]:` and the text, as written. */
+                space: { default: ' ' },
+                /** The first paragraph's continuation lines' prefix as written: `''` (lazy), `'  '`, `'    '`; `null` for one not read. */
+                continuation: { default: null as string | null },
+                /** How a hard break in it is written: `'  '` (two spaces) or `'\\'`; `null` for none read. */
+                breakStyle: { default: null as string | null },
+            },
+            parseDOM: [{
+                tag: 'div[data-mep-fn-entry]',
+                contentElement: 'div.mep-fn-body',
+                getAttrs: (dom: HTMLElement) => ({ label: dom.getAttribute('data-mep-fn-entry') ?? '' }),
+            }],
+            toDOM(node): DOMOutputSpec {
+                return ['div', { class: 'mep-fn-entry', 'data-mep-fn-entry': node.attrs.label as string }, ['div', { class: 'mep-fn-body' }, 0]];
+            },
         },
         table_row: tableSpecs.table_row,
         table_header: spanless(tableSpecs.table_header),

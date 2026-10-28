@@ -7,6 +7,7 @@ import { Environment, MarkdownIt, Options, Token } from '../@types/markdown-it';
 import {
     BlockAttrs,
     InjectionMark,
+    SourceLine,
     NOTE_OPEN_TOKENS,
     SourceBlock,
     carriesInlineLiteral,
@@ -481,6 +482,15 @@ export function parseDocument(md: MarkdownIt, text: string, givenEnv: Environmen
             }),
         },
         list_item: { block: 'list_item', getAttrs: tok => ({ literal: itemLiteral.get(tok) ?? null }) },
+        // A footnote's definition, kept where it is written (`FOOTNOTES_IN_PLACE`): its label and how it is spelled.
+        footnote_reference: {
+            block: 'footnote_entry',
+            getAttrs: (tok, s, i) => {
+                const label = (real(tok).meta as { label: string }).label;
+                const first = s[i + 1]?.type === 'paragraph_open' ? real(s[i + 1]).map : null;
+                return { ...sourceOf(tok), label, ...entrySpelling(lines, real(tok).map, label, first) };
+            },
+        },
         // A pipe table (`blocks.ts` let only the GFM form through): the rows
         // are the table's children, `thead` and `tbody` no node of their own;
         // a cell's alignment is the `style` the plugin set from the delimiter row.
@@ -603,6 +613,33 @@ export function parseDocument(md: MarkdownIt, text: string, givenEnv: Environmen
         throw new Error(`Rich editor: ${opened} notes became ${made} note nodes.`);
     }
     return { doc: withUnplacedAsSource(doc, blocks, render), eol: detectEol(text), tail };
+}
+
+/**
+ * How a footnote's definition is written, which a changed one is written
+ * with again (`serialize.ts`): what stands between `]:` and its text
+ * (`space`); the prefix of its first paragraph's next line, `''` for a lazy
+ * one, `null` for a one-line paragraph or none (`continuation`); and how its
+ * first hard break is written, two spaces or a backslash (`breakStyle`).
+ * `map` is the definition's lines, `first` its first paragraph's.
+ */
+function entrySpelling(lines: readonly SourceLine[], map: number[] | null, label: string, first: number[] | null): { space: string; continuation: string | null; breakStyle: string | null } {
+    const head = map === null ? '' : lines[map[0]]?.text ?? '';
+    const marker = `[^${label}]:`;
+    const at = head.indexOf(marker);
+    const space = at < 0 ? ' ' : (/^[ \t]*/.exec(head.slice(at + marker.length)) as RegExpExecArray)[0];
+    const continuation = first !== null && first[1] - first[0] > 1 ? (/^[ \t]*/.exec(lines[first[0] + 1]?.text ?? '') as RegExpExecArray)[0] : null;
+    let breakStyle: string | null = null;
+    for (let k = map?.[0] ?? 0; map !== null && k < map[1] - 1 && breakStyle === null; k++) {
+        const text = lines[k]?.text ?? '';
+        const backslashes = (/\\*$/.exec(text) as RegExpExecArray)[0].length;
+        if (backslashes % 2 === 1 && (lines[k + 1]?.text ?? '').trim() !== '') {
+            breakStyle = '\\';
+        } else if (/\S {2,}$/.test(text) && (lines[k + 1]?.text ?? '').trim() !== '') {
+            breakStyle = '  ';
+        }
+    }
+    return { space, continuation, breakStyle };
 }
 
 /** Whether a parse is judging emoji already (`withUnplacedAsSource`): the judge parses what it writes, which needs no judging. */
