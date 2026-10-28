@@ -63,7 +63,7 @@ import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from 
 import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import {
-    backToReferenceTransaction, deleteFootnoteEntryTransaction, deleteFootnoteRefTransaction, entryAt, footnoteIndexOf, goToFootnoteTransaction,
+    backToReferenceTransaction, deleteFootnoteEntryTransaction, deleteFootnoteRefTransaction, editInlineFootnote, entryAt, footnoteIndexOf, goToFootnoteTransaction,
     labelRefusal, orphanChip, refAt, referencesOf, renameFootnoteTransaction, sortFootnotesTransaction,
 } from './footnotes';
 import { embedAsTextTransaction } from './wikiEmbeds';
@@ -3559,11 +3559,40 @@ class ObjectToolbarView implements PluginView {
             const ref = refAt(index, object.from);
             if (label === null) {
                 const number = ref?.number ?? null;
+                const heading = number === null ? 'Inline footnote' : `Inline footnote ${number}`;
+                const source = node.attrs.source as string;
+                const step: FieldStep = {
+                    value: source,
+                    label: 'Text',
+                    heading,
+                    keys: '↵ set · Esc cancel',
+                    followed: [object],
+                    commit: typed => {
+                        const now = currentObject(view.state, object);
+                        if (now === null || typed === source) {
+                            this.act(object, () => false);
+                            return;
+                        }
+                        const edit = editInlineFootnote(view.state, now.from, typed);
+                        if (edit !== null && 'refusal' in edit) {
+                            return refusedStep(step, typed, edit.refusal);
+                        }
+                        this.act(object, current => {
+                            const again = editInlineFootnote(view.state, current.from, typed);
+                            if (again === null || !('tr' in again)) {
+                                return false;
+                            }
+                            view.dispatch(again.tr);
+                            return true;
+                        });
+                    },
+                };
                 return {
-                    label: number === null ? 'Inline footnote' : `Inline footnote ${number}`,
+                    label: heading,
                     short: 'Inline footnote',
-                    title: `An inline footnote: ^[${node.attrs.source as string}]`,
+                    title: `An inline footnote: ^[${source}]`,
                     verbs: [
+                        { id: 'edit-inline-footnote', label: 'Edit text…', short: 'Edit…', title: 'Its text, as Markdown between ^[ and ] (Enter to set, Esc to cancel).', slot: 'edit', field: step },
                         { id: 'delete-footnote', label: 'Delete footnote', short: 'Delete', title: `Deletes the footnote and its text — ${undoKey()}`, slot: 'destroy', run: () => this.act(object, current => said(deleteFootnoteRefTransaction(view.state, current.from))) },
                     ],
                 };

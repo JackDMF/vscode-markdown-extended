@@ -535,5 +535,36 @@ suite('Editor footnotes (e2e)', () => {
         assert.strictEqual(await page.$eval('.ProseMirror .mep-fn-entry[data-mep-fn-entry="Petrus_traurig"] .mep-fn-num', el => el.textContent), '4.');
         await shot(page, 'footnotes-insert.png');
     });
+
+    // --- An inline footnote's text (plan step 10) ---
+
+    test('Edit text… opens the inline footnote\'s text in its field; a stray `]` is refused there, amber; Enter sets it in one undo (AC13)', async function () {
+        this.timeout(20000);
+        const doc = `${COTK}\nMit weiser Anleitung^[Oder „geschickter Lenkung“] führt man Krieg.\n`;
+        await show(doc);
+        await clickAtom(3);
+        assert.deepStrictEqual(await bar(), { label: 'Inline footnote 4', verbs: [['edit-inline-footnote', false], ['delete-footnote', false]], focus: '' });
+        await clickVerb('edit-inline-footnote');
+        const input = 'input.mep-inline-field';
+        await page.waitForSelector(input, { visible: true });
+        assert.strictEqual(await page.$eval(input, el => (el as HTMLInputElement).value), 'Oder „geschickter Lenkung“');
+        assert.ok((await page.$eval('.mep-object-toolbar:not([hidden])', el => el.textContent ?? '')).includes('↵ set · Esc cancel'), 'the keys line');
+        await page.keyboard.press('End');
+        await page.keyboard.type('] mehr');
+        await page.keyboard.press('Enter');
+        await delay(200);
+        const refused = await page.$eval(input, el => ({ invalid: el.getAttribute('aria-invalid'), reason: document.getElementById(el.getAttribute('aria-describedby') ?? '')?.textContent ?? '' }));
+        assert.deepStrictEqual(refused, { invalid: 'true', reason: 'Not set: the "]" after “Oder „geschickter Lenkung“” ends the footnote early — remove it or add a "[" before it' });
+        await shot(page, 'footnotes-inline-refusal.png');
+        for (let i = 0; i < '] mehr'.length; i++) {
+            await page.keyboard.press('Backspace');
+        }
+        await page.keyboard.type(', weise');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual(await lastText(), doc.replace('Lenkung“]', 'Lenkung“, weise]'));
+        await press('z');
+        assert.strictEqual(await lastText(), doc);
+    });
 });
 

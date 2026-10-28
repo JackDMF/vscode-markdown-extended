@@ -7,7 +7,7 @@ import { EditorView } from 'prosemirror-view';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
-import { FOOTNOTE_KEYS, connectLiterals, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, insertFootnoteTransaction, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction } from '../../../src/editor/webview/footnotes';
+import { FOOTNOTE_KEYS, connectLiterals, editInlineFootnote, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, insertFootnoteTransaction, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction } from '../../../src/editor/webview/footnotes';
 import { saidText } from '../../../src/editor/tips';
 import { firstFocus } from '../../../src/editor/verbs';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -144,7 +144,13 @@ suite('Editor footnote keys and deletes', () => {
         state = caret(state, at(state.doc, 'Nach', true));
         const next = run(state, FOOTNOTE_KEYS.backspace) as EditorState;
         assert.strictEqual(next.doc, state.doc);
-        assert.strictEqual(next.selection.head, at(next.doc, 'Dreimal.'));
+        assert.strictEqual(next.selection.head, at(next.doc, 'Dreimal.'));        // An empty paragraph there goes, the caret into the entry as well.
+        let empty = stateOf(`${COTK}\n`);
+        empty = empty.apply(empty.tr.insert(empty.doc.content.size, editorSchema.nodes.paragraph.create()));
+        empty = empty.apply(empty.tr.setSelection(TextSelection.create(empty.doc, empty.doc.content.size - 1)));
+        const gone = run(empty, FOOTNOTE_KEYS.backspace) as EditorState;
+        assert.strictEqual(gone.doc.lastChild?.type.name, 'footnote_entry');
+        assert.strictEqual(gone.selection.head, at(gone.doc, 'Dreimal.'));
     });
 
     test('Delete on a selected entry deletes it with its references, one undo step (F8)', () => {
@@ -295,6 +301,28 @@ suite('Editor footnote keys and deletes', () => {
         assert.strictEqual(text(state), 'Ein Satz[^1] hier[^2].\n\n[^1]: Eins.\n\n[^2]:\n');
         assert.strictEqual(state.selection.$from.node(1).attrs.label, '2');
         assert.deepStrictEqual(footnoteIndexOf(state).entries.map(e => e.number), [1, 2]);
+    });
+
+    test('Edit text… on an inline footnote: its text set in one step; empty, a stray `]` and a footnote inside refused with the reason (AC13)', () => {
+        let state = stateOf('Mit weiser Anleitung^[Oder „geschickter Lenkung“] führt man Krieg.\n');
+        let pos = -1;
+        state.doc.descendants((node, p) => {
+            pos = node.type.name === 'footnote_ref' ? p : pos;
+        });
+        const refused = (typed: string) => {
+            const r = editInlineFootnote(state, pos, typed);
+            return r !== null && 'refusal' in r ? saidText(r.refusal) : null;
+        };
+        assert.strictEqual(refused('  '), 'Not set: an inline footnote needs text — "Delete footnote" on its bar deletes it');
+        assert.strictEqual(refused('Oder] Lenkung'), 'Not set: the "]" after “Oder” ends the footnote early — remove it or add a "[" before it');
+        assert.strictEqual(refused('Oder [eckig] Lenkung'), null, 'a [ before it balances it');
+        assert.strictEqual(refused('Siehe[^x] dort'), 'Not set: the preview would not read this as a footnote');
+        const done = editInlineFootnote(state, pos, 'Oder *weise* Lenkung');
+        assert.ok(done !== null && 'tr' in done);
+        state = state.apply(done.tr);
+        assert.strictEqual(text(state), 'Mit weiser Anleitung^[Oder *weise* Lenkung] führt man Krieg.\n');
+        state = run(state, undo) as EditorState;
+        assert.strictEqual(text(state), 'Mit weiser Anleitung^[Oder „geschickter Lenkung“] führt man Krieg.\n');
     });
 });
 

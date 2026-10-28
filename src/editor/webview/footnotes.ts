@@ -9,6 +9,7 @@ import { currentInlineEngine } from '../inlineEngine';
 import { editorSchema, footnoteSpelling } from '../schema';
 import { Said, said, value } from '../tips';
 import { announceHint, macKeys, showChangeHint, showHint, showRefusal, undoKey } from './hint';
+import { noteRefusal } from './notes';
 
 /**
  * Footnotes edited in place (wave 4 #5b): the numbers.
@@ -869,7 +870,7 @@ function refuseEntryEdge(dir: -1 | 1): Command {
     };
 }
 
-/** Backspace at the start of the paragraph after an entry: the caret goes to the end of the entry's text, as after a note; nothing is deleted (F7). */
+/** Backspace at the start of the paragraph after an entry: the caret goes to the end of the entry's text, as after a note; nothing is deleted but an empty paragraph (F7). */
 const backIntoEntry: Command = (state, dispatch) => {
     const sel = state.selection;
     if (!(sel instanceof TextSelection) || !sel.empty || sel.$from.depth !== 1 || sel.$from.parentOffset !== 0) {
@@ -880,8 +881,12 @@ const backIntoEntry: Command = (state, dispatch) => {
         return false;
     }
     if (dispatch) {
-        const end = TextSelection.near(state.doc.resolve(sel.$from.before(1) - 1), -1);
-        dispatch(state.tr.setSelection(end).scrollIntoView());
+        const tr = state.tr;
+        // An empty paragraph there goes, as Backspace takes any empty one; the caret into the entry's end either way.
+        if (sel.$from.parent.content.size === 0) {
+            tr.delete(sel.$from.before(1), sel.$from.after(1));
+        }
+        dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(sel.$from.before(1) - 1), -1)).scrollIntoView());
     }
     return true;
 };
@@ -1423,4 +1428,56 @@ export function insertFootnoteTransaction(state: EditorState): { tr: Transaction
     tr.setSelection(TextSelection.create(tr.doc, after + entry.nodeSize - 2));
     tr.setMeta(FOOTNOTES_CHANGED, true).scrollIntoView();
     return { tr, hint: said`Footnote ${value(label)} added — type its text; ↩ goes back · ${undoKey()}` };
+}
+
+// ---------------------------------------------------------------------------
+// An inline footnote's text (Edit text…)
+// ---------------------------------------------------------------------------
+
+/** The first `]` of `text` no `[` before it opens, as markdown-it reads a label (an escaped one is text): where an inline footnote would end. */
+function strayBracket(text: string): number {
+    let depth = 0;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '\\') {
+            i++;
+        } else if (ch === '[') {
+            depth++;
+        } else if (ch === ']') {
+            if (depth === 0) {
+                return i;
+            }
+            depth--;
+        }
+    }
+    return -1;
+}
+
+/**
+ * The inline footnote at `pos` with `typed` as its text, in one step, or why
+ * not (#13, on Enter): no text; a `]` that would end it early, named with
+ * the text before it; or text the engine would not read back as this one
+ * inline footnote where it stands — a superscript taking it, a footnote
+ * inside it — which the edit filter's read-back (`noteRefusal`) decides.
+ */
+export function editInlineFootnote(state: EditorState, pos: number, typed: string): { tr: Transaction } | { refusal: Said } | null {
+    const node = state.doc.nodeAt(pos);
+    if (node?.type !== editorSchema.nodes.footnote_ref || node.attrs.label !== null) {
+        return null;
+    }
+    if (typed.trim() === '') {
+        return { refusal: 'Not set: an inline footnote needs text — "Delete footnote" on its bar deletes it' };
+    }
+    const stray = strayBracket(typed);
+    if (stray >= 0) {
+        const before = typed.slice(0, stray).trim().split(/\s+/).slice(-3).join(' ');
+        return { refusal: before === '' ? said`Not set: the ${value(']')} at its start ends the footnote at once — remove it or add a ${value('[')} before it` : said`Not set: the ${value(']')} after “${before}” ends the footnote early — remove it or add a ${value('[')} before it` };
+    }
+    const tr = state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, source: typed }).setMeta(FOOTNOTES_CHANGED, true);
+    // A footnote inside it the engine numbers alike and loses one (`footnoteNotEditable`): no atom could hold it.
+    const nested = HOLDS_LITERAL.test(typed) || /\^\[/.test(typed);
+    if (nested || noteRefusal(tr) !== null) {
+        return { refusal: 'Not set: the preview would not read this as a footnote' };
+    }
+    return { tr };
 }
