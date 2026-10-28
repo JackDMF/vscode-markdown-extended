@@ -66,6 +66,9 @@ const ARCHIVE_SHAPES: [string, string][] = [
     ['an inline footnote in a verse quote', '> ^6^ Ihr sollt mit geschickter Anleitung^[Oder „mit weiser Lenkung“.] Krieg führen.\n'],
     ['an inline footnote inside _…_', '> _Hört auf Anleitung^[Rbi8: „Lenkung“]_, dann wird er.\n'],
     ['a repeated reference', 'Gerechtigkeit[^Gerechtigkeit] und Gerechtigkeit[^Gerechtigkeit].\n\n[^Gerechtigkeit]: *Gerechtigkeit*  \nRecht.\n'],
+    // Notes share the document's footnotes (plan step 1): CA-btk22's `++Helfer|… Joh 14:16.[^Joh14:16]++`.
+    ['in a sidenote\'s text', 'Doch der ++Helfer|Oder „Tröster“. (Siehe Anm. zu Joh 14:16.[^Joh14:16])++, der heilige Geist.\n\n[^Joh14:16]: *Helfer*  \nParáklētos.\n'],
+    ['an inline footnote in a marginal note\'s text', 'Ein Wort !!Wort|mit Anleitung^[Oder „Lenkung“]!! danach.\n'],
 ];
 
 /**
@@ -151,7 +154,6 @@ suite('Editor footnote references: what stays source', () => {
         ['an inline footnote holding a reference (the engine numbers both alike)', 'a^[see[^x]] b\n\n[^x]: X\n', 'has a footnote in a footnote'],
         ['an inline footnote over two lines', 'a^[one\ntwo] b\n', 'has a footnote over two lines'],
         ['a reference in an admonition title', '!!! note "T[^n]"\n    body\n\n[^n]: N\n', 'has a footnote'],
-        ['an inline footnote in a sidenote', 'x ++a|b^[n]++ y\n', 'has a footnote in a note'],
     ];
     for (const [what, text, words] of rows) {
         test(`${what}: "${words}"`, () => {
