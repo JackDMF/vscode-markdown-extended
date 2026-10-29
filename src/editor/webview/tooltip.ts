@@ -267,7 +267,8 @@ export class Tooltips {
 
     /**
      * The shown hover under `el`, its left edge at the control's — above the
-     * control where there is no room below; or, `beside`, right of it at its
+     * control where there is no room below, above its bar where the bar stands
+     * above what it is about; or, `beside`, right of it at its
      * top, left of it where there is no room right: the one policy
      * (`placement.ts`, `placeTip`), in the window's frame.
      */
@@ -275,7 +276,9 @@ export class Tooltips {
         // Measured at the window's corner: its width is its own, not what room is left where it stood.
         this.el.style.left = '0px';
         this.el.style.top = '0px';
-        placeTip(this.el, el, this.tips.get(el)?.place ?? 'below');
+        // A bar or bubble standing above what it is about (`data-flipped`, the slot's): the hover goes above it too.
+        const flipped = el.closest('.mep-layer[data-flipped]') ?? undefined;
+        placeTip(this.el, el, this.tips.get(el)?.place ?? 'below', flipped);
     }
 }
 

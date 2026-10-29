@@ -37,7 +37,7 @@ import { APPLY_BINDING, UNDO_BINDING, keyLabel } from '../keys';
 import { REANNOUNCE_GAP_MS, refusalMs } from '../refusal';
 import { Said, saidParts, saidText } from '../tips';
 import { placeOfElement } from './focusPlace';
-import { Frame, LAYER_GUTTER, Placement, Rect, VIEWPORT, caretRect, placeAtControl, placeAtEntry, placeLayer, readFrame } from './placement';
+import { Frame, LAYER_GUTTER, Placement, Rect, VIEWPORT, caretRect, inlineBox, onLayerPlaced, placeAtControl, placeAtEntry, placeLayer, readFrame } from './placement';
 import { partNode } from './tooltip';
 
 export type HintTone = 'refusal' | 'neutral';
@@ -102,6 +102,9 @@ class CaretHint {
     private lastSaid: { text: string; at: string; time: number } | null = null;
     /** What the hint was last placed at — the caret's line, the table, a control — not where it landed, which the other layers move. */
     private placedAt = '';
+    /** The element a hint at the caret was placed under (`placeCaret`'s `near`), to place it again there when a layer comes. */
+    private near: Element | undefined;
+    private readonly unwatch: () => void;
     private readonly listeners: [EventTarget, string, EventListener][] = [];
 
     constructor(private readonly view: EditorView) {
@@ -156,6 +159,23 @@ class CaretHint {
                 this.dismiss();
             }
         });
+        this.unwatch = onLayerPlaced(view, layer => this.layerPlaced(layer));
+    }
+
+    /**
+     * A layer appeared or moved (`onLayerPlaced`): a hint at the caret that it
+     * covers is placed again, off it — the bar that comes at the caret's rest
+     * after the verb whose hint is showing (Insert › Footnote, a first
+     * Backspace) does not hide the hint, nor the hint the bar (#9 wave 2).
+     */
+    private layerPlaced(layer: Rect): void {
+        if (this.el.hidden || this.el.dataset.at !== 'caret' || (this.near !== undefined && !this.near.isConnected)) {
+            return;
+        }
+        const r = this.el.getBoundingClientRect();
+        if (r.left < layer.right && r.right > layer.left && r.top < layer.bottom && r.bottom > layer.top) {
+            this.placeCaret(this.near);
+        }
     }
 
     private listen(target: EventTarget, type: string, fn: (e: Event) => void): void {
@@ -249,6 +269,7 @@ class CaretHint {
      * else above it, off every open layer.
      */
     private placeCaret(near?: Element): Placement | null {
+        this.near = near;
         this.el.dataset.at = 'caret';
         this.el.removeAttribute('data-fixed');
         const mount = this.view.dom.parentElement;
@@ -260,7 +281,8 @@ class CaretHint {
         if (near) {
             at = rectOf(near.getBoundingClientRect());
         } else if (sel instanceof NodeSelection && this.view.nodeDOM(sel.from) instanceof Element) {
-            at = rectOf((this.view.nodeDOM(sel.from) as Element).getBoundingClientRect());
+            // An inline node by its line (`inlineBox`): a raised `[n]`'s own box is inside the line the hint keeps off.
+            at = (sel.node.isInline ? inlineBox(this.view, sel.from) : null) ?? rectOf((this.view.nodeDOM(sel.from) as Element).getBoundingClientRect());
         } else {
             at = tableAround(this.view, sel.head, mount) ?? caretRect(this.view, sel.head);
         }
@@ -425,6 +447,7 @@ class CaretHint {
     }
 
     destroy(): void {
+        this.unwatch();
         clearTimeout(this.timer);
         cancelAnimationFrame(this.sayFrame);
         cancelAnimationFrame(this.armFrame);

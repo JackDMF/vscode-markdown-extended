@@ -111,6 +111,37 @@ function marginItemAt(view: EditorView, x: number, y: number): Element | null {
 }
 
 /**
+ * The right edge of the content in `band` — a part of the text column — or
+ * `null` where it holds none (`contentIn`'s fact): probed from the band's
+ * right edge leftwards, at half `contentIn`'s step, up to one step past the
+ * content found. How far a layer at a note's body in the margin may reach
+ * into the column (#15: only where the column has no text at its height).
+ */
+export function contentRight(view: EditorView, band: Band): number | null {
+    if (band.right <= band.left || band.bottom <= band.top) {
+        return null;
+    }
+    const step = PROBE_STEP / 2;
+    const rows = [band.top + 2, (band.top + band.bottom) / 2, band.bottom - 2];
+    for (let x = band.right - 2; x >= band.left + 2; x -= step) {
+        if (rows.some(y => contentAt(view, x, y))) {
+            return Math.min(band.right, x + step);
+        }
+    }
+    return null;
+}
+
+/**
+ * The top and bottom of the line of text in `root` that runs through the
+ * height `y` — its text's line boxes there, a floated note body left out
+ * (`textRects`) — or `null` where no text does.
+ */
+export function lineAt(root: Element, y: number): { top: number; bottom: number } | null {
+    const line = textRects(root).filter(r => r.top <= y && r.bottom >= y);
+    return line.length === 0 ? null : { top: Math.min(...line.map(r => r.top)), bottom: Math.max(...line.map(r => r.bottom)) };
+}
+
+/**
  * The top of `dom`'s first line of text and the bottom of its last, a
  * floated note body left out (`textRects`); `null` for an element that shows
  * no text. A floated sidebar's bar keeps off these lines (#15).

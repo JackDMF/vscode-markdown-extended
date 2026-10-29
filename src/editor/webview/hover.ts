@@ -21,6 +21,7 @@ import { footnoteCardSection } from './footnotes';
 import { SEVERITY_ICON, diagnosticsAt, diagnosticsPlacedOn } from './diagnostics';
 import { CardAnchor, LanguageCard, hoverSection } from './languageCard';
 import { lensLabel, lensLabelNodes } from './lenses';
+import { inlineBox } from './placement';
 
 /** How long the pointer rests before the card is asked for. */
 export const HOVER_DELAY_MS = 500;
@@ -334,7 +335,7 @@ class PointerCard implements PluginView {
             fixRequests: new Map(),
             hoverRequest: null,
             hoverHtml: '',
-            anchor: inline ? this.anchorAt(inline.from, pointer) : probe.onText ? this.anchorAt(probe.pos, pointer) : pointer,
+            anchor: inline ? this.anchorAt(inline.from, pointer) : (footnote !== null ? this.atomAnchor(probe.pos) : null) ?? (probe.onText ? this.anchorAt(probe.pos, pointer) : pointer),
             footnote,
         };
         this.hide();
@@ -370,6 +371,13 @@ class PointerCard implements PluginView {
             }
         }
         this.draw();
+    }
+
+    /** A reference's anchor (`inlineBox`): the line its raised `[n]` stands in, so the card keeps off that line; `null` for no inline atom at `pos` (a `[^x]` written as text). */
+    private atomAnchor(pos: number): CardAnchor | null {
+        const node = this.view.state.doc.nodeAt(pos);
+        const box = node !== null && node.isInline && node.isAtom ? inlineBox(this.view, pos) : null;
+        return box === null ? null : { left: box.left, top: box.top, bottom: box.bottom };
     }
 
     private anchorAt(pos: number, fallback: CardAnchor): CardAnchor {

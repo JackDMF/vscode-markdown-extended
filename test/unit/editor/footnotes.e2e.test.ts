@@ -586,5 +586,174 @@ suite('Editor footnotes (e2e)', () => {
         await settle();
         assert.strictEqual(await lastText(), doc.replace(' hüten', ' gern hüten'));
     });
+
+    // --- The layers at a reference (fix round 1, ux-review-build-1 "Layers") ---
+
+    type Box = { left: number; top: number; right: number; bottom: number };
+    const boxOf = (selector: string): Promise<Box | null> => page.evaluate(sel => {
+        const el = document.querySelector(sel) as HTMLElement | null;
+        if (el === null || el.hidden || el.getClientRects().length === 0) {
+            return null;
+        }
+        const r = el.getBoundingClientRect();
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    }, selector);
+    /** The line of text reference `n` stands in: the box of the character beside it, not the raised `[n]`'s own. */
+    const lineOf = (n: number): Promise<Box> => page.evaluate(k => {
+        const ref = document.querySelectorAll('.ProseMirror .mep-fn-ref')[k];
+        const range = document.createRange();
+        const before = ref.previousSibling;
+        const after = ref.nextSibling;
+        if (before instanceof Text && before.data.length > 0) {
+            range.setStart(before, before.data.length - 1);
+            range.setEnd(before, before.data.length);
+        } else {
+            range.setStart(after as Text, 0);
+            range.setEnd(after as Text, 1);
+        }
+        const r = range.getBoundingClientRect();
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    }, n);
+    const off = (a: Box, line: Box) => a.top >= line.bottom - 0.5 || a.bottom <= line.top + 0.5;
+    const overlaps = (a: Box, b: Box) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    /** The document's text the element `selector` covers. */
+    const coveredText = (selector: string): Promise<string[]> => page.evaluate(sel => {
+        const over = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+        const covered: string[] = [];
+        const walker = document.createTreeWalker(document.querySelector('.ProseMirror') as HTMLElement, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const r = document.createRange();
+            r.selectNodeContents(node);
+            if ((node.textContent ?? '').trim() !== '' && Array.from(r.getClientRects()).some(b => b.left < over.right && b.right > over.left && b.top < over.bottom && b.bottom > over.top)) {
+                covered.push(node.textContent ?? '');
+            }
+        }
+        return covered;
+    }, selector);
+
+    test('the card at a raised [1] and the first Backspace\'s hint at [3] stand off the text line the reference is in, not just off its raised box; so does the bar', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        const line = await lineOf(0);
+        const ref = await boxOf('.ProseMirror .mep-fn-ref');
+        assert.ok(ref !== null && ref.bottom < line.bottom - 2, `the [1] is raised inside its line: ${JSON.stringify({ ref, line })}`);
+        const box = await (await page.$$('.ProseMirror .mep-fn-ref'))[0].boundingBox();
+        assert.ok(box);
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForSelector('.mep-language-card .mep-card-footnote', { visible: true, timeout: 3000 });
+        const card = await boxOf('.mep-language-card');
+        assert.ok(card !== null && off(card, line), `the card is off the line of [1]: ${JSON.stringify({ card, line })}`);
+        await page.mouse.move(2, 2);
+        await delay(300);
+        await caretAt(' fragte, wurde');
+        await page.keyboard.press('Backspace');
+        await delay(150);
+        const third = await lineOf(2);
+        const hinted = await boxOf('.mep-hint');
+        assert.ok(hinted !== null && off(hinted, third), `the hint is off the line of [3]: ${JSON.stringify({ hinted, third })}`);
+        await page.waitForSelector(`${BAR}[data-object="footnote"]`, { timeout: 2000 });
+        const shownBar = await boxOf(BAR);
+        assert.ok(shownBar !== null && off(shownBar, third), `the bar is off the line of [3]: ${JSON.stringify({ shownBar, third })}`);
+        await page.keyboard.press('Escape');
+    });
+
+    test('an emoji\'s bar stands at the emoji\'s own box as before: only a reference drawn raised is grown to its line', async function () {
+        this.timeout(20000);
+        await show('Ein Lächeln :smile: hier und mehr Text danach.\n\n[^a]: A.\n');
+        const emoji = await boxOf('.ProseMirror .mep-emoji, .ProseMirror [data-mep-emoji]');
+        assert.ok(emoji, 'an emoji');
+        await page.mouse.click((emoji.left + emoji.right) / 2, (emoji.top + emoji.bottom) / 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await delay(300);
+        const shownBar = await boxOf(BAR);
+        assert.ok(shownBar !== null && (Math.abs(shownBar.top - (emoji.bottom + 4)) < 1 || Math.abs(shownBar.bottom - (emoji.top - 4)) < 1), JSON.stringify({ shownBar, emoji }));
+        await page.keyboard.press('Escape');
+    });
+
+    test('the first Backspace\'s hint is placed again when the bar comes: at 500 ms both show, apart, and the hint stays off the line of [3]', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        await caretAt(' fragte, wurde');
+        await page.keyboard.press('Backspace');
+        await delay(500);
+        const shownBar = await boxOf(BAR);
+        const hinted = await boxOf('.mep-hint');
+        const third = await lineOf(2);
+        assert.ok(shownBar !== null && hinted !== null, 'bar and hint both show');
+        assert.ok(!overlaps(shownBar, hinted), `the hint keeps off the bar: ${JSON.stringify({ shownBar, hinted })}`);
+        assert.ok(off(hinted, third), `and off the line of [3]: ${JSON.stringify({ hinted, third })}`);
+        await page.keyboard.press('Escape');
+    });
+
+    test('after Insert › Footnote the hint is placed again when the entry\'s bar comes, off the bar and off the caret\'s line', async function () {
+        this.timeout(20000);
+        await show(COTK);
+        await selectText('Petrus traurig');
+        await delay(200);
+        await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
+        await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden]) [data-action="footnote-reference"]');
+        await page.click('.mep-menu[data-menu="annotation"] [data-action="footnote-reference"]');
+        await page.mouse.move(2, 2);
+        await page.waitForSelector(`${BAR}[data-object="footnote_entry"]`, { timeout: 3000 });
+        await delay(300);
+        const shownBar = await boxOf(BAR);
+        const hinted = await boxOf('.mep-hint');
+        const line = await page.evaluate(() => {
+            const r = (window.getSelection() as Selection).getRangeAt(0).getClientRects()[0] ?? (window.getSelection() as Selection).getRangeAt(0).getBoundingClientRect();
+            return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+        });
+        assert.ok(shownBar !== null && hinted !== null, 'bar and hint both show');
+        assert.ok(!overlaps(shownBar, hinted), `the hint keeps off the bar: ${JSON.stringify({ shownBar, hinted })}`);
+        assert.ok(off(hinted, line), `and off the caret's line: ${JSON.stringify({ hinted, line })}`);
+    });
+
+    test('Alt+Enter on a reference whose bar stands above it: the first verb\'s tooltip goes above the bar, off the reference\'s line', async function () {
+        this.timeout(20000);
+        // The verse's second line runs the column's width: below [1] is text, above it the quote's title row is free.
+        await show(COTK.replace('Petrus traurig.', 'Petrus traurig, und er sagte zu ihm: „Herr, du weißt alles; du weißt, dass ich dich lieb habe.“ Jesus sagte zu ihm: „Füttere meine Schäfchen.“'));
+        await clickAtom(0);
+        const line = await lineOf(0);
+        const shownBar = await boxOf(BAR);
+        assert.ok(shownBar !== null && shownBar.bottom <= line.top, `the bar stands above [1]: ${JSON.stringify({ shownBar, line })}`);
+        await pressAlt('Enter');
+        assert.strictEqual((await bar()).focus, 'go-to-footnote');
+        const tip = await boxOf('.mep-tooltip');
+        assert.ok(tip !== null && tip.bottom <= shownBar.top + 0.5, `the tooltip stands above the bar: ${JSON.stringify({ tip, shownBar })}`);
+        assert.ok(off(tip, line), `off the line of [1]: ${JSON.stringify({ tip, line })}`);
+        await page.keyboard.press('Escape');
+    });
+
+    /** CA-btk22's sidenote holding a reference, the entry's text two lines under it. */
+    const SIDENOTE = [
+        'Doch der ++Helfer|Oder „Tröster“, „Ermutiger“, „Anwalt“. (Siehe Anm. zu Joh 14:16.[^Joh14:16])++, der heilige Geist, den der Vater in meinem Namen senden wird, wird euch alles lehren.',
+        '',
+        '[^Joh14:16]: *Helfer*  ',
+        'Oder „Tröster“, „Ermutiger“, „Anwalt“. Das mit „Helfer“ übersetzte griechische Wort paráklētos.',
+        '',
+    ].join('\n');
+
+    test('a reference in a margin note: its bar stands under the note at the editor\'s edge less 16 px, over no text of the column (#15)', async function () {
+        this.timeout(20000);
+        await show(SIDENOTE);
+        await clickAtom(0);
+        const shownBar = await boxOf(BAR);
+        const edge = await page.evaluate(() => document.documentElement.clientWidth - 16);
+        assert.ok(shownBar !== null && Math.abs(shownBar.right - edge) < 1.5, `right-aligned at the editor's edge less 16: ${JSON.stringify({ shownBar, edge })}`);
+        assert.deepStrictEqual(await coveredText(BAR), [], 'the bar covers no text');
+        await page.keyboard.press('Escape');
+    });
+
+    test('a reference in a margin note beside full lines of the column: its bar keeps to the margin, its verbs drop their nouns first, over no text', async function () {
+        this.timeout(20000);
+        const full = 'Der Vater wird euch einen anderen Helfer geben, der für immer bei euch sein wird, den Geist der Wahrheit, den die Welt nicht empfangen kann, weil sie ihn weder sieht noch kennt.';
+        await show(SIDENOTE.replace('wird euch alles lehren.', `wird euch alles lehren. ${full} ${full} ${full}`));
+        await clickAtom(0);
+        const shownBar = await boxOf(BAR);
+        assert.ok(shownBar, 'the bar');
+        assert.deepStrictEqual(await coveredText(BAR), [], `the bar covers no text: ${JSON.stringify(shownBar)}`);
+        const verbs = await page.$$eval(`${BAR} button[data-verb]`, els => els.map(b => [(b as HTMLElement).dataset.verb, (b as HTMLElement).dataset.short ?? null]));
+        assert.ok(verbs.some(([, short]) => short !== null), `a verb shows its short form: ${JSON.stringify(verbs)}`);
+        await page.keyboard.press('Escape');
+    });
 });
 

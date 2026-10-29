@@ -96,7 +96,7 @@ import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
 import { Said, Tip, plainTip, said, saidText, tipText, value } from '../tips';
 import { Tooltips } from './tooltip';
-import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, blockFieldAnchor, caretRect, placeMenu, rangeAnchor, revealField } from './placement';
+import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, blockFieldAnchor, caretRect, floatedAround, placeMenu, rangeAnchor, revealField } from './placement';
 
 /**
  * The opening line the save writes for a code block (`savedOpeningLine`), once
@@ -2110,6 +2110,8 @@ class ObjectToolbarView implements PluginView {
             key: barKey(kind, object),
             el: bar.el,
             anchor: () => (bar.object === null ? null : anchorOf(this.view, this.partAnchor(bar) ?? bar.object)),
+            // An object in a note's body or a sidebar floated into the margin: its bar stands there, at it (#15).
+            inMargin: () => bar.object !== null && floatedAround(this.view, (this.partAnchor(bar) ?? bar.object).from) !== null,
             valid: () => bar.object !== null,
             hidden: reason => this.barHidden(bar, reason),
             fit: (room, fresh) => {
