@@ -167,19 +167,30 @@ function definesOf(node: Node): readonly string[] {
     return rawFootnotesOf(node)?.defines ?? [];
 }
 
-/** Whether the entries, in document order, are not the numbered ones ascending and then the rest. */
+/**
+ * The place an entry has in number order (`outOfOrder`, `sortFootnotesTransaction`): its number; an
+ * earlier definition of a label a later one outshines, that one's — it stands right before it, so the
+ * definition the engine keeps stays the last; `null` for one the preview leaves out otherwise, which
+ * goes after them all.
+ */
+function orderOf(entry: FootnoteEntry): number | null {
+    return entry.number ?? entry.duplicateOf;
+}
+
+/** Whether the entries, in document order, are not in number order (`orderOf`) and then the rest. */
 function outOfOrder(entries: readonly FootnoteEntry[]): boolean {
     let last = 0;
     let unnumbered = false;
     for (const entry of entries) {
-        if (entry.number === null) {
+        const order = orderOf(entry);
+        if (order === null) {
             unnumbered = true;
             continue;
         }
-        if (unnumbered || entry.number < last) {
+        if (unnumbered || order < last || (order === last && entry.number === null)) {
             return true;
         }
-        last = entry.number;
+        last = order;
     }
     return false;
 }
@@ -1190,49 +1201,69 @@ export function renameFootnoteTransaction(state: EditorState, pos: number, to: s
 
 /**
  * Every top-level entry in number order (`FootnoteCount.outOfOrder`): gathered
- * after the last one, the numbered ones by number, then the ones the preview
- * leaves out in their order. Each body stays the very text it was (its `src`,
+ * after the last one, the numbered ones by number — an earlier definition of
+ * a label right before the one the engine keeps, so the preview shows the
+ * same text (review 1 H1) — then the ones the preview leaves out in their
+ * order. Each body stays the very text it was (its `src`,
  * `PRESERVE_SOURCE_META`); a run of entries keeps its blank lines, place by
  * place; one moved from elsewhere gets a blank line. The caret stays in its
- * entry, at its place there. One step, one undo. `null` when they are in order.
+ * entry, at its place there. Moving entries renumbers the references inside
+ * them, so it sorts again on what it made until nothing moves (`SORT_ROUNDS`
+ * at most, review 1 L1). One step, one undo. `null` when they are in order.
  */
 export function sortFootnotesTransaction(state: EditorState): Transaction | null {
-    const index = footnoteIndexOf(state);
-    if (!index.outOfOrder) {
+    if (!footnoteIndexOf(state).outOfOrder) {
         return null;
     }
-    const placed = index.entries.map(e => ({ entry: e, node: state.doc.nodeAt(e.pos) as Node }));
+    const tr = state.tr;
+    for (let round = 0; round < SORT_ROUNDS; round++) {
+        const count = round === 0 ? footnoteIndexOf(state) : countFootnotes(tr.doc);
+        if (!count.outOfOrder) {
+            break;
+        }
+        sortOnce(tr, count.entries);
+    }
+    return tr.setMeta(PRESERVE_SOURCE_META, true).setMeta(FOOTNOTES_CHANGED, true).scrollIntoView();
+}
+
+/** How often Sort sorts again on what it made: references inside entries renumber as the entries move, at most once per level of nesting. */
+const SORT_ROUNDS = 4;
+
+/** One round of `sortFootnotesTransaction` on `tr`'s document, whose entries `entries` are. */
+function sortOnce(tr: Transaction, entries: readonly FootnoteEntry[]): void {
+    const doc = tr.doc;
+    const placed = entries.map(e => ({ entry: e, node: doc.nodeAt(e.pos) as Node }));
     const adjacent = placed.every((p, k) => k === 0 || placed[k - 1].entry.pos + placed[k - 1].node.nodeSize === p.entry.pos);
+    // By number; the ones of a number in document order, so an earlier duplicate stays before the live one.
     const order = [
-        ...placed.filter(p => p.entry.number !== null).sort((a, b) => (a.entry.number as number) - (b.entry.number as number)),
-        ...placed.filter(p => p.entry.number === null),
+        ...placed.filter(p => orderOf(p.entry) !== null).sort((a, b) => (orderOf(a.entry) as number) - (orderOf(b.entry) as number) || a.entry.pos - b.entry.pos),
+        ...placed.filter(p => orderOf(p.entry) === null),
     ];
     const gaps = placed.map(p => p.node.attrs.gap as string | null);
     const sorted = order.map((p, k) => p.node.type.create({ ...p.node.attrs, gap: adjacent ? gaps[k] : null }, p.node.content, p.node.marks));
     // Where the caret is: which entry, and how far into it.
-    const sel = state.selection;
+    const sel = tr.selection;
     const inEntry = placed.findIndex(p => sel.from > p.entry.pos && sel.to < p.entry.pos + p.node.nodeSize);
-    const tr = state.tr;
     const last = placed[placed.length - 1];
     const end = last.entry.pos + last.node.nodeSize;
+    const steps = tr.steps.length;
     if (adjacent) {
         tr.replaceWith(placed[0].entry.pos, end, sorted);
     } else {
         for (const p of [...placed].reverse()) {
             tr.delete(p.entry.pos, p.entry.pos + p.node.nodeSize);
         }
-        tr.insert(tr.mapping.map(end, -1), sorted);
+        tr.insert(tr.mapping.slice(steps).map(end, -1), sorted);
     }
     if (inEntry >= 0) {
         const k = order.indexOf(placed[inEntry]);
-        let start = adjacent ? placed[0].entry.pos : tr.mapping.map(end, -1) - sorted.reduce((n, node) => n + node.nodeSize, 0);
+        let start = adjacent ? placed[0].entry.pos : tr.mapping.slice(steps).map(end, -1) - sorted.reduce((n, node) => n + node.nodeSize, 0);
         for (let i = 0; i < k; i++) {
             start += sorted[i].nodeSize;
         }
         const offset = sel.from - placed[inEntry].entry.pos;
         tr.setSelection(TextSelection.create(tr.doc, start + offset, start + offset + (sel.to - sel.from)));
     }
-    return tr.setMeta(PRESERVE_SOURCE_META, true).setMeta(FOOTNOTES_CHANGED, true).scrollIntoView();
 }
 
 // ---------------------------------------------------------------------------

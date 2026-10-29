@@ -6,8 +6,8 @@ import { Transform } from 'prosemirror-transform';
 import { EditorView } from 'prosemirror-view';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
-import { serializeDocument } from '../../../src/editor/serialize';
-import { FOOTNOTE_KEYS, connectLiterals, editInlineFootnote, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, insertFootnoteTransaction, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction } from '../../../src/editor/webview/footnotes';
+import { serializeDocument, unwritableInTable } from '../../../src/editor/serialize';
+import { FOOTNOTE_KEYS, connectLiterals, countFootnotes, deleteFootnoteRefTransaction, editInlineFootnote, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, insertFootnoteTransaction, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction } from '../../../src/editor/webview/footnotes';
 import { saidText } from '../../../src/editor/tips';
 import { firstFocus } from '../../../src/editor/verbs';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -326,3 +326,43 @@ suite('Editor footnote keys and deletes', () => {
     });
 });
 
+/** The positions of every footnote reference atom in `doc`. */
+function refsIn(doc: Node): number[] {
+    const out: number[] = [];
+    doc.descendants((node, pos) => {
+        if (node.type.name === 'footnote_ref') {
+            out.push(pos);
+        }
+    });
+    return out;
+}
+
+/** The text the preview shows for footnote `n` of `markdown` (the host's engine). */
+function previewText(markdown: string, n: number): string {
+    const html = hostEngine().render(markdown);
+    const item = new RegExp(`<li id="fn${n}" class="footnote-item"><p>([\\s\\S]*?) <a href="#fnref${n}"`).exec(html);
+    return item === null ? '' : item[1];
+}
+
+/** Code review 1 of wave 4 #5b (`wave4-footnotes-review-1.md`): each finding, fail-first. */
+suite('Editor footnotes: review 1', () => {
+    test('H1: Sort with a label defined twice keeps the earlier definition right before the live one: the preview shows the same text', () => {
+        const doc = 'A[^x] and b[^y].\n\n[^x]: first x text\n\n[^y]: y text\n\n[^x]: second x text (the live one)\n';
+        assert.strictEqual(previewText(doc, 1), 'second x text (the live one)');
+        const state = stateOf(doc);
+        assert.ok(footnoteIndexOf(state).outOfOrder, 'y between the two x: Sort is offered');
+        const sorted = text(state.apply(sortFootnotesTransaction(state) as Transaction));
+        assert.strictEqual(sorted, 'A[^x] and b[^y].\n\n[^x]: first x text\n\n[^x]: second x text (the live one)\n\n[^y]: y text\n');
+        assert.strictEqual(previewText(sorted, 1), 'second x text (the live one)');
+        assert.strictEqual(footnoteIndexOf(stateOf(sorted)).outOfOrder, false, 'and in order now');
+    });
+
+    test('L1: Sort reaches its fixpoint in one step when references stand inside the entries it moves', () => {
+        const doc = 'Text x[^x] und z[^z].\n\n[^z]: Z sagt[^w].\n\n[^x]: X sagt[^y].\n\n[^w]: W\n\n[^y]: Y\n';
+        let state = stateOf(doc);
+        state = state.apply(sortFootnotesTransaction(state) as Transaction);
+        assert.strictEqual(footnoteIndexOf(state).outOfOrder, false, text(state));
+        assert.deepStrictEqual(footnoteIndexOf(state).entries.map(e => e.number), [1, 2, 3, 4]);
+        assert.strictEqual(sortFootnotesTransaction(state), null);
+    });
+});
