@@ -509,4 +509,23 @@ suite('Editor footnotes: review 1', () => {
         assert.strictEqual(FOOTNOTE_KEYS.delete(onEntry, undefined, { state: onEntry, dispatch: () => dispatched++ } as unknown as EditorView), true);
         assert.strictEqual(dispatched, 0, 'nothing dispatched');
     });
+
+    test('L-b (review 2): Label… leaves every other spelling of `[^nope]` text — an entity, an escaped `]`, one the block holds beside an atom of its own', () => {
+        const tails = 'Other[^y] para.\n\n[^y]: Y text\n';
+        for (const pre of [
+            'Write &#91;^nope&#93; to make one.',
+            'Write [^nope\\] to make one.',
+            'Write `[^nope]` then \\[^nope\\] here.',
+            'Text^[an inline note [^nope]] and write \\[^nope\\] here.',
+        ]) {
+            const doc = `${pre}\n\n${tails}`;
+            const state = stateOf(doc);
+            const y = footnoteIndexOf(state).refs.find(r => r.label === 'y' && r.raw !== true);
+            const done = renameFootnoteTransaction(state, (y as { pos: number }).pos, 'nope');
+            assert.ok(done !== null);
+            const after = state.apply(done.tr);
+            assert.ok(text(after).startsWith(`${pre}\n`), `${pre} → ${JSON.stringify(text(after))}`);
+            assert.strictEqual(footnoteIndexOf(after).refs.filter(r => r.label === 'nope').length, 1, `only the renamed one: ${pre}`);
+        }
+    });
 });
