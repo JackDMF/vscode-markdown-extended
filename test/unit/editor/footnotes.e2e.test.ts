@@ -578,7 +578,7 @@ suite('Editor footnotes (e2e)', () => {
         assert.ok(box);
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.waitForSelector('.mep-language-card .mep-card-footnote', { visible: true, timeout: 3000 });
-        assert.strictEqual(await page.$eval('.mep-language-card .mep-card-footnote-title', el => el.textContent), 'No footnote Schaefchen — Label… on the orphan fixes it');
+        assert.strictEqual(await page.$eval('.mep-language-card .mep-card-footnote-title', el => el.textContent), 'No footnote Schaefchen — give a footnote marked "not referenced" this label (Label…)');
         await shot(page, 'footnotes-literal-dotted.png');
         await page.mouse.move(2, 2);
         await caretAt(' hüten');
@@ -753,6 +753,50 @@ suite('Editor footnotes (e2e)', () => {
         assert.deepStrictEqual(await coveredText(BAR), [], `the bar covers no text: ${JSON.stringify(shownBar)}`);
         const verbs = await page.$$eval(`${BAR} button[data-verb]`, els => els.map(b => [(b as HTMLElement).dataset.verb, (b as HTMLElement).dataset.short ?? null]));
         assert.ok(verbs.some(([, short]) => short !== null), `a verb shows its short form: ${JSON.stringify(verbs)}`);
+        await page.keyboard.press('Escape');
+    });
+
+    test('the bar\'s tooltips start with what the verb does; a missing reference is "No footnote x" on its bar and to a screen reader; a duplicate\'s Back says where its references go', async function () {
+        this.timeout(25000);
+        const mod = process.platform === 'darwin' ? 'Cmd' : 'Ctrl';
+        await show(COTK);
+        await clickAtom(0);
+        const tips = await page.$$eval(`${BAR} button[data-verb]`, els => Object.fromEntries(els.map(b => [(b as HTMLElement).dataset.verb, b.getAttribute('aria-description')])));
+        assert.deepStrictEqual(tips, {
+            'go-to-footnote': `Moves the caret to the footnote's text — ↩ or Back to reference returns (${mod}+click on [1] does the same)`,
+            'footnote-label': 'Renames liebst in every reference and in its text (↵ set · Esc cancel)',
+            'delete-footnote': `Deletes the reference and its text — ${UNDO}`,
+        });
+        await page.keyboard.press('Escape');
+        await restIn('Verkleinerungsform');
+        const entryTips = await page.$$eval(`${BAR} button[data-verb]`, els => Object.fromEntries(els.map(b => [(b as HTMLElement).dataset.verb, b.getAttribute('aria-description')])));
+        assert.strictEqual(entryTips['back-to-reference'], 'Returns to the reference you came from, else the first');
+        assert.strictEqual(entryTips['sort-footnotes'], `Puts the footnote texts in number order, unreferenced ones last — ${UNDO}`);
+        await page.keyboard.press('Escape');
+        // A reference whose definition went (the file spells it as text then): its label renamed under it in the page's document.
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const json = parsedDocumentToJSON(parseDocument(md, 'Ein Satz[^da] und mehr.\n\n[^da]: Da.\n', {})) as unknown;
+        const rename = (n: unknown): void => {
+            const node = n as { type?: string; attrs?: { label?: string }; content?: unknown[] };
+            if (node.type === 'footnote_ref' && node.attrs) {
+                node.attrs.label = 'fehlt';
+            }
+            node.content?.forEach(rename);
+        };
+        rename((json as { doc: unknown }).doc);
+        version++;
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE } as never);
+        await page.waitForSelector('.ProseMirror .mep-fn-ref.mep-fn-missing');
+        assert.strictEqual(await page.$eval('.ProseMirror .mep-fn-ref', el => el.getAttribute('aria-label')), 'No footnote fehlt, shown as text');
+        await page.mouse.click(...await page.$eval('.ProseMirror .mep-fn-ref', el => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2] as [number, number]; }));
+        await page.waitForSelector(`${BAR}[data-object="footnote"]`, { timeout: 2000 });
+        await delay(300);
+        assert.strictEqual((await bar()).label, 'No footnote · fehlt');
+        await page.keyboard.press('Escape');
+        await show('Ein Satz[^satz] und mehr.\n\n[^satz]: Der erste Text.\n\n[^satz]: Der zweite, den die Vorschau zeigt.\n');
+        await restIn('erste Text');
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="back-to-reference"]`, el => el.getAttribute('aria-description')),
+            'Returns to the reference you came from, else the first\nNo reference leads here — they go to footnote 1, which has the same label');
         await page.keyboard.press('Escape');
     });
 });

@@ -447,7 +447,7 @@ export class FootnoteRefView implements NodeView {
         if (missing) {
             this.dom.removeAttribute('id');
             this.dom.textContent = footnoteSpelling(this.node);
-            this.dom.setAttribute('aria-label', `Footnote ${label ?? ''}, no text`);
+            this.dom.setAttribute('aria-label', `No footnote ${label ?? ''}, shown as text`);
             this.dom.removeAttribute('aria-description');
             return;
         }
@@ -1550,7 +1550,7 @@ function literalCardSection(state: EditorState, pos: number): HTMLElement | null
     const code = document.createElement('span');
     code.className = 'mep-card-code';
     code.textContent = label;
-    title.append('No footnote ', code, orphan ? ' — Label… on the orphan fixes it' : ' — the preview shows it as text');
+    title.append('No footnote ', code, orphan ? ' — give a footnote marked "not referenced" this label (Label…)' : ' — the preview shows it as text');
     section.append(title);
     return section;
 }

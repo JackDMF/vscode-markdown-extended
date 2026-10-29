@@ -3555,7 +3555,9 @@ class ObjectToolbarView implements PluginView {
                     this.act(object, current => said(renameFootnoteTransaction(view.state, current.from, typed)));
                 },
             };
-            return { id: 'footnote-label', label: 'Label…', title: 'Its label: the references and its text keep it as they change places (Enter to set, Esc to cancel).', slot: 'edit', field: step };
+            // The label in the code font, as the bar's title draws it.
+            const tip: Tip = { parts: ['Renames ', { code: label ?? '' }, ' in every reference and in its text (↵ set · Esc cancel)'] };
+            return { id: 'footnote-label', label: 'Label…', title: tipText(tip), tip, slot: 'edit', field: step };
         };
         if (object.kind === 'footnote') {
             const ref = refAt(index, object.from);
@@ -3601,9 +3603,8 @@ class ObjectToolbarView implements PluginView {
             }
             if (ref === undefined || ref.number === null) {
                 return {
-                    label: 'Footnote ·',
+                    label: 'No footnote ·',
                     code: label,
-                    after: ' · no text',
                     title: `No footnote ${label} — the preview shows it as text. Label… gives it one that is there.`,
                     verbs: [
                         labelVerb('Footnote', true),
@@ -3613,6 +3614,7 @@ class ObjectToolbarView implements PluginView {
             }
             const others = referencesOf(index, label).length - 1;
             const last = others === 0;
+            const goTip: Tip = { parts: ['Moves the caret to the footnote\'s text — ↩ or Back to reference returns (', `${macKeys() ? 'Cmd' : 'Ctrl'}+click on `, { code: `[${ref.number}]` }, ' does the same)'] };
             return {
                 label: `Footnote ${ref.number} ·`,
                 short: `Footnote ${ref.number}`,
@@ -3621,7 +3623,8 @@ class ObjectToolbarView implements PluginView {
                 verbs: [
                     {
                         id: 'go-to-footnote', label: 'Go to footnote text', short: 'Go to text', slot: 'open', jump: true,
-                        title: `The caret to its text; Back to reference there, or ↩, brings it back (${macKeys() ? 'Cmd' : 'Ctrl'}+click goes too).`,
+                        title: tipText(goTip),
+                        tip: goTip,
                         run: () => this.act(object, current => {
                             const done = goToFootnoteTransaction(view.state, current.from);
                             if (done !== null) {
@@ -3645,8 +3648,12 @@ class ObjectToolbarView implements PluginView {
         const verbs: Verb[] = [
             {
                 id: 'back-to-reference', label: 'Back to reference', short: 'Back', slot: 'open', jump: true,
-                title: 'The caret back to the reference you came from, else its first.',
-                refusal: number === null ? 'No reference to go back to — this footnote is not referenced' : null,
+                title: 'Returns to the reference you came from, else the first',
+                refusal: number === null
+                    ? entry !== undefined && entry.duplicateOf !== null
+                        ? `No reference leads here — they go to footnote ${entry.duplicateOf}, which has the same label`
+                        : 'No reference to go back to — this footnote is not referenced'
+                    : null,
                 run: () => this.act(object, current => {
                     const done = backToReferenceTransaction(view.state, current.from);
                     if (done !== null) {
@@ -3661,7 +3668,7 @@ class ObjectToolbarView implements PluginView {
         if (index.outOfOrder) {
             verbs.push({
                 id: 'sort-footnotes', label: 'Sort footnotes', short: 'Sort', slot: 'type',
-                title: `The footnotes' texts in number order, after the last one; unreferenced ones last — ${undoKey()}`,
+                title: `Puts the footnote texts in number order, unreferenced ones last — ${undoKey()}`,
                 run: () => this.act(object, () => {
                     const tr = sortFootnotesTransaction(view.state);
                     if (tr !== null) {
