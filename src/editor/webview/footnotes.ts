@@ -845,11 +845,10 @@ function deleteBeside(dir: -1 | 1, key: string): Command {
             if (done === null) {
                 return false;
             }
-            if (dispatch) {
+            if (view) {
+                dispatchWithHint(view, done.tr, done.hint);
+            } else if (dispatch) {
                 dispatch(done.tr);
-                if (view) {
-                    showChangeHint(view, done.hint);
-                }
             }
             return true;
         }
@@ -877,11 +876,10 @@ const deleteSelectedEntry: Command = (state, dispatch, view) => {
     if (done === null) {
         return false;
     }
-    if (dispatch) {
+    if (view) {
+        dispatchWithHint(view, done.tr, done.hint);
+    } else if (dispatch) {
         dispatch(done.tr);
-        if (view) {
-            showChangeHint(view, done.hint);
-        }
     }
     return true;
 };
@@ -1386,6 +1384,19 @@ export function backToReferenceTransaction(state: EditorState, pos: number, k?: 
     return { tr, number: ref.number };
 }
 
+/**
+ * Dispatch `tr` in `view` and say `hint`, which reports it — only where the
+ * document changed: a transaction the edit filter refused leaves its refusal
+ * showing, not a report of a change that was not made (review 1 L4).
+ */
+export function dispatchWithHint(view: EditorView, tr: Transaction, hint: Said): void {
+    const before = view.state.doc;
+    view.dispatch(tr);
+    if (view.state.doc !== before) {
+        showChangeHint(view, hint);
+    }
+}
+
 /** "Sort Footnotes" from the palette (`sortFootnotes`): the entries in number order, or a neutral word that they are. */
 export function sortFootnotesCommand(view: EditorView): void {
     const tr = sortFootnotesTransaction(view.state);
@@ -1393,8 +1404,7 @@ export function sortFootnotesCommand(view: EditorView): void {
         showHint(view, footnoteIndexOf(view.state).entries.length === 0 ? 'This document has no footnotes' : 'Footnotes are in number order', 'neutral');
         return;
     }
-    view.dispatch(tr);
-    showChangeHint(view, `Footnotes sorted — ${undoKey()}`);
+    dispatchWithHint(view, tr, `Footnotes sorted — ${undoKey()}`);
 }
 
 /** Ctrl or Cmd held, as a link is followed (`links.ts`). */

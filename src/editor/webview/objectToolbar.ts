@@ -64,7 +64,7 @@ import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import {
     backToReferenceTransaction, deleteFootnoteEntryTransaction, deleteFootnoteRefTransaction, editInlineFootnote, entryAt, footnoteIndexOf, goToFootnoteTransaction,
-    labelRefusal, orphanChip, refAt, renameFootnoteTransaction, sortFootnotesTransaction,
+    dispatchWithHint, labelRefusal, orphanChip, refAt, renameFootnoteTransaction, sortFootnotesTransaction,
 } from './footnotes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
@@ -3525,8 +3525,7 @@ class ObjectToolbarView implements PluginView {
         const label = node.attrs.label as string | null;
         const said = (done: { tr: Transaction; hint: Said } | null) => {
             if (done !== null) {
-                view.dispatch(done.tr);
-                showChangeHint(view, done.hint);
+                dispatchWithHint(view, done.tr, done.hint);
             }
             return done !== null;
         };
@@ -3673,8 +3672,7 @@ class ObjectToolbarView implements PluginView {
                 run: () => this.act(object, () => {
                     const tr = sortFootnotesTransaction(view.state);
                     if (tr !== null) {
-                        view.dispatch(tr);
-                        showChangeHint(view, `Footnotes sorted — ${undoKey()}`);
+                        dispatchWithHint(view, tr, `Footnotes sorted — ${undoKey()}`);
                     }
                     return tr !== null;
                 }),

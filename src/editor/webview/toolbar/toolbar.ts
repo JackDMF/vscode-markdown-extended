@@ -37,8 +37,8 @@ import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { LayerClaim, LayerSlot, Rect, REST_MS, blockFieldAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
-import { dismissRefusal, showChangeHint, showHint, showRefusal } from '../hint';
-import { insertFootnoteTransaction } from '../footnotes';
+import { dismissRefusal, showHint, showRefusal } from '../hint';
+import { dispatchWithHint, insertFootnoteTransaction } from '../footnotes';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
 import { chevronNode, lensLabelNodes } from '../lenses';
@@ -2067,8 +2067,7 @@ class ToolbarView implements PluginView {
             case 'footnote': {
                 const done = insertFootnoteTransaction(view.state);
                 if (done !== null) {
-                    view.dispatch(done.tr);
-                    showChangeHint(view, done.hint);
+                    dispatchWithHint(view, done.tr, done.hint);
                 }
                 view.focus();
                 return;
