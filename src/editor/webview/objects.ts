@@ -967,7 +967,7 @@ export function literalCellRefusal(ch: string): Said {
 }
 
 /** Whether `pos` in `doc` stands in a table cell. */
-function inTableCell(doc: Node, pos: number): boolean {
+export function inTableCell(doc: Node, pos: number): boolean {
     const $pos = doc.resolve(Math.min(pos, doc.content.size));
     for (let depth = $pos.depth; depth > 0; depth--) {
         if ($pos.node(depth).type.name === 'table_cell' || $pos.node(depth).type.name === 'table_header') {

@@ -2525,12 +2525,16 @@ export const CELL_BREAK_REFUSAL = 'A table cell holds one line — no line break
 /** Why inline code in a table cell holds no `|` (C3, as the critique words it). */
 export const CELL_PIPE_REFUSAL: Said = said`${value('|')} can't go in inline code in a table cell — it would split the row. Type it outside the code.`;
 
+/** Why a footnote in a table cell holds no `|` — its label or an inline footnote's text (review 1 H3), as `CELL_PIPE_REFUSAL` words it. */
+export const FOOTNOTE_CELL_PIPE_REFUSAL: Said = said`${value('|')} can't go in a footnote in a table cell — it would split the row. Remove it.`;
+
 /**
  * Why a table between `from` and `to` cannot be written so that it reads back
  * as itself, or `null` — what the tidy form above has no spelling for, which
  * the page refuses to make (`webview/tables.ts`), as it refuses an unwritable
  * note: a hard break in a cell (a sidebar can hold one), code holding a `|`,
- * an attribute span, emphasis or a link whose literal holds a `|` or a backtick.
+ * a footnote whose label or text holds one, an attribute span, emphasis or a
+ * link whose literal holds a `|` or a backtick.
  */
 export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): Said | null {
     let reason: Said | null = null;
@@ -2551,6 +2555,9 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): S
                 reason = CELL_BREAK_REFUSAL;
             } else if (child.isText && (child.text ?? '').includes('|') && child.marks.some(m => m.type.name === 'code')) {
                 reason = CELL_PIPE_REFUSAL;
+            } else if (child.type.name === 'footnote_ref' && footnoteSpelling(child).includes('|')) {
+                // The row splits at it, escaped or not: the label is no label then, the inline footnote's text cut.
+                reason = FOOTNOTE_CELL_PIPE_REFUSAL;
             } else {
                 const span = [child, ...child.marks].find(c => holderOfCarrier(c.type.name) !== undefined && /[|`]/.test(markLiteralOf(c) ?? ''));
                 if (span !== undefined) {

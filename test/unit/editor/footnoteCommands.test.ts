@@ -379,4 +379,24 @@ suite('Editor footnotes: review 1', () => {
         assert.deepStrictEqual(footnoteIndexOf(state).refs.map(r => r.label), ['x', 'z', 'z'], 'the plain [^z] joins, the escaped one stays text');
         assert.ok(out.includes('see [^z].\n\nAnd \\[^z\\] escaped.'), out);
     });
+
+    test('H3: a `|` in a footnote in a table cell is refused — by the table\'s check, in Edit text…, in Label…; Insert leaves it out of the label', () => {
+        let state = stateOf('| a | b |\n| --- | --- |\n| x^[note] | y[^n] |\n\n[^n]: N.\n');
+        const [inline, labelled] = refsIn(state.doc);
+        const refusal = editInlineFootnote(state, inline, 'a|b');
+        assert.ok(refusal !== null && 'refusal' in refusal, 'Edit text… refuses');
+        assert.strictEqual(saidText(refusal.refusal), 'Not set: "|" can\'t go in a footnote in a table cell — it would split the row');
+        assert.strictEqual(saidText(labelRefusal(state, 'a|b', 'n') ?? ''), 'Not set: a label in a table cell can\'t hold "|" — it would split the row');
+        assert.strictEqual(labelRefusal(stateOf('Text[^n].\n\n[^n]: N.\n'), 'a|b', 'n'), null, 'outside a table a label may hold it');
+        // The table's own check, which the edit filter asks: a label with `|` given any other way.
+        const renamed = state.tr.setNodeMarkup(labelled, undefined, { ...state.doc.nodeAt(labelled)?.attrs, label: 'a|b' });
+        assert.strictEqual(saidText(unwritableInTable(renamed.doc) ?? ''), '"|" can\'t go in a footnote in a table cell — it would split the row. Remove it.');
+        state = stateOf('| a | b |\n| --- | --- |\n| Wort a\\|b hier | y |\n');
+        const from = at(state.doc, 'a|b', true);
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, from, from + 3)));
+        const inserted = insertFootnoteTransaction(state);
+        assert.ok(inserted !== null);
+        assert.strictEqual(unwritableInTable(inserted.tr.doc), null);
+        assert.deepStrictEqual(countFootnotes(inserted.tr.doc).entries.map(e => e.label), ['ab']);
+    });
 });

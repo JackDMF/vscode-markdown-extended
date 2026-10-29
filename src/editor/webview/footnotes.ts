@@ -10,6 +10,7 @@ import { editorSchema, footnoteSpelling } from '../schema';
 import { Said, said, value } from '../tips';
 import { announceHint, macKeys, showChangeHint, showHint, showRefusal, undoKey } from './hint';
 import { noteRefusal } from './notes';
+import { inTableCell } from './objects';
 
 /**
  * Footnotes edited in place (wave 4 #5b): the numbers.
@@ -1161,6 +1162,12 @@ export function footnoteInputRules(): Plugin {
 // Label…, Sort footnotes
 // ---------------------------------------------------------------------------
 
+/** Why a label in a table cell holds no `|` (review 1 H3). */
+const CELL_PIPE_LABEL_REFUSAL: Said = said`Not set: a label in a table cell can't hold ${value('|')} — it would split the row`;
+
+/** Why an inline footnote's text in a table cell holds no `|` (review 1 H3). */
+const CELL_PIPE_TEXT_REFUSAL: Said = said`Not set: ${value('|')} can't go in a footnote in a table cell — it would split the row`;
+
 /** The number a label's footnote has, or `null`: what a refusal names it by. */
 function numberOfLabel(state: EditorState, label: string): number | null {
     return footnoteIndexOf(state).refs.find(r => r.label === label && r.number !== null)?.number ?? null;
@@ -1182,10 +1189,17 @@ export function labelRefusal(state: EditorState, typed: string, own: string | nu
     if (typed.includes(']')) {
         return said`Not set: a label can't hold ${value(']')}`;
     }
-    if (typed === own || mayJoin) {
+    const index = footnoteIndexOf(state);
+    // A reference in a table cell: the row would split at the label's `|` (review 1 H3).
+    if (typed.includes('|') && own !== null && index.refs.some(r => r.label === own && r.raw !== true && inTableCell(state.doc, r.pos))) {
+        return CELL_PIPE_LABEL_REFUSAL;
+    }
+    if (typed === own) {
         return null;
     }
-    const index = footnoteIndexOf(state);
+    if (mayJoin) {
+        return null;
+    }
     if (index.labels.has(typed) || index.refs.some(r => r.label === typed)) {
         const number = numberOfLabel(state, typed);
         return number === null
@@ -1527,7 +1541,9 @@ export function insertFootnoteTransaction(state: EditorState): { tr: Transaction
     }
     const selected = state.doc.textBetween(sel.from, sel.to, undefined, '￼');
     const word = selected.replace(LABEL_EDGES, '');
-    const base = word === '' || word.includes('￼') ? null : word.replace(/\s+/g, '_').replace(/\]/g, '');
+    // In a table cell no `|`: the row would split at it (review 1 H3).
+    const cell = inTableCell(state.doc, sel.from);
+    const base = word === '' || word.includes('￼') ? null : word.replace(/\s+/g, '_').replace(cell ? /[\]|]/g : /\]/g, '') || null;
     const label = base === null ? freeNumber(state) : freeLabel(state, base);
     // Right after the word's last character: the selection less what was trimmed at its end.
     const trailing = base === null ? 0 : selected.length - selected.replace(/[\s\p{P}\p{S}]+$/u, '').length;
@@ -1585,6 +1601,9 @@ export function editInlineFootnote(state: EditorState, pos: number, typed: strin
     }
     if (typed.trim() === '') {
         return { refusal: 'Not set: an inline footnote needs text — "Delete footnote" on its bar deletes it' };
+    }
+    if (typed.includes('|') && inTableCell(state.doc, pos)) {
+        return { refusal: CELL_PIPE_TEXT_REFUSAL };
     }
     const stray = strayBracket(typed);
     if (stray >= 0) {
