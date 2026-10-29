@@ -244,7 +244,8 @@ suite('Editor footnote keys and deletes', () => {
     });
 
     test('Label… renames every reference and the text in one step; one undo; a `[^lieben]` written as text joins it', () => {
-        let state = stateOf(COTK.replace('Zweiter Absatz.', 'Zweiter Absatz \\[^lieben\\].'));
+        // Written plainly: the file's `[^lieben]` is text while nothing defines it, and joins once something does (H2: an escaped one would not).
+        let state = stateOf(COTK.replace('Zweiter Absatz.', 'Zweiter Absatz [^lieben].'));
         let liebst = -1;
         state.doc.forEach((node, offset) => {
             liebst = node.type.name === 'footnote_entry' && node.attrs.label === 'liebst' ? offset : liebst;
@@ -254,7 +255,7 @@ suite('Editor footnote keys and deletes', () => {
         assert.ok(done !== null);
         assert.match(saidText(done.hint), /^Footnote liebst renamed to lieben — (Ctrl|Cmd)\+Z$/);
         state = state.apply(done.tr);
-        assert.strictEqual(text(state), before.replace(/\[\^liebst\]/g, '[^lieben]').replace('\\[^lieben\\]', '[^lieben]'));
+        assert.strictEqual(text(state), before.replace(/\[\^liebst\]/g, '[^lieben]'));
         assert.deepStrictEqual(footnoteIndexOf(state).entries.find(e => e.label === 'lieben')?.refCount, 3);
         state = run(state, undo) as EditorState;
         assert.strictEqual(text(state), before);
@@ -364,5 +365,18 @@ suite('Editor footnotes: review 1', () => {
         assert.strictEqual(footnoteIndexOf(state).outOfOrder, false, text(state));
         assert.deepStrictEqual(footnoteIndexOf(state).entries.map(e => e.number), [1, 2, 3, 4]);
         assert.strictEqual(sortFootnotesTransaction(state), null);
+    });
+
+    test('H2: Label… connects only the new label\'s `[^z]` written plainly — never an escaped one, never another label\'s', () => {
+        const doc = 'Write \\[^x\\] to make a footnote, like this[^x].\n\nOther[^y] para, see [^z].\n\nAnd \\[^z\\] escaped.\n\n[^x]: X text\n\n[^y]: Y text\n';
+        let state = stateOf(doc);
+        const entry = footnoteIndexOf(state).entries.find(e => e.label === 'y');
+        const done = renameFootnoteTransaction(state, (entry as { pos: number }).pos, 'z');
+        assert.ok(done !== null);
+        state = state.apply(done.tr);
+        const out = text(state);
+        assert.ok(out.startsWith('Write \\[^x\\] to make a footnote, like this[^x].\n'), out);
+        assert.deepStrictEqual(footnoteIndexOf(state).refs.map(r => r.label), ['x', 'z', 'z'], 'the plain [^z] joins, the escaped one stays text');
+        assert.ok(out.includes('see [^z].\n\nAnd \\[^z\\] escaped.'), out);
     });
 });

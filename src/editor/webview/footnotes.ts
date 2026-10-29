@@ -1057,14 +1057,30 @@ function rawText(node: Node): boolean {
  * text's marks. The step a typed `]` (`footnoteInputRules`), a pasted text and
  * a label given to an orphan (Label…) share.
  */
-export function connectLiterals(tr: Transform, labels: ReadonlySet<string>, from = 0, to = tr.doc.content.size): void {
+export function connectLiterals(tr: Transform, labels: ReadonlySet<string>, from = 0, to = tr.doc.content.size, plainOnly = false): void {
     const found: { from: number; to: number; label: string; node: Node }[] = [];
-    tr.doc.nodesBetween(from, to, (node, pos) => {
-        if (node.isText && !rawText(node)) {
+    // With `plainOnly`, in a block the file's text still stands for (its `src`), only the literals it writes unescaped.
+    const seen = new Map<Node, number>();
+    let block: Node | null = null;
+    tr.doc.nodesBetween(from, to, (node, pos, parent) => {
+        if (parent === tr.doc) {
+            block = node;
+        }
+        if (node.isText) {
             for (const m of (node.text ?? '').matchAll(LITERAL)) {
-                if (labels.has(m[1])) {
-                    found.push({ from: pos + (m.index ?? 0), to: pos + (m.index ?? 0) + m[0].length, label: m[1], node });
+                if (!labels.has(m[1])) {
+                    continue;
                 }
+                // Counted in code too, as the source shows it there: the k-th here is the source's k-th.
+                const top = block as Node | null;
+                const k = top === null ? 0 : seen.get(top) ?? 0;
+                if (top !== null) {
+                    seen.set(top, k + 1);
+                }
+                if (rawText(node) || (plainOnly && top !== null && typeof top.attrs.src === 'string' && !writtenPlain(top.attrs.src, m[1], k))) {
+                    continue;
+                }
+                found.push({ from: pos + (m.index ?? 0), to: pos + (m.index ?? 0) + m[0].length, label: m[1], node });
             }
         }
         return !node.isTextblock || node.type.spec.code !== true;
@@ -1072,6 +1088,19 @@ export function connectLiterals(tr: Transform, labels: ReadonlySet<string>, from
     for (const f of found.reverse()) {
         tr.replaceWith(f.from, f.to, editorSchema.nodes.footnote_ref.create({ label: f.label }, null, f.node.marks));
     }
+}
+
+/**
+ * Whether the `k`-th `[^label]` the source `src` holds as text is written
+ * plainly — `[^label]`, no backslash in it — not escaped (`\[^label\]`,
+ * `\[\^label\]`): what a file meant as text stays text. An occurrence the
+ * source does not show (the text was typed since) counts as plain.
+ */
+function writtenPlain(src: string, label: string, k: number): boolean {
+    const chars = Array.from(label).map(ch => `\\\\?${ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).join('');
+    const found = Array.from(src.matchAll(new RegExp(`(\\\\)?\\[(\\\\)?\\^${chars}\\\\?\\]`, 'g')));
+    const at = found[k];
+    return at === undefined || (at[1] === undefined && at[2] === undefined);
 }
 
 /** `slice` with its `[^x]` texts the references they are, where the document defines `x` (a plain-text paste). */
@@ -1194,7 +1223,11 @@ export function renameFootnoteTransaction(state: EditorState, pos: number, to: s
     } else {
         rename(pos);
     }
-    connectLiterals(tr, new Set([...index.labels, to]));
+    // A label new to the document: its `[^to]` written as plain text is the reference it now is — no other
+    // label's (an escaped `\[^x\]` is text the file meant), none the file escaped (review 1 H2, Daniel).
+    if (!index.labels.has(to)) {
+        connectLiterals(tr, new Set([to]), 0, tr.doc.content.size, true);
+    }
     tr.setMeta(FOOTNOTES_CHANGED, true);
     return { tr, hint: said`Footnote ${value(label)} renamed to ${value(to)} — ${undoKey()}` };
 }
