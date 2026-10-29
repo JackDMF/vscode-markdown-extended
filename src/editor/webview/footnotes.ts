@@ -864,10 +864,13 @@ function deleteBeside(dir: -1 | 1, key: string): Command {
             if (done === null) {
                 return false;
             }
-            if (view) {
-                dispatchWithHint(view, done.tr, done.hint);
-            } else if (dispatch) {
-                dispatch(done.tr);
+            // Asked only whether it applies (no `dispatch`): nothing is done (review 2 L-e).
+            if (dispatch) {
+                if (view) {
+                    dispatchWithHint(view, done.tr, done.hint);
+                } else {
+                    dispatch(done.tr);
+                }
             }
             return true;
         }
@@ -902,10 +905,12 @@ const deleteSelectedEntry: Command = (state, dispatch, view) => {
     if (done === null) {
         return false;
     }
-    if (view) {
-        dispatchWithHint(view, done.tr, done.hint);
-    } else if (dispatch) {
-        dispatch(done.tr);
+    if (dispatch) {
+        if (view) {
+            dispatchWithHint(view, done.tr, done.hint);
+        } else {
+            dispatch(done.tr);
+        }
     }
     return true;
 };

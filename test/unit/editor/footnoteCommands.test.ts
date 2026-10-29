@@ -493,4 +493,20 @@ suite('Editor footnotes: review 1', () => {
         // Without the source block's reference, it deletes as before.
         assert.strictEqual(entryDeleteRefusal(stateOf('Para[^x].\n\n[^x]: The text of x\n'), footnoteIndexOf(stateOf('Para[^x].\n\n[^x]: The text of x\n')).entries[0].pos), null);
     });
+
+    test('L-e (review 2): asked only whether they apply (no dispatch), the aimed deletes change nothing, a view given or not', () => {
+        let state = stateOf(COTK);
+        const [ref] = refsIn(state.doc);
+        state = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, ref)));
+        let dispatched = 0;
+        const view = { state, dispatch: () => dispatched++ } as unknown as EditorView;
+        assert.strictEqual(FOOTNOTE_KEYS.delete(state, undefined, view), true, 'it applies');
+        let entry = -1;
+        state.doc.forEach((node, offset) => {
+            entry = node.type.name === 'footnote_entry' && entry < 0 ? offset : entry;
+        });
+        const onEntry = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, entry)));
+        assert.strictEqual(FOOTNOTE_KEYS.delete(onEntry, undefined, { state: onEntry, dispatch: () => dispatched++ } as unknown as EditorView), true);
+        assert.strictEqual(dispatched, 0, 'nothing dispatched');
+    });
 });
