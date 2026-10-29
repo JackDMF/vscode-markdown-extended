@@ -188,7 +188,8 @@ function outOfOrder(entries: readonly FootnoteEntry[]): boolean {
             unnumbered = true;
             continue;
         }
-        if (unnumbered || order < last || (order === last && entry.number === null)) {
+        // An earlier definition shares its order with the live one after it: in order (review 2 L-a, three definitions).
+        if (unnumbered || order < last) {
             return true;
         }
         last = order;
@@ -1262,9 +1263,29 @@ export function renameFootnoteTransaction(state: EditorState, pos: number, to: s
  * place; one moved from elsewhere gets a blank line. The caret stays in its
  * entry, at its place there. Moving entries renumbers the references inside
  * them, so it sorts again on what it made until nothing moves (`SORT_ROUNDS`
- * at most, review 1 L1). One step, one undo. `null` when they are in order.
+ * at most, review 1 L1). One step, one undo. `null` when they are in order,
+ * when nothing would move, and when it would change which definition a label
+ * shows (`sortRefusal`).
  */
 export function sortFootnotesTransaction(state: EditorState): Transaction | null {
+    const tr = sortCandidate(state);
+    return tr === null || keptDefinitionChanged(state.doc, tr.doc) !== null ? null : tr;
+}
+
+/**
+ * Why Sort does not sort, or `null`: sorting would change the text the
+ * preview shows for a label — its kept definition (the last) is in a source
+ * block and an entry would move past it (review 2 M-a). Daniel: Sort refuses,
+ * nothing moves.
+ */
+export function sortRefusal(state: EditorState): Said | null {
+    const tr = sortCandidate(state);
+    const label = tr === null ? null : keptDefinitionChanged(state.doc, tr.doc);
+    return label === null ? null : said`Not sorted: a source block also defines ${value(label)} — sorting would change which text the preview shows`;
+}
+
+/** The sorted document's transaction, before it is checked (`sortFootnotesTransaction`); `null` when nothing would move. */
+function sortCandidate(state: EditorState): Transaction | null {
     if (!footnoteIndexOf(state).outOfOrder) {
         return null;
     }
@@ -1276,7 +1297,37 @@ export function sortFootnotesTransaction(state: EditorState): Transaction | null
         }
         sortOnce(tr, count.entries);
     }
+    // Nothing moved: no step to undo, no hint (review 2 L-a).
+    if (tr.doc.eq(state.doc)) {
+        return null;
+    }
     return tr.setMeta(PRESERVE_SOURCE_META, true).setMeta(FOOTNOTES_CHANGED, true).scrollIntoView();
+}
+
+/** Each label's kept definition in `doc` — the last, which the engine keeps — as its text: an entry's content, a source block's source. */
+function keptDefinitions(doc: Node): Map<string, string> {
+    const kept = new Map<string, string>();
+    doc.forEach(node => {
+        if (node.type.name === 'footnote_entry') {
+            kept.set(node.attrs.label as string, `entry\u0000${JSON.stringify(node.content.toJSON())}`);
+        }
+        for (const label of definesOf(node)) {
+            kept.set(label, `source\u0000${node.attrs.src as string}`);
+        }
+    });
+    return kept;
+}
+
+/** The first label whose kept definition differs between `before` and `after`, or `null`. */
+function keptDefinitionChanged(before: Node, after: Node): string | null {
+    const was = keptDefinitions(before);
+    const now = keptDefinitions(after);
+    for (const [label, text] of was) {
+        if (now.get(label) !== text) {
+            return label;
+        }
+    }
+    return null;
 }
 
 /** How often Sort sorts again on what it made: references inside entries renumber as the entries move, at most once per level of nesting. */
@@ -1399,6 +1450,11 @@ export function dispatchWithHint(view: EditorView, tr: Transaction, hint: Said):
 
 /** "Sort Footnotes" from the palette (`sortFootnotes`): the entries in number order, or a neutral word that they are. */
 export function sortFootnotesCommand(view: EditorView): void {
+    const refusal = sortRefusal(view.state);
+    if (refusal !== null) {
+        showRefusal(view, refusal);
+        return;
+    }
     const tr = sortFootnotesTransaction(view.state);
     if (tr === null) {
         showHint(view, footnoteIndexOf(view.state).entries.length === 0 ? 'This document has no footnotes' : 'Footnotes are in number order', 'neutral');

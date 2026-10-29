@@ -64,7 +64,7 @@ import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import {
     backToReferenceTransaction, deleteFootnoteEntryTransaction, deleteFootnoteRefTransaction, editInlineFootnote, entryAt, footnoteIndexOf, goToFootnoteTransaction,
-    dispatchWithHint, labelRefusal, orphanChip, refAt, renameFootnoteTransaction, sortFootnotesTransaction,
+    dispatchWithHint, labelRefusal, orphanChip, refAt, renameFootnoteTransaction, sortFootnotesTransaction, sortRefusal,
 } from './footnotes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
@@ -3689,6 +3689,7 @@ class ObjectToolbarView implements PluginView {
             verbs.push({
                 id: 'sort-footnotes', label: 'Sort footnotes', short: 'Sort', slot: 'type',
                 title: `Puts the footnote texts in number order, unreferenced ones last — ${undoKey()}`,
+                refusal: sortRefusal(view.state),
                 run: () => this.act(object, () => {
                     const tr = sortFootnotesTransaction(view.state);
                     if (tr !== null) {

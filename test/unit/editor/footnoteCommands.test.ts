@@ -7,7 +7,7 @@ import { EditorView } from 'prosemirror-view';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument, unwritableInTable } from '../../../src/editor/serialize';
-import { FOOTNOTE_KEYS, connectLiterals, countFootnotes, deleteFootnoteRefTransaction, editInlineFootnote, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, insertFootnoteTransaction, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction } from '../../../src/editor/webview/footnotes';
+import { FOOTNOTE_KEYS, connectLiterals, countFootnotes, deleteFootnoteRefTransaction, editInlineFootnote, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, insertFootnoteTransaction, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction, sortRefusal } from '../../../src/editor/webview/footnotes';
 import { saidText } from '../../../src/editor/tips';
 import { firstFocus } from '../../../src/editor/verbs';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -424,5 +424,31 @@ suite('Editor footnotes: review 1', () => {
             atoms += n.type.name === 'footnote_ref' ? 1 : 0;
         });
         assert.strictEqual(atoms, 0);
+    });
+
+    test('M-a (review 2): Sort that would move an entry past a source block holding the kept definition refuses, nothing moves', () => {
+        const doc = 'A[^x] and b[^y] and c[^z].\n\n[^y]: y text\n\n[^x]: first x text\n\n> [^x]: second x in a quote (live)\n\n[^z]: z text\n';
+        assert.match(previewText(doc, 1), /^second x in a quote/);
+        const state = stateOf(doc);
+        assert.ok(footnoteIndexOf(state).outOfOrder);
+        assert.ok(sortFootnotesTransaction(state) === null, 'nothing moves');
+        assert.strictEqual(saidText(sortRefusal(state) ?? ''), 'Not sorted: a source block also defines "x" — sorting would change which text the preview shows');
+        // Where moving changes no kept definition, Sort sorts and says nothing against it.
+        const plain = stateOf('A[^b] B[^a].\n\n[^a]: Eins.\n\n[^b]: Zwei.\n');
+        assert.strictEqual(sortRefusal(plain), null);
+        assert.ok(sortFootnotesTransaction(plain) !== null);
+    });
+
+    test('L-a (review 2): three definitions of a label, in place, are in order: no Sort, no empty step', () => {
+        const doc = 'A[^x] und b[^y].\n\n[^x]: first\n\n[^x]: second\n\n[^x]: third (live)\n\n[^y]: y\n';
+        const state = stateOf(doc);
+        assert.strictEqual(footnoteIndexOf(state).outOfOrder, false);
+        assert.ok(sortFootnotesTransaction(state) === null, 'no step');
+        // Out of order with three: sorted once, the live one last of its label, and in order after.
+        const mixed = stateOf('A[^x] und b[^y].\n\n[^x]: first\n\n[^y]: y\n\n[^x]: second\n\n[^x]: third (live)\n');
+        const sorted = text(mixed.apply(sortFootnotesTransaction(mixed) as Transaction));
+        assert.strictEqual(sorted, 'A[^x] und b[^y].\n\n[^x]: first\n\n[^x]: second\n\n[^x]: third (live)\n\n[^y]: y\n');
+        assert.strictEqual(previewText(sorted, 1), 'third (live)');
+        assert.strictEqual(footnoteIndexOf(stateOf(sorted)).outOfOrder, false);
     });
 });
