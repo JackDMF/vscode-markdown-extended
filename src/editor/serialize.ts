@@ -1276,8 +1276,9 @@ const LITERAL_REFERENCE = /\[\^([^\]\s]+)\]/g;
  * `text`, a text node's, cut where it holds `[^label]` with a label the
  * document being written does not define (`currentFootnoteLabels`, known only
  * inside `withFootnoteLabels`) — those
- * parts `literal`, written unescaped (Q2, Daniel 2026-10-28); none in code,
- * superscript or subscript, whose text is written as it is anyway, and none
+ * parts `literal`, written unescaped (Q2, Daniel 2026-10-28) — but one right
+ * before `(`, `[` or `{`, or before more of the line than this text holds
+ * (review 1 M1); none in code, superscript or subscript, whose text is written as it is anyway, and none
  * in a textblock holding another caret, which it would pair with as a
  * superscript. `[]` where it holds none.
  */
@@ -1296,6 +1297,12 @@ function undefinedLiterals(text: string, node: Node, parent: Node): { text: stri
             continue;
         }
         const at = m.index ?? 0;
+        // Right before `(`, `[` or `{` it would read as a link, a reference link or attributes: escaped, as before Q2 —
+        // so at a text's end too, unless the textblock ends there (review 1 M1, Daniel).
+        const next = text.charAt(at + m[0].length);
+        if (next === '' ? parent.lastChild !== node : '([{'.includes(next)) {
+            continue;
+        }
         if (at > last) {
             parts.push({ text: text.slice(last, at), literal: false });
         }

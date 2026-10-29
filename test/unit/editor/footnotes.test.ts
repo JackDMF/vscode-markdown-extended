@@ -332,6 +332,16 @@ suite('Editor footnote literals', () => {
         assert.deepStrictEqual([back.type.name, back.textContent, rest.length], ['paragraph', '[^neu]: kein Eintrag', 0], JSON.stringify(out));
     });
 
+    test('M1 (review 1): right before `(`, `{` or a reference link\'s `[` it stays escaped, so it is no link and no attributes, and reads back as text', () => {
+        for (const [line, tail] of [['Text with [^nope](see) here.', ''], ['See [^nope]{.cls} attr.', ''], ['Text with [^nope][ref] here.', '\n[ref]: http://example.com\n']] as const) {
+            const doc = parsed(`Seed.\n${tail}`);
+            const para = editorSchema.nodes.paragraph.create(null, editorSchema.text(line));
+            const out = write(doc, replaceChild(doc.doc, 0, para));
+            assert.ok(!out.includes('[^nope]'), JSON.stringify(out));
+            assert.strictEqual(topChildren(parsed(out).doc)[0].textContent, line, JSON.stringify(out));
+        }
+    });
+
     test('two of them in one paragraph are escaped as before: unescaped, their carets would pair as a superscript', () => {
         const doc = parsed('Seed.\n');
         const para = editorSchema.nodes.paragraph.create(null, editorSchema.text('[^a] und [^b]'));
