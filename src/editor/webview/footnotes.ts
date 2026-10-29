@@ -669,8 +669,9 @@ export function footnoteIndexPlugin(): Plugin<FootnoteIndex> {
                 const index = footnoteIndexOf(state);
                 return index.literals === DecorationSet.empty ? index.decorations : index.decorations.add(state.doc, index.literals.find());
             },
-            // A `[^x]` pasted as text, whose label the document defines, is that reference again.
-            transformPasted: (slice, view) => connectedSlice(slice, footnoteIndexOf(view.state).labels),
+            // A `[^x]` pasted as text, whose label the document defines, is that reference again — not into code,
+            // which holds no atom: the paste would split the code block (review 1 M3).
+            transformPasted: (slice, view) => (view.state.selection.$from.parent.type.spec.code === true ? slice : connectedSlice(slice, footnoteIndexOf(view.state).labels)),
             handleDOMEvents: {
                 // A Ctrl/Cmd+press on a reference, or any press on a ↩, is the jump's: no selection made first.
                 mousedown: (view, event) => {

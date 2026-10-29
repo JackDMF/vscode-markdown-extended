@@ -411,4 +411,18 @@ suite('Editor footnotes: review 1', () => {
         assert.match(saidText(done.hint), /^Reference deleted, footnote "x" stays \(1 more reference\)/);
         assert.strictEqual(saidText(labelRefusal(state, 'y', 'x') ?? ''), 'Not set: a block shown as source refers to "x" too — rename it there first, in its source');
     });
+
+    test('M3: text with `[^x]` pasted into a code block stays text: no atom, the block whole', () => {
+        let state = stateOf('```\ncode line\n```\n\nPara[^x].\n\n[^x]: X.\n');
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, at(state.doc, 'code line'))));
+        const plugin = state.plugins.find(p => p.spec.key === footnoteIndexKey);
+        const view = { state } as unknown as EditorView;
+        const pasted = (plugin?.props.transformPasted as (s: Slice, v: EditorView, plain: boolean) => Slice)(
+            new Slice(editorSchema.nodes.paragraph.create(null, editorSchema.text(' see [^x]')).content, 1, 1), view, true);
+        let atoms = 0;
+        pasted.content.descendants(n => {
+            atoms += n.type.name === 'footnote_ref' ? 1 : 0;
+        });
+        assert.strictEqual(atoms, 0);
+    });
 });
