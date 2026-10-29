@@ -50,8 +50,8 @@ const FLIPPED = COTK.replace('Petrus traurig.', 'Petrus traurig, und er sagte zu
 /** Footnote 2 inline: the entries read 1, 3. */
 const GAP = 'Erst[^eins], dann eine Anleitung^[Oder „Lenkung“.], dann[^drei].\n\n[^eins]: Eins.\n\n[^drei]: Drei.\n';
 
-/** The text for an insert: `Taufe“.` selected. */
-const INSERT = '> Die Taufe, die dem entspricht, rettet jetzt auch euch, die Bitte an Gott um ein gutes Gewissen — Taufe“.\n\n[^x]: *x*: X.\n\nDanach[^x].\n';
+/** The text for an insert: `Taufe“.` selected; the entry above the new one runs over two lines (UX review 2). */
+const INSERT = '> Die Taufe, die dem entspricht, rettet jetzt auch euch, die Bitte an Gott um ein gutes Gewissen — Taufe“.\n\n[^x]: *x*: Eine Erklärung, die über zwei Zeilen läuft: so steht über dem neuen Eintrag Text, den der Hinweis nicht verdecken darf, wenn der Balken kommt und ihn verschiebt.\n\nDanach[^x].\n';
 
 const THEMES: [Theme, string][] = [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark'], [HC_DARK, 'hc']];
 
