@@ -3561,7 +3561,7 @@ class ObjectToolbarView implements PluginView {
                         this.act(object, () => false);
                         return;
                     }
-                    const refusal = labelRefusal(view.state, typed, label, mayJoin);
+                    const refusal = labelRefusal(view.state, typed, label, mayJoin, now.from);
                     if (refusal !== null) {
                         return refusedStep(step, typed, refusal);
                     }

@@ -409,7 +409,7 @@ suite('Editor footnotes: review 1', () => {
         assert.ok(done !== null);
         assert.ok(text(state.apply(done.tr)).includes('[^x]: The text of x'), 'the entry stays');
         assert.match(saidText(done.hint), /^Reference deleted, footnote "x" stays \(1 more reference\)/);
-        assert.strictEqual(saidText(labelRefusal(state, 'y', 'x') ?? ''), 'Not set: a block shown as source refers to "x" too — rename it there first, in its source');
+        assert.strictEqual(saidText(labelRefusal(state, 'y', 'x') ?? ''), 'Not set: a source block also refers to "x" — change it there with "Edit source" first');
     });
 
     test('M3: text with `[^x]` pasted into a code block stays text: no atom, the block whole', () => {
@@ -450,5 +450,32 @@ suite('Editor footnotes: review 1', () => {
         assert.strictEqual(sorted, 'A[^x] und b[^y].\n\n[^x]: first\n\n[^x]: second\n\n[^x]: third (live)\n\n[^y]: y\n');
         assert.strictEqual(previewText(sorted, 1), 'third (live)');
         assert.strictEqual(footnoteIndexOf(stateOf(sorted)).outOfOrder, false);
+    });
+
+    test('S3 (UX review 2): a label only references use, no text defines, is free to take; renaming connects them', () => {
+        // A document from the host whose second reference's label nothing defines (its definition went elsewhere): `y`.
+        const json = parseDocument(hostEngine(), 'Erst[^x] und dann[^x].\n\n[^x]: The text of x\n').doc.toJSON() as { content: { content?: { type: string; attrs?: { label?: string } }[] }[] };
+        const refs = (json.content[0].content ?? []).filter(n => n.type === 'footnote_ref');
+        (refs[1].attrs as { label: string }).label = 'y';
+        let state = EditorState.create({ doc: Node.fromJSON(editorSchema, json), plugins: editorPlugins(() => true) });
+        assert.deepStrictEqual(footnoteIndexOf(state).refs.map(r => [r.label, r.number]), [['x', 1], ['y', null]]);
+        const entry = footnoteIndexOf(state).entries[0].pos;
+        assert.strictEqual(labelRefusal(state, 'y', 'x', false, entry), null);
+        const done = renameFootnoteTransaction(state, entry, 'y');
+        assert.ok(done !== null);
+        state = state.apply(done.tr);
+        assert.deepStrictEqual(footnoteIndexOf(state).refs.map(r => [r.label, r.number]), [['y', 1], ['y', 1]], 'both lead to the text');
+        assert.strictEqual(text(state), 'Erst[^y] und dann[^y].\n\n[^y]: The text of x\n');
+    });
+
+    test('S2 (UX review 2): an earlier duplicate renames alone though a source block refers to its label; the live one is refused', () => {
+        const doc = '!!! note See[^x] here\n\nPara[^x].\n\n[^x]: first (dead)\n\n[^x]: second (live)\n';
+        const state = stateOf(doc);
+        const [dead, live] = footnoteIndexOf(state).entries.map(e => e.pos);
+        assert.strictEqual(labelRefusal(state, 'x_old', 'x', false, dead), null);
+        assert.strictEqual(saidText(labelRefusal(state, 'x_old', 'x', false, live) ?? ''), 'Not set: a source block also refers to "x" — change it there with "Edit source" first');
+        const done = renameFootnoteTransaction(state, dead, 'x_old');
+        assert.ok(done !== null);
+        assert.strictEqual(text(state.apply(done.tr)), doc.replace('[^x]: first', '[^x_old]: first'));
     });
 });

@@ -8,6 +8,7 @@ import { PRESERVE_SOURCE_META } from '../fidelity';
 import { currentInlineEngine } from '../inlineEngine';
 import { editorSchema, footnoteSpelling } from '../schema';
 import { Said, said, value } from '../tips';
+import { VERB, quotedVerb } from '../verbs';
 import { announceHint, macKeys, showChangeHint, showHint, showRefusal, undoKey } from './hint';
 import { noteRefusal } from './notes';
 import { inTableCell } from './objects';
@@ -1182,7 +1183,7 @@ function numberOfLabel(state: EditorState, label: string): number | null {
  * label nothing defines may take a label that is there: that is how it finds
  * its text again (`mayJoin`).
  */
-export function labelRefusal(state: EditorState, typed: string, own: string | null, mayJoin = false): Said | null {
+export function labelRefusal(state: EditorState, typed: string, own: string | null, mayJoin = false, at?: number): Said | null {
     if (typed === '') {
         return 'Not set: a footnote needs a label';
     }
@@ -1200,20 +1201,39 @@ export function labelRefusal(state: EditorState, typed: string, own: string | nu
     if (typed === own) {
         return null;
     }
-    // A source block refers to it too: its `[^own]` is the file's text, which no rename here reaches (review 1 M2).
-    if (!mayJoin && own !== null && index.refs.some(r => r.label === own && r.raw === true)) {
-        return said`Not set: a block shown as source refers to ${value(own)} too — rename it there first, in its source`;
+    // A source block refers to it too: its `[^own]` is the file's text, which no rename here reaches (review 1 M2) —
+    // only where the rename moves references: an earlier duplicate or an unreferenced entry renames alone (UX review 2 S2).
+    if (!mayJoin && own !== null && (at === undefined || renamesWhole(state, at)) && index.refs.some(r => r.label === own && r.raw === true)) {
+        return said`Not set: a source block also refers to ${value(own)} — change it there with ${quotedVerb(VERB.editSource)} first`;
     }
     if (mayJoin) {
         return null;
     }
-    if (index.labels.has(typed) || index.refs.some(r => r.label === typed)) {
+    // A label only references use, no text defines, is free: renaming connects them (UX review 2 S3) — so changing a
+    // source block's `[^x]` first and then giving the footnote that label works.
+    if (index.labels.has(typed)) {
         const number = numberOfLabel(state, typed);
         return number === null
             ? said`Not set: ${value(typed)} is used by another footnote — choose another`
             : said`Not set: ${value(typed)} is used by footnote ${String(number)} — choose another`;
     }
     return null;
+}
+
+/**
+ * Whether renaming the footnote at `pos` — a reference or an entry — renames
+ * the live footnote everywhere, its references with it (`renameFootnoteTransaction`),
+ * not that one entry or reference alone.
+ */
+function renamesWhole(state: EditorState, pos: number): boolean {
+    const node = state.doc.nodeAt(pos);
+    const label = (node?.attrs.label as string | null | undefined) ?? null;
+    if (node === null || label === null) {
+        return false;
+    }
+    const index = footnoteIndexOf(state);
+    const live = node.type === editorSchema.nodes.footnote_entry ? pos : liveEntryOf(state, label)?.pos;
+    return live !== undefined && entryAt(index, live)?.live === true;
 }
 
 /**
@@ -1229,8 +1249,8 @@ export function renameFootnoteTransaction(state: EditorState, pos: number, to: s
         return null;
     }
     const index = footnoteIndexOf(state);
-    const entry = node.type === editorSchema.nodes.footnote_entry ? entryAt(index, pos) : liveEntryOf(state, label) === null ? undefined : entryAt(index, (liveEntryOf(state, label) as { pos: number }).pos);
-    const whole = entry !== undefined && entry.live;
+    const whole = renamesWhole(state, pos);
+    const entry = whole ? entryAt(index, node.type === editorSchema.nodes.footnote_entry ? pos : (liveEntryOf(state, label) as { pos: number }).pos) : undefined;
     const tr = state.tr;
     const rename = (at: number) => {
         const target = tr.doc.nodeAt(at) as Node;
