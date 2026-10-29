@@ -64,7 +64,7 @@ import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import {
     backToReferenceTransaction, deleteFootnoteEntryTransaction, deleteFootnoteRefTransaction, editInlineFootnote, entryAt, footnoteIndexOf, goToFootnoteTransaction,
-    labelRefusal, orphanChip, refAt, referencesOf, renameFootnoteTransaction, sortFootnotesTransaction,
+    labelRefusal, orphanChip, refAt, renameFootnoteTransaction, sortFootnotesTransaction,
 } from './footnotes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
@@ -3612,7 +3612,8 @@ class ObjectToolbarView implements PluginView {
                     ],
                 };
             }
-            const others = referencesOf(index, label).length - 1;
+            // A source block's references count too (review 1 M2): with one left, the text stays.
+            const others = index.refs.filter(r => r.label === label).length - 1;
             const last = others === 0;
             const goTip: Tip = { parts: ['Moves the caret to the footnote\'s text — ↩ or Back to reference returns (', `${macKeys() ? 'Cmd' : 'Ctrl'}+click on `, { code: `[${ref.number}]` }, ' does the same)'] };
             return {

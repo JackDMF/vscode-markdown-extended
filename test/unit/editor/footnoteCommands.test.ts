@@ -399,4 +399,16 @@ suite('Editor footnotes: review 1', () => {
         assert.strictEqual(unwritableInTable(inserted.tr.doc), null);
         assert.deepStrictEqual(countFootnotes(inserted.tr.doc).entries.map(e => e.label), ['ab']);
     });
+
+    test('M2: an aimed delete counts a reference in a source block: the text stays; a rename it would not follow is refused', () => {
+        const doc = '!!! note See[^x] here\n\nPara[^x].\n\n[^x]: The text of x\n';
+        const state = stateOf(doc);
+        assert.ok(footnoteIndexOf(state).refs.some(r => r.raw === true), 'the title is source');
+        const [ref] = refsIn(state.doc);
+        const done = deleteFootnoteRefTransaction(state, ref);
+        assert.ok(done !== null);
+        assert.ok(text(state.apply(done.tr)).includes('[^x]: The text of x'), 'the entry stays');
+        assert.match(saidText(done.hint), /^Reference deleted, footnote "x" stays \(1 more reference\)/);
+        assert.strictEqual(saidText(labelRefusal(state, 'y', 'x') ?? ''), 'Not set: a block shown as source refers to "x" too — rename it there first, in its source');
+    });
 });

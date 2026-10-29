@@ -745,7 +745,8 @@ function referenceDeletion(state: EditorState, pos: number): { label: string | n
     if (label === null) {
         return { label, entry: null, others: 0 };
     }
-    const others = referencesOf(footnoteIndexOf(state), label).filter(r => r.pos !== pos).length;
+    // A source block's references count (review 1 M2): the text they lead to stays with them.
+    const others = footnoteIndexOf(state).refs.filter(r => r.label === label && (r.raw === true || r.pos !== pos)).length;
     return { label, entry: others === 0 ? liveEntryOf(state, label) : null, others };
 }
 
@@ -1175,7 +1176,9 @@ function numberOfLabel(state: EditorState, label: string): number | null {
 
 /**
  * Why `typed` cannot be the label of the footnote `own` names (#13: on Enter):
- * none, a space, a `]`, or a label another footnote has. A reference whose
+ * none, a space, a `]`, a `|` where a reference stands in a table cell, a
+ * label another footnote has, or a rename a source block's reference would
+ * not follow. A reference whose
  * label nothing defines may take a label that is there: that is how it finds
  * its text again (`mayJoin`).
  */
@@ -1196,6 +1199,10 @@ export function labelRefusal(state: EditorState, typed: string, own: string | nu
     }
     if (typed === own) {
         return null;
+    }
+    // A source block refers to it too: its `[^own]` is the file's text, which no rename here reaches (review 1 M2).
+    if (!mayJoin && own !== null && index.refs.some(r => r.label === own && r.raw === true)) {
+        return said`Not set: a block shown as source refers to ${value(own)} too — rename it there first, in its source`;
     }
     if (mayJoin) {
         return null;
