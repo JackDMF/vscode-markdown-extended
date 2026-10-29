@@ -3013,20 +3013,59 @@ let footnoteLabelsKnown = false;
 /** Under which labels the written texts the node-keyed caches hold were written (`writtenUnder`). */
 let writtenLabels = '';
 
+/** The node-keyed caches of what was written under one set of labels (`writtenUnder`). */
+interface WrittenCaches {
+    written: typeof writtenCache;
+    cell: typeof cellCache;
+    units: typeof unitsCache;
+    item: typeof itemCache;
+    wrapped: typeof wrappedCache;
+    verdict: typeof verdictCache;
+    start: typeof startCache;
+    keptOut: typeof keptOut;
+}
+
+/**
+ * The caches of the labels written under before the current ones, the last
+ * few: every top-level `withFootnoteLabels` call leaves its labels for none
+ * on its way out and the next comes back to them, so its caches come back
+ * with them instead of being built again (review 1 L2). Forgotten with the
+ * rest when the engine or the write options change (`forgetReadBack`).
+ */
+const keptCaches = new Map<string, WrittenCaches>();
+
+/** How many label sets `keptCaches` keeps besides the current one. */
+const KEPT_LABEL_SETS = 3;
+
 /**
  * The written texts kept by node (a textblock's, a cell's, a part's) are
- * forgotten when the labels they are written under change: a `[^x]` written
- * as text is escaped or not by them (`undefinedLiterals`). Labels change
- * rarely — a footnote added, deleted, renamed — so the caches mostly stay.
+ * kept per set of labels they are written under: a `[^x]` written as text is
+ * escaped or not by them (`undefinedLiterals`). Labels change rarely — a
+ * footnote added, deleted, renamed — so the caches mostly stay; going from a
+ * document's labels to none and back finds them again (`keptCaches`).
  */
 function writtenUnder(labels: string): void {
     if (labels === writtenLabels) {
         return;
     }
+    keptCaches.set(writtenLabels, { written: writtenCache, cell: cellCache, units: unitsCache, item: itemCache, wrapped: wrappedCache, verdict: verdictCache, start: startCache, keptOut });
     writtenLabels = labels;
-    writtenCache = new WeakMap();
-    cellCache = new WeakMap();
-    forgetReadBack(false);
+    const kept = keptCaches.get(labels);
+    keptCaches.delete(labels);
+    writtenCache = kept?.written ?? new WeakMap();
+    cellCache = kept?.cell ?? new WeakMap();
+    unitsCache = kept?.units ?? new WeakMap();
+    itemCache = kept?.item ?? new WeakMap();
+    wrappedCache = kept?.wrapped ?? new WeakMap();
+    verdictCache = kept?.verdict ?? new WeakMap();
+    startCache = kept?.start ?? new WeakMap();
+    keptOut = kept?.keptOut ?? new WeakMap();
+    for (const key of keptCaches.keys()) {
+        if (keptCaches.size <= KEPT_LABEL_SETS) {
+            break;
+        }
+        keptCaches.delete(key);
+    }
 }
 
 /** Each document's footnote labels (`footnoteLabelsOf`), sorted. */
@@ -4528,6 +4567,7 @@ function sidebarVerdict(unit: WrittenUnit, read: UnitRead): SidebarMismatch | nu
  * writes, not what a text reads as, so the reads by text stay (`reads` false).
  */
 function forgetReadBack(reads = true): void {
+    keptCaches.clear();
     unitsCache = new WeakMap();
     itemCache = new WeakMap();
     wrappedCache = new WeakMap();
