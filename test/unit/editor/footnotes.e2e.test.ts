@@ -589,7 +589,15 @@ suite('Editor footnotes (e2e)', () => {
         assert.ok(box);
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.waitForSelector('.mep-language-card .mep-card-footnote', { visible: true, timeout: 3000 });
-        assert.strictEqual(await page.$eval('.mep-language-card .mep-card-footnote-title', el => el.textContent), 'No footnote Schaefchen — give a footnote marked "not referenced" this label (Label…)');
+        assert.strictEqual(await page.$eval('.mep-language-card .mep-card-footnote-title', el => el.textContent), 'No footnote Schaefchen — give a footnote marked not referenced this label (Label…)');
+        // One line of text that wraps as text, the chip drawn as the page draws it; the card keeps off the page's chip (UX review 2).
+        const card = await page.evaluate(() => {
+            const title = document.querySelector('.mep-language-card .mep-card-footnote-title') as HTMLElement;
+            const r = (document.querySelector('.mep-language-card') as HTMLElement).getBoundingClientRect();
+            const c = (document.querySelector('.ProseMirror .mep-fn-chip') as HTMLElement).getBoundingClientRect();
+            return { display: getComputedStyle(title).display, chip: getComputedStyle(title.querySelector('.mep-card-chip') as HTMLElement).borderTopStyle, covers: r.left < c.right && r.right > c.left && r.top < c.bottom && r.bottom > c.top };
+        });
+        assert.deepStrictEqual(card, { display: 'block', chip: 'dashed', covers: false });
         await shot(page, 'footnotes-literal-dotted.png');
         await page.mouse.move(2, 2);
         await caretAt(' hüten');

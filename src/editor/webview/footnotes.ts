@@ -1776,7 +1776,15 @@ function literalCardSection(state: EditorState, pos: number): HTMLElement | null
     const code = document.createElement('span');
     code.className = 'mep-card-code';
     code.textContent = label;
-    title.append('No footnote ', code, orphan ? ' — give a footnote marked "not referenced" this label (Label…)' : ' — the preview shows it as text');
+    if (orphan) {
+        // The chip drawn as the page draws it, so it is recognised there (UX review 2).
+        const chip = document.createElement('span');
+        chip.className = 'mep-card-chip';
+        chip.textContent = 'not referenced';
+        title.append('No footnote ', code, ' — give a footnote marked ', chip, ' this label (Label…)');
+    } else {
+        title.append('No footnote ', code, ' — the preview shows it as text');
+    }
     section.append(title);
     return section;
 }

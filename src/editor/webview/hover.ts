@@ -23,6 +23,9 @@ import { CardAnchor, LanguageCard, hoverSection } from './languageCard';
 import { lensLabel, lensLabelNodes } from './lenses';
 import { inlineBox } from './placement';
 
+/** How far below a literal the card looks for a chip it names, to stand under it (`keepingOffChips`): about a card's height. */
+const CHIP_REACH = 160;
+
 /** How long the pointer rests before the card is asked for. */
 export const HOVER_DELAY_MS = 500;
 
@@ -335,7 +338,7 @@ class PointerCard implements PluginView {
             fixRequests: new Map(),
             hoverRequest: null,
             hoverHtml: '',
-            anchor: inline ? this.anchorAt(inline.from, pointer) : (footnote !== null ? this.atomAnchor(probe.pos) : null) ?? (probe.onText ? this.anchorAt(probe.pos, pointer) : pointer),
+            anchor: this.keepingOffChips(footnote, inline ? this.anchorAt(inline.from, pointer) : (footnote !== null ? this.atomAnchor(probe.pos) : null) ?? (probe.onText ? this.anchorAt(probe.pos, pointer) : pointer)),
             footnote,
         };
         this.hide();
@@ -371,6 +374,25 @@ class PointerCard implements PluginView {
             }
         }
         this.draw();
+    }
+
+    /**
+     * `anchor`, kept off the page's chips where the card names one ("give a
+     * footnote marked not referenced …", UX review 2): a chip in the room
+     * below the anchor (`CHIP_REACH`) is taken into it, so the card stands
+     * under the chip, which stays in sight; above it the card keeps off all.
+     */
+    private keepingOffChips(footnote: HTMLElement | null, anchor: CardAnchor): CardAnchor {
+        if (footnote === null || footnote.querySelector('.mep-card-chip') === null) {
+            return anchor;
+        }
+        const chips = Array.from(this.view.dom.querySelectorAll('.mep-fn-chip')).map(el => el.getBoundingClientRect()).filter(r => r.width > 0);
+        const below = chips.filter(r => r.top >= anchor.bottom && r.top < anchor.bottom + CHIP_REACH);
+        return {
+            ...anchor,
+            bottom: Math.max(anchor.bottom, ...below.map(r => r.bottom)),
+            keepOff: chips.map(r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })),
+        };
     }
 
     /** A reference's anchor (`inlineBox`): the line its raised `[n]` stands in, so the card keeps off that line; `null` for no inline atom at `pos` (a `[^x]` written as text). */

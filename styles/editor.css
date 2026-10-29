@@ -2181,6 +2181,19 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 .mep-card-source { padding-left: 20px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
 /* A footnote's section (wave 4 #5b): its title, its text as the entry shows it, how to go there — no severity icon to align with. */
 .mep-card-footnote .mep-card-source { padding-left: 0; }
+/* Its title is one line of text that wraps as text: the label inline in the code font, not a flex row of columns (UX review 2). */
+.mep-card-footnote .mep-card-footnote-title { display: block; }
+.mep-card-footnote .mep-card-footnote-title .mep-card-code { display: inline; }
+/* The chip the card names, drawn as the page draws it (`.mep-fn-chip`), so it is recognised there. */
+.mep-card-chip {
+    display: inline-block;
+    padding: 0 5px;
+    font: 11px/14px var(--vscode-font-family, sans-serif);
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, GrayText);
+    border: 1px dashed var(--vscode-descriptionForeground, GrayText);
+    border-radius: 3px;
+}
 .mep-card-footnote-body { margin: 4px 0; }
 .mep-card-footnote-body > p { margin: 0 0 4px; }
 .mep-card-fixes-label { padding-left: 20px; margin-top: 2px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
