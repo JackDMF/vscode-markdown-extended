@@ -761,7 +761,8 @@ class ObjectBar {
      */
     focusFirst(): void {
         const first = this.buttons[firstFocus(this.buttons.map(b => slotted(b.verb)))];
-        (first?.el ?? this.el).focus({ preventScroll: true });
+        // No hover on this automatic focus (UX review 2): an arrow key, Tab or the pointer shows it.
+        this.tips.focusQuietly(first?.el ?? this.el);
     }
 
     /**

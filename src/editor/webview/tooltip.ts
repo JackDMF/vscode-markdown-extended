@@ -4,7 +4,8 @@
  * the code font for a delimiter or an element, keybinding labels for a key),
  * drawn from a `Tip` (`tips.ts`). It shows once the pointer has rested on a
  * control for `HOVER_DELAY_MS` — the number the language hover waits too — and
- * at once when the keyboard brings the focus there; it never catches the
+ * at once when the keyboard brings the focus there (not `Alt+Enter`'s automatic
+ * first focus, `focusQuietly`); it never catches the
  * pointer, and it goes on a press, a key, or when the pointer or the focus
  * leaves. No control of the row, the bubble or the bars carries a `title`:
  * the OS tooltip came after the OS's delay, in the OS's font, and could draw
@@ -49,13 +50,15 @@ export class Tooltips {
     /**
      * The pointer came last, not a key — a press, or a move: a focus now is
      * the pointer's (a menu entry taking it under the pointer, `followPointer`)
-     * and shows no hover. Any other focus is the keyboard's — Tab, `Alt+Enter`'s
-     * first verb — whether or not the browser draws it `:focus-visible` (it
-     * does not count a chord).
+     * and shows no hover. Any other focus is the keyboard's — Tab, an arrow
+     * key — whether or not the browser draws it `:focus-visible` (it does not
+     * count a chord); `Alt+Enter`'s first verb is focused quietly (`focusQuietly`).
      */
     private pointerLast = false;
     /** The window lost the focus: the focus it gives back when it returns is no one's move, and shows nothing. */
     private refocusing = false;
+    /** The control `focusQuietly` is focusing: its focus shows no hover. */
+    private quiet: HTMLElement | null = null;
     /** The views that hold it (`for`); the last to `release` it takes it down. */
     private holders = 0;
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
@@ -136,11 +139,26 @@ export class Tooltips {
         el.addEventListener('mouseleave', () => this.hideFor(el));
         el.addEventListener('mousedown', () => this.hideFor(el));
         el.addEventListener('focus', () => {
-            if (!this.pointerLast && !this.refocusing) {
+            if (!this.pointerLast && !this.refocusing && this.quiet !== el) {
                 this.show(el);
             }
         });
         el.addEventListener('blur', () => this.hideFor(el));
+    }
+
+    /**
+     * Focus `el` showing no hover: an automatic first focus (`Alt+Enter`'s
+     * first verb), whose words its name and description give a screen reader
+     * already, would stand over the text next to the bar (UX review 2). The
+     * arrow keys, Tab and the pointer show it as before.
+     */
+    focusQuietly(el: HTMLElement): void {
+        this.quiet = el;
+        try {
+            el.focus({ preventScroll: true });
+        } finally {
+            this.quiet = null;
+        }
     }
 
     /** Read the tip of an attached element again: its description follows, and a hover it shows is redrawn in place — no other control's wait ends. */

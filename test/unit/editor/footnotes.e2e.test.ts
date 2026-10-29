@@ -726,7 +726,7 @@ suite('Editor footnotes (e2e)', () => {
         assert.deepStrictEqual(await coveredText('.mep-hint'), [], `nor over the entry above (UX review 2): ${JSON.stringify(hinted)}`);
     });
 
-    test('Alt+Enter on a reference whose bar stands above it: the first verb\'s tooltip goes above the bar, off the reference\'s line', async function () {
+    test('a reference whose bar stands above it: Alt+Enter shows no tooltip; an arrow key\'s focus shows it above the bar, off the reference\'s line', async function () {
         this.timeout(20000);
         // The verse's second line runs the column's width: below [1] is text, above it the quote's title row is free.
         await show(COTK.replace('Petrus traurig.', 'Petrus traurig, und er sagte zu ihm: „Herr, du weißt alles; du weißt, dass ich dich lieb habe.“ Jesus sagte zu ihm: „Füttere meine Schäfchen.“'));
@@ -736,6 +736,11 @@ suite('Editor footnotes (e2e)', () => {
         assert.ok(shownBar !== null && shownBar.bottom <= line.top, `the bar stands above [1]: ${JSON.stringify({ shownBar, line })}`);
         await pressAlt('Enter');
         assert.strictEqual((await bar()).focus, 'go-to-footnote');
+        assert.strictEqual(await boxOf('.mep-tooltip'), null, 'no hover on the automatic first focus (UX review 2)');
+        // Arrow keys: the keyboard's focus shows it.
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.press('ArrowLeft');
+        await delay(100);
         const tip = await boxOf('.mep-tooltip');
         assert.ok(tip !== null && tip.bottom <= shownBar.top + 0.5, `the tooltip stands above the bar: ${JSON.stringify({ tip, shownBar })}`);
         assert.ok(off(tip, line), `off the line of [1]: ${JSON.stringify({ tip, line })}`);

@@ -283,6 +283,10 @@ suite('Editor footnotes drawn: names, contrast, shots (e2e)', () => {
             await show(FLIPPED);
             await clickAtom(0);
             await alt('Enter');
+            // Alt+Enter's first focus shows no tooltip (UX review 2): an arrow key's does, above the flipped bar.
+            await page.keyboard.press('ArrowRight');
+            await page.keyboard.press('ArrowLeft');
+            await delay(150);
         });
         await each(light, [1280], 'atom-delete-reference', async () => {
             await show(TWICE);
