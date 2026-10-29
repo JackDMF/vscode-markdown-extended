@@ -528,4 +528,22 @@ suite('Editor footnotes: review 1', () => {
             assert.strictEqual(footnoteIndexOf(after).refs.filter(r => r.label === 'nope').length, 1, `only the renamed one: ${pre}`);
         }
     });
+
+    test('M3 (review 2): what the paste connects is read from where the selection stands, not from the plain-text flag', () => {
+        let state = stateOf('```\ncode line\n```\n\nPara[^x] here.\n\n[^x]: X.\n');
+        const plugin = state.plugins.find(p => p.spec.key === footnoteIndexKey);
+        const paste = (s: EditorState, plain: boolean) => {
+            const out = (plugin?.props.transformPasted as (sl: Slice, v: EditorView, plain: boolean) => Slice)(
+                new Slice(editorSchema.nodes.paragraph.create(null, editorSchema.text(' see [^x]')).content, 1, 1), { state: s } as unknown as EditorView, plain);
+            let atoms = 0;
+            out.content.descendants(n => {
+                atoms += n.type.name === 'footnote_ref' ? 1 : 0;
+            });
+            return atoms;
+        };
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, at(state.doc, 'code line'))));
+        assert.strictEqual(paste(state, false), 0, 'into code, an HTML paste too');
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, at(state.doc, ' here'))));
+        assert.strictEqual(paste(state, true), 1, 'into a paragraph, plain text too');
+    });
 });

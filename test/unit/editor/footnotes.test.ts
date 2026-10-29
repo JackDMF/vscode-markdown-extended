@@ -342,6 +342,27 @@ suite('Editor footnote literals', () => {
         }
     });
 
+    test('M1 (review 2): one glued to bold text, more of the line after it, stays escaped; at the line\'s end it is written as typed', () => {
+        const doc = parsed('Seed.\n');
+        const glued = editorSchema.nodes.paragraph.create(null, [editorSchema.text('Siehe [^nope]'), editorSchema.text('fett', [editorSchema.marks.strong.create({ markup: '**' })]), editorSchema.text(' hier.')]);
+        const out = write(doc, replaceChild(doc.doc, 0, glued));
+        assert.ok(out.startsWith('Siehe \\[\\^nope\\]**fett** hier.\n'), JSON.stringify(out));
+        assert.strictEqual(topChildren(parsed(out).doc)[0].textContent, 'Siehe [^nope]fett hier.');
+        const last = editorSchema.nodes.paragraph.create(null, editorSchema.text('Am Ende [^nope]'));
+        assert.strictEqual(write(doc, replaceChild(doc.doc, 0, last)), 'Am Ende [^nope]\n');
+    });
+
+    test('L2 (review 2): one paragraph written under more label sets than the writer keeps, in turn: each time as a fresh write would', () => {
+        const para = editorSchema.nodes.paragraph.create(null, editorSchema.text('Siehe [^a] hier.'));
+        const entry = (label: string) => editorSchema.nodes.footnote_entry.create({ label }, editorSchema.nodes.paragraph.create(null, editorSchema.text('T.')));
+        const sets = [[], ['a'], [], ['b'], ['a', 'b'], ['c'], ['d'], ['e'], ['a'], [], ['a', 'c'], ['a']];
+        for (const labels of sets) {
+            const doc = editorSchema.topNodeType.create(null, [para, ...labels.map(entry)]);
+            const out = serializeDocument({ doc, eol: '\n', tail: '' }, { defaultWrap: 90 }).split('\n')[0];
+            assert.strictEqual(out, labels.includes('a') ? 'Siehe \\[\\^a\\] hier.' : 'Siehe [^a] hier.', JSON.stringify(labels));
+        }
+    });
+
     test('two of them in one paragraph are escaped as before: unescaped, their carets would pair as a superscript', () => {
         const doc = parsed('Seed.\n');
         const para = editorSchema.nodes.paragraph.create(null, editorSchema.text('[^a] und [^b]'));
