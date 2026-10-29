@@ -41,6 +41,12 @@ const SIDENOTE = [
     '',
 ].join('\n');
 
+/** `SIDENOTE` with the paragraph running on: full lines of the column beside the note and under its reference. */
+const SIDENOTE_FULL = SIDENOTE.replace('wird euch alles lehren.', `wird euch alles lehren. ${'Der Vater wird euch einen anderen Helfer geben, der für immer bei euch sein wird, den Geist der Wahrheit, den die Welt nicht empfangen kann, weil sie ihn weder sieht noch kennt. '.repeat(3).trim()}`);
+
+/** CA-cotk22's verse run on: its second line is full, so the bar at [1] stands above it. */
+const FLIPPED = COTK.replace('Petrus traurig.', 'Petrus traurig, und er sagte zu ihm: „Herr, du weißt alles; du weißt, dass ich dich lieb habe.“ Jesus sagte zu ihm: „Füttere meine Schäfchen.“');
+
 /** Footnote 2 inline: the entries read 1, 3. */
 const GAP = 'Erst[^eins], dann eine Anleitung^[Oder „Lenkung“.], dann[^drei].\n\n[^eins]: Eins.\n\n[^drei]: Drei.\n';
 
@@ -272,6 +278,12 @@ suite('Editor footnotes drawn: names, contrast, shots (e2e)', () => {
             await clickAtom(0);
             await alt('Enter');
         });
+        // Text under [1], none above: the bar stands above it, and its first verb's tooltip above the bar.
+        await each(lightDark, [1280], 'atom-flipped', async () => {
+            await show(FLIPPED);
+            await clickAtom(0);
+            await alt('Enter');
+        });
         await each(light, [1280], 'atom-delete-reference', async () => {
             await show(TWICE);
             await clickAtom(0);
@@ -306,12 +318,15 @@ suite('Editor footnotes drawn: names, contrast, shots (e2e)', () => {
             await show(LITERAL);
             await hover('.ProseMirror .mep-fn-literal');
         });
-        await each(lightDark, [1280], 'delete-first-press', async () => {
+        // At 600 ms: the bar has come (REST_MS) and the hint was placed again off it.
+        const firstPress = async () => {
             await show(COTK);
             await caretAt(' fragte, wurde', 0);
             await page.keyboard.press('Backspace');
-            await delay(250);
-        });
+            await delay(600);
+        };
+        await each(all, [1280], 'delete-first-press', firstPress);
+        await each(light, [520], 'delete-first-press', firstPress);
         await each(lightDark, [1280], 'delete-hint', async () => {
             await show(COTK);
             await caretAt(' fragte, wurde', 0);
@@ -320,15 +335,18 @@ suite('Editor footnotes drawn: names, contrast, shots (e2e)', () => {
             await page.keyboard.press('Backspace');
             await delay(300);
         });
-        await each(lightDark, [1280], 'insert', async () => {
+        // After the entry's bar came (REST_MS): the hint placed again off it.
+        const insert = async () => {
             await show(INSERT);
             await selectText('Taufe“.');
             await delay(150);
             await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
             await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden]) [data-action="footnote-reference"]');
             await page.click('.mep-menu[data-menu="annotation"] [data-action="footnote-reference"]');
-            await delay(400);
-        });
+            await page.mouse.move(2, 2);
+            await delay(900);
+        };
+        await each(all, [1280], 'insert', insert);
         await each(all, [1280], 'inline-field', async () => {
             await show(GAP);
             await clickAtom(1);
@@ -351,6 +369,11 @@ suite('Editor footnotes drawn: names, contrast, shots (e2e)', () => {
         });
         await each(light, [520], 'ref-in-sidenote', async () => {
             await show(SIDENOTE);
+            await clickAtom(0);
+        });
+        // Full lines of the column beside the note: the bar keeps to the margin, its verbs short.
+        await each(light, [1280], 'ref-in-sidenote-full', async () => {
+            await show(SIDENOTE_FULL);
             await clickAtom(0);
         });
         await each(light, [1280], 'inline-gap', () => show(GAP));
