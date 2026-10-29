@@ -101,6 +101,17 @@ suite('Editor footnotes (e2e)', () => {
         assert.deepStrictEqual(orphan, { chip: 'not referenced', title: 'No reference in the text — preview and export leave this out', after: 'Senfkorn', edge: 'dashed', sameLine: true });
     });
 
+    test('an entry that does not begin with an italic word has its chip at its start, not inside its sentence (UX review 2)', async function () {
+        this.timeout(15000);
+        await show('Ein Satz[^satz] und mehr.\n\n[^satz]: Der erste Text.\n\n[^satz]: Der zweite, den die Vorschau zeigt.\n');
+        const chip = await page.$eval('.ProseMirror .mep-fn-chip', el => ({
+            text: el.textContent,
+            before: (el.previousSibling?.textContent ?? '').trim(),
+            after: (el.nextSibling?.textContent ?? '').trim(),
+        }));
+        assert.deepStrictEqual(chip, { text: 'same label as footnote 1', before: '', after: 'Der erste Text.' });
+    });
+
     test('#fn1 lands on footnote 1\'s entry, wherever it stands', async function () {
         this.timeout(15000);
         await page.setViewport({ width: 1280, height: 300 });

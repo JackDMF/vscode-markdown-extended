@@ -304,9 +304,13 @@ export function orphanChip(entry: FootnoteEntry): { text: string; title: string 
         : { text: 'not referenced', title: 'No reference in the text — preview and export leave this out' };
 }
 
-/** Where an entry's chip stands: after its first word, or after its first run of formatted text when it starts with one (`*Senfkorn*`). */
-function chipPos(entry: Node, pos: number): number | null {
-    let found: number | null = null;
+/**
+ * Where an entry's chip stands: after its first run of italic text when it
+ * starts with one (`*Senfkorn*`, Daniel's entries); else at its start
+ * (`lead`), never between the words of a plain sentence (UX review 2).
+ */
+function chipPos(entry: Node, pos: number): { at: number; lead: boolean } | null {
+    let found: { at: number; lead: boolean } | null = null;
     entry.descendants((node, rel) => {
         if (found !== null) {
             return false;
@@ -316,20 +320,15 @@ function chipPos(entry: Node, pos: number): number | null {
         }
         const start = pos + 1 + rel + 1;
         const first = node.firstChild;
-        if (first === null || !first.isText) {
-            found = start;
-            return false;
-        }
-        if (first.marks.length > 0) {
+        if (first !== null && first.isText && first.marks.some(m => m.type === editorSchema.marks.em)) {
             let end = start;
-            for (let i = 0; i < node.childCount && node.child(i).isText && node.child(i).marks.length > 0 && node.child(i).sameMarkup(first); i++) {
+            for (let i = 0; i < node.childCount && node.child(i).isText && node.child(i).sameMarkup(first); i++) {
                 end += node.child(i).nodeSize;
             }
-            found = end;
+            found = { at: end, lead: false };
             return false;
         }
-        const word = /^\s*\S+/.exec(first.text ?? '');
-        found = start + (word?.[0].length ?? 0);
+        found = { at: start, lead: true };
         return false;
     });
     return found;
@@ -385,10 +384,11 @@ function footnoteDecorations(doc: Node, count: FootnoteCount): DecorationSet {
                 }));
             }
         } else {
-            const at = chipPos(node, entry.pos);
+            const place = chipPos(node, entry.pos);
             const chip = orphanChip(entry);
-            if (at !== null) {
-                decorations.push(Decoration.widget(at, () => widget('span', 'mep-fn-chip', chip.text, { title: chip.title }), { side: 1, ignoreSelection: true, key: `fn-chip-${chip.text}` }));
+            if (place !== null) {
+                const className = place.lead ? 'mep-fn-chip mep-fn-chip-lead' : 'mep-fn-chip';
+                decorations.push(Decoration.widget(place.at, () => widget('span', className, chip.text, { title: chip.title }), { side: place.lead ? -1 : 1, ignoreSelection: true, key: `fn-chip-${chip.text}-${place.lead}` }));
             }
         }
     }

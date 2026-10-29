@@ -369,6 +369,9 @@ img.mep-pending-range {
     user-select: none;
 }
 
+/* At the start of an entry that does not begin with an italic word: before its text, the gap after it. */
+.ProseMirror .mep-fn-chip.mep-fn-chip-lead { margin-inline: 0 6px; }
+
 @media (max-width: 600px) {
     .ProseMirror .mep-fn-entry { grid-template-columns: 1.8em minmax(0, 1fr); }
 }
