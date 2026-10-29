@@ -96,6 +96,8 @@ interface StateInternals {
     inTableCell?: boolean;
     /** How a hard break is written in the footnote entry being written (`footnote_entry`), when one is; this module's own field. */
     entryBreak?: string;
+    /** The paragraph written next is a footnote entry's first, its `[^label]: ` written already: that head counts as wide as the indent of its lines after it (`footnote_entry`, plan §3a). */
+    entryHead?: boolean;
     /** prosemirror-markdown's own: the block whose separator is still to be written, if any. */
     closed: unknown;
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
@@ -2613,7 +2615,10 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             // so the column the first line starts at is known.
             state.write();
             const st = internals(state);
-            const column = characterCount(st.out.slice(st.out.lastIndexOf('\n') + 1));
+            // An entry's first paragraph: its head is no part of the width (plan §3a, review 2 L-d), so a long label
+            // does not widen the lines after it.
+            const column = st.entryHead === true ? characterCount(st.delim) : characterCount(st.out.slice(st.out.lastIndexOf('\n') + 1));
+            st.entryHead = undefined;
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
             const wrapped = wrapInline(paragraphMarkdown(node), limit - column, limit - characterCount(st.delim)).join('\n');
@@ -2638,7 +2643,12 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
                     // An empty text is `[^label]:` alone: no space after it at a line's end.
                     const head = `[^${node.attrs.label as string}]:${paragraph && child.content.size === 0 ? '' : node.attrs.space as string}`;
                     const continuation = paragraph ? (node.attrs.continuation as string | null) ?? '' : ENTRY_INDENT;
-                    state.wrapBlock(continuation, head, node, () => state.render(child, node, 0));
+                    st.entryHead = paragraph;
+                    try {
+                        state.wrapBlock(continuation, head, node, () => state.render(child, node, 0));
+                    } finally {
+                        st.entryHead = undefined;
+                    }
                 });
             } finally {
                 st.entryBreak = outer;

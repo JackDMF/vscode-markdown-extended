@@ -253,6 +253,23 @@ suite('Editor footnote entries', () => {
         assert.strictEqual(out, text.replace('two', 'two!'));
     });
 
+    test('L-d (review 2): a touched entry wraps its lines at the text\'s width, a long label not counted (plan §3a)', () => {
+        const words = `${'Wort '.repeat(14)}Ende`;
+        for (const label of ['a', 'abcdefghij']) {
+            const source = `x[^${label}]\n\n[^${label}]: ${words}\n  ${words}\n`;
+            const doc = parsed(source);
+            const blocks = topChildren(doc.doc);
+            const entry = blocks[1];
+            const first = entry.child(0);
+            const grown = first.type.create(first.attrs, first.content.addToStart(editorSchema.text('Q ')), first.marks);
+            const out = write(doc, replaceChild(doc.doc, 1, touched(entry, Fragment.from(grown))));
+            const lines = out.split('\n').slice(2).filter(l => l !== '');
+            // The source's lines hold 74 characters of text each, its continuation two spaces in: so do the written ones.
+            assert.ok(lines.slice(1).every(l => l.length <= 76), `${label}: ${JSON.stringify(lines.map(l => l.length))}`);
+            assert.ok(lines[0].length - `[^${label}]: `.length <= 74, `${label}: ${JSON.stringify(lines.map(l => l.length))}`);
+        }
+    });
+
     test('an empty definition is an entry of one empty paragraph, written `[^e]:` with no space after it', () => {
         const text = 'A[^e]\n\n[^e]:\n\nNext.\n';
         const doc = parsed(text);

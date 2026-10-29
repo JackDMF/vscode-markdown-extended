@@ -408,6 +408,14 @@ export function parseDocument(md: MarkdownIt, text: string, givenEnv: Environmen
                 const map = real(tok).map;
                 let source = map ? lines.slice(map[0], map[1]).map(l => l.text) : [];
                 let content = (s[i + 1]?.type === 'inline' ? s[i + 1].content : '').split('\n');
+                // An entry's first paragraph (plan §3a, review 2 L-d): its first line's `[^label]: ` counts as wide as
+                // the indent of the lines after it, as the save writes it (`entryHead`): the width is the text's,
+                // however long the label.
+                if (s[i - 1]?.type === 'footnote_reference_open' && source.length > 0) {
+                    const head = /^\[\^[^\]]+\]:[ \t]*/.exec(source[0])?.[0] ?? '';
+                    const indent = source.length > 1 ? (/^[ \t]*/.exec(source[1]) as RegExpExecArray)[0] : '';
+                    source = [indent + source[0].slice(head.length), ...source.slice(1)];
+                }
                 // The width is the text's: the attribute literal is written after
                 // it is wrapped (`serialize.ts`), so it is no evidence of the width.
                 const literal = blockAttrs.get(tok) ?? foreignLiteral.get(tok);
