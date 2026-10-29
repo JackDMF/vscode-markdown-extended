@@ -805,7 +805,7 @@ function deletePreview(state: EditorState, pos: number, key: string): Said {
  */
 export function deleteFootnoteEntryTransaction(state: EditorState, pos: number): { tr: Transaction; hint: Said } | null {
     const node = state.doc.nodeAt(pos);
-    if (node === null || node.type !== editorSchema.nodes.footnote_entry) {
+    if (node === null || node.type !== editorSchema.nodes.footnote_entry || entryDeleteRefusal(state, pos) !== null) {
         return null;
     }
     const label = node.attrs.label as string;
@@ -821,6 +821,23 @@ export function deleteFootnoteEntryTransaction(state: EditorState, pos: number):
         ? said`Footnote ${value(label)} deleted — ${undoKey()}`
         : said`Footnote ${value(label)} deleted with ${refs.length === 1 ? 'its reference' : `its ${refs.length} references`} — ${undoKey()}`;
     return { tr, hint };
+}
+
+/**
+ * Why the entry at `pos` is not deleted, or `null`: a source block still
+ * refers to its label — the live footnote's — and would show `[^x]` as text
+ * once its text went (Daniel, review 2; as Label… refuses, M2).
+ */
+export function entryDeleteRefusal(state: EditorState, pos: number): Said | null {
+    const node = state.doc.nodeAt(pos);
+    const index = footnoteIndexOf(state);
+    if (node?.type !== editorSchema.nodes.footnote_entry || entryAt(index, pos)?.live !== true) {
+        return null;
+    }
+    const label = node.attrs.label as string;
+    return index.refs.some(r => r.label === label && r.raw === true)
+        ? said`Not deleted: a source block also refers to ${value(label)} — remove it there with ${quotedVerb(VERB.editSource)} first`
+        : null;
 }
 
 /** The reference right before (`dir` -1) or after (1) an empty caret, with its position. */
@@ -873,6 +890,13 @@ const deleteSelectedEntry: Command = (state, dispatch, view) => {
     const sel = state.selection;
     if (!(sel instanceof NodeSelection) || sel.node.type !== editorSchema.nodes.footnote_entry) {
         return false;
+    }
+    const refusal = entryDeleteRefusal(state, sel.from);
+    if (refusal !== null) {
+        if (dispatch && view) {
+            showRefusal(view, refusal);
+        }
+        return true;
     }
     const done = deleteFootnoteEntryTransaction(state, sel.from);
     if (done === null) {

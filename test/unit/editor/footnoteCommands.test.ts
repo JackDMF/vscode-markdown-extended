@@ -7,7 +7,7 @@ import { EditorView } from 'prosemirror-view';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument, unwritableInTable } from '../../../src/editor/serialize';
-import { FOOTNOTE_KEYS, connectLiterals, countFootnotes, deleteFootnoteRefTransaction, editInlineFootnote, deleteFootnoteEntryTransaction, footnoteIndexKey, footnoteIndexOf, insertFootnoteTransaction, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction, sortRefusal } from '../../../src/editor/webview/footnotes';
+import { FOOTNOTE_KEYS, connectLiterals, countFootnotes, deleteFootnoteRefTransaction, editInlineFootnote, deleteFootnoteEntryTransaction, entryDeleteRefusal, footnoteIndexKey, footnoteIndexOf, insertFootnoteTransaction, labelRefusal, renameFootnoteTransaction, sortFootnotesTransaction, sortRefusal } from '../../../src/editor/webview/footnotes';
 import { saidText } from '../../../src/editor/tips';
 import { firstFocus } from '../../../src/editor/verbs';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -477,5 +477,20 @@ suite('Editor footnotes: review 1', () => {
         const done = renameFootnoteTransaction(state, dead, 'x_old');
         assert.ok(done !== null);
         assert.strictEqual(text(state.apply(done.tr)), doc.replace('[^x]: first', '[^x_old]: first'));
+    });
+
+    test('L-c (review 2): Delete footnote on an entry a source block still refers to is refused, nothing goes; its count holds that reference', () => {
+        const doc = '!!! note See[^x] here\n\nPara[^x].\n\n[^x]: The text of x\n';
+        let state = stateOf(doc);
+        const entry = footnoteIndexOf(state).entries[0];
+        assert.strictEqual(entry.refCount, 2, '"· 2 references" on its bar');
+        assert.strictEqual(saidText(entryDeleteRefusal(state, entry.pos) ?? ''), 'Not deleted: a source block also refers to "x" — remove it there with "Edit source" first');
+        assert.ok(deleteFootnoteEntryTransaction(state, entry.pos) === null);
+        state = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, entry.pos)));
+        const after = run(state, FOOTNOTE_KEYS.delete);
+        assert.ok(after !== null, 'the key is taken');
+        assert.strictEqual(text(after), doc, 'nothing deleted');
+        // Without the source block's reference, it deletes as before.
+        assert.strictEqual(entryDeleteRefusal(stateOf('Para[^x].\n\n[^x]: The text of x\n'), footnoteIndexOf(stateOf('Para[^x].\n\n[^x]: The text of x\n')).entries[0].pos), null);
     });
 });

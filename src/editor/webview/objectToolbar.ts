@@ -64,7 +64,7 @@ import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import {
     backToReferenceTransaction, deleteFootnoteEntryTransaction, deleteFootnoteRefTransaction, editInlineFootnote, entryAt, footnoteIndexOf, goToFootnoteTransaction,
-    dispatchWithHint, labelRefusal, orphanChip, refAt, renameFootnoteTransaction, sortFootnotesTransaction, sortRefusal,
+    dispatchWithHint, entryDeleteRefusal, labelRefusal, orphanChip, refAt, renameFootnoteTransaction, sortFootnotesTransaction, sortRefusal,
 } from './footnotes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
@@ -3703,6 +3703,7 @@ class ObjectToolbarView implements PluginView {
         verbs.push({
             id: 'delete-footnote', label: 'Delete footnote', short: 'Delete', slot: 'destroy',
             title: refs === 0 ? `Deletes its text — ${undoKey()}` : `Deletes its text and ${refs === 1 ? 'its reference' : `${refs} references`} — ${undoKey()}`,
+            refusal: entryDeleteRefusal(view.state, object.from),
             run: () => this.act(object, current => said(deleteFootnoteEntryTransaction(view.state, current.from))),
         });
         return {
