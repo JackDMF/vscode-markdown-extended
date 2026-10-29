@@ -202,7 +202,8 @@ suite('Editor footnote numbers', () => {
         const state = stateOf(`${COTK}\nZwischen den Einträgen.\n\n[^allein]: *Allein*: nichts verweist hierher.\n\n[^liebst2]: X\n\nNoch einmal liebst[^liebst].\n`);
         const found = footnoteIndexOf(state).decorations.find().map(d => (d as unknown as { type: { spec: { key?: string } } }).type.spec.key ?? '');
         assert.deepStrictEqual(found.filter(k => k.startsWith('fn-back')).sort(), ['fn-back-Schäfchen-2-1-1', 'fn-back-drittes-3-1-1', 'fn-back-liebst-1-1-2', 'fn-back-liebst-1-2-2']);
-        assert.deepStrictEqual(found.filter(k => k.startsWith('fn-chip')), ['fn-chip-not referenced', 'fn-chip-not referenced']);
+        // After the italic first word (`*Allein*`), else at the entry's start (`X`, UX review 2).
+        assert.deepStrictEqual(found.filter(k => k.startsWith('fn-chip')), ['fn-chip-not referenced-false', 'fn-chip-not referenced-true']);
         assert.strictEqual(found.filter(k => k === 'fn-sep').length, 2);
     });
 
