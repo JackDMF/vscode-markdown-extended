@@ -766,7 +766,7 @@ suite('Editor footnotes (e2e)', () => {
         await clickAtom(0);
         const tips = await page.$$eval(`${BAR} button[data-verb]`, els => Object.fromEntries(els.map(b => [(b as HTMLElement).dataset.verb, b.getAttribute('aria-description')])));
         assert.deepStrictEqual(tips, {
-            'go-to-footnote': `Moves the caret to the footnote's text — ↩ or Back to reference returns (${mod}+click on [1] does the same)`,
+            'go-to-footnote': `Moves the caret to the footnote's text — ↩ or "Back to reference" returns (${mod}+click on [1] does the same)`,
             'footnote-label': 'Renames liebst in every reference and in its text (↵ set · Esc cancel)',
             'delete-footnote': `Deletes the reference and its text — ${UNDO}`,
         });

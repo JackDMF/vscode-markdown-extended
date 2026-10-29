@@ -385,12 +385,12 @@ suite('Editor footnotes: review 1', () => {
         const [inline, labelled] = refsIn(state.doc);
         const refusal = editInlineFootnote(state, inline, 'a|b');
         assert.ok(refusal !== null && 'refusal' in refusal, 'Edit text… refuses');
-        assert.strictEqual(saidText(refusal.refusal), 'Not set: "|" can\'t go in a footnote in a table cell — it would split the row');
-        assert.strictEqual(saidText(labelRefusal(state, 'a|b', 'n') ?? ''), 'Not set: a label in a table cell can\'t hold "|" — it would split the row');
+        assert.strictEqual(saidText(refusal.refusal), 'Not set: "|" can\'t go in a footnote in a table cell — it would split the row. Remove it.');
+        assert.strictEqual(saidText(labelRefusal(state, 'a|b', 'n') ?? ''), 'Not set: its reference is in a table, where "|" would split the row — use "_" instead');
         assert.strictEqual(labelRefusal(stateOf('Text[^n].\n\n[^n]: N.\n'), 'a|b', 'n'), null, 'outside a table a label may hold it');
         // The table's own check, which the edit filter asks: a label with `|` given any other way.
         const renamed = state.tr.setNodeMarkup(labelled, undefined, { ...state.doc.nodeAt(labelled)?.attrs, label: 'a|b' });
-        assert.strictEqual(saidText(unwritableInTable(renamed.doc) ?? ''), '"|" can\'t go in a footnote in a table cell — it would split the row. Remove it.');
+        assert.strictEqual(saidText(unwritableInTable(renamed.doc) ?? ''), '"|" can\'t go in a footnote in a table cell — it would split the row. Take it out of the footnote first.');
         state = stateOf('| a | b |\n| --- | --- |\n| Wort a\\|b hier | y |\n');
         const from = at(state.doc, 'a|b', true);
         state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, from, from + 3)));

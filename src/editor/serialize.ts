@@ -2533,7 +2533,7 @@ export const CELL_BREAK_REFUSAL = 'A table cell holds one line — no line break
 export const CELL_PIPE_REFUSAL: Said = said`${value('|')} can't go in inline code in a table cell — it would split the row. Type it outside the code.`;
 
 /** Why a footnote in a table cell holds no `|` — its label or an inline footnote's text (review 1 H3), as `CELL_PIPE_REFUSAL` words it. */
-export const FOOTNOTE_CELL_PIPE_REFUSAL: Said = said`${value('|')} can't go in a footnote in a table cell — it would split the row. Remove it.`;
+export const FOOTNOTE_CELL_PIPE_REFUSAL: Said = said`${value('|')} can't go in a footnote in a table cell — it would split the row. Take it out of the footnote first.`;
 
 /**
  * Why a table between `from` and `to` cannot be written so that it reads back

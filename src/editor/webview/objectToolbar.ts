@@ -3633,7 +3633,7 @@ class ObjectToolbarView implements PluginView {
             // A source block's references count too (review 1 M2): with one left, the text stays.
             const others = index.refs.filter(r => r.label === label).length - 1;
             const last = others === 0;
-            const goTip: Tip = { parts: ['Moves the caret to the footnote\'s text — ↩ or Back to reference returns (', `${macKeys() ? 'Cmd' : 'Ctrl'}+click on `, { code: `[${ref.number}]` }, ' does the same)'] };
+            const goTip: Tip = { parts: [`Moves the caret to the footnote's text — ↩ or ${quotedVerb('Back to reference')} returns (`, `${macKeys() ? 'Cmd' : 'Ctrl'}+click on `, { code: `[${ref.number}]` }, ' does the same)'] };
             return {
                 label: `Footnote ${ref.number} ·`,
                 short: `Footnote ${ref.number}`,

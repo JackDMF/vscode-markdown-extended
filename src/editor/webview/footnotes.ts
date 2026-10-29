@@ -1212,10 +1212,10 @@ export function footnoteInputRules(): Plugin {
 // ---------------------------------------------------------------------------
 
 /** Why a label in a table cell holds no `|` (review 1 H3). */
-const CELL_PIPE_LABEL_REFUSAL: Said = said`Not set: a label in a table cell can't hold ${value('|')} — it would split the row`;
+const CELL_PIPE_LABEL_REFUSAL: Said = said`Not set: its reference is in a table, where ${value('|')} would split the row — use ${value('_')} instead`;
 
 /** Why an inline footnote's text in a table cell holds no `|` (review 1 H3). */
-const CELL_PIPE_TEXT_REFUSAL: Said = said`Not set: ${value('|')} can't go in a footnote in a table cell — it would split the row`;
+const CELL_PIPE_TEXT_REFUSAL: Said = said`Not set: ${value('|')} can't go in a footnote in a table cell — it would split the row. Remove it.`;
 
 /** The number a label's footnote has, or `null`: what a refusal names it by. */
 function numberOfLabel(state: EditorState, label: string): number | null {
