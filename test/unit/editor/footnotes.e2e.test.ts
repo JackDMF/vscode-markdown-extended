@@ -753,6 +753,9 @@ suite('Editor footnotes (e2e)', () => {
         assert.deepStrictEqual(await coveredText(BAR), [], `the bar covers no text: ${JSON.stringify(shownBar)}`);
         const verbs = await page.$$eval(`${BAR} button[data-verb]`, els => els.map(b => [(b as HTMLElement).dataset.verb, (b as HTMLElement).dataset.short ?? null]));
         assert.ok(verbs.some(([, short]) => short !== null), `a verb shows its short form: ${JSON.stringify(verbs)}`);
+        // The title steps down, never cut mid-word (UX review 2): "Footnote 1 · Joh14:16" → "Footnote 1" → "1" → hidden.
+        const title = await page.$eval(`${BAR} .mep-object-label`, el => ({ text: el.textContent, hidden: (el as HTMLElement).hidden, cut: el.scrollWidth > el.clientWidth + 1 }));
+        assert.ok(title.hidden || (['Footnote 1 · Joh14:16', 'Footnote 1', '1'].includes(title.text ?? '') && !title.cut), JSON.stringify(title));
         await page.keyboard.press('Escape');
     });
 

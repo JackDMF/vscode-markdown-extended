@@ -284,6 +284,11 @@ interface Presentation {
     label: string;
     /** The title's short form, drawn before the title truncates (`ObjectBar.fit`): an admonition's type alone, `Warning`. */
     short?: string;
+    /**
+     * A last step after `short`, the code part and what follows it gone with it: a footnote's number alone ("1").
+     * A title with it steps "Footnote 1 · liebst" → "Footnote 1" → "1" → hidden, never cut (UX review 2).
+     */
+    tiny?: string;
     /** Written after the label in the editor's code font: an atom's spelling (`Emoji :)`). */
     code?: string;
     /** Written after `code`, in the label's font: what a footnote's title says of it (` · 2 references`). */
@@ -636,7 +641,9 @@ class ObjectBar {
     private more: HTMLButtonElement | null = null;
     private moved: { verb: Verb; el: HTMLButtonElement }[] = [];
     /** The title, and its short form, as the presentation gave them. */
-    private title = { label: '', short: undefined as string | undefined };
+    private title = { label: '', short: undefined as string | undefined, tiny: undefined as string | undefined };
+    /** The title's nodes as `render` drew them (its code part, what follows it): a title with a `tiny` step puts them back on each fit. */
+    private titleNodes: globalThis.Node[] = [];
     /**
      * An open menu: its panel, the button it hangs from — the verb's, or "…" for a verb moved into it — its
      * entries, and where it comes from: the set-verb whose menu it is (none for "…"'s own list), and
@@ -798,6 +805,9 @@ class ObjectBar {
             }
         }
         label.hidden = false;
+        if (this.title.tiny !== undefined) {
+            label.replaceChildren(...this.titleNodes);
+        }
         this.setTitle(label, this.title.label);
         for (const b of this.buttons) {
             this.showVerb(b);
@@ -821,10 +831,18 @@ class ObjectBar {
             }
             // The title's short form, before it truncates.
             if (cut() && this.title.short !== undefined) {
-                this.setTitle(label, this.title.short);
+                if (this.title.tiny !== undefined) {
+                    // A title with steps (a footnote's: "Footnote 1 · liebst" → "Footnote 1" → "1") is never cut mid-word.
+                    label.replaceChildren(this.title.short);
+                } else {
+                    this.setTitle(label, this.title.short);
+                }
             }
-            // Still too wide, and the title cut below a stub that could say anything: it goes.
-            label.hidden = cut() && label.offsetWidth < TITLE_STUB;
+            if (cut() && this.title.tiny !== undefined) {
+                label.replaceChildren(this.title.tiny);
+            }
+            // Still too wide, and the title cut below a stub that could say anything — or a stepped title cut at all: it goes.
+            label.hidden = cut() && (this.title.tiny !== undefined || label.offsetWidth < TITLE_STUB);
         }
         // The title hidden and the verbs still past the room: they move into "…".
         const more = this.more;
@@ -1075,7 +1093,7 @@ class ObjectBar {
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
-        this.title = { label: presentation.label, short: presentation.short };
+        this.title = { label: presentation.label, short: presentation.short, tiny: presentation.tiny };
         this.moved = [];
         this.outerMoved = false;
         this.el.dataset.name = presentation.label;
@@ -1088,6 +1106,7 @@ class ObjectBar {
         if (presentation.after !== undefined) {
             label.append(presentation.after);
         }
+        this.titleNodes = Array.from(label.childNodes);
         // What the object is, on a rest: the title is a label, not a control — no focus, no press.
         this.tips.attach(label, () => (presentation.title === '' ? null : plainTip(presentation.title)));
         this.fitted = '';
@@ -3618,6 +3637,7 @@ class ObjectToolbarView implements PluginView {
             return {
                 label: `Footnote ${ref.number} ·`,
                 short: `Footnote ${ref.number}`,
+                tiny: String(ref.number),
                 code: label,
                 title: `Footnote ${ref.number}, written [^${label}]: its text stands where the file has it.`,
                 verbs: [
@@ -3687,6 +3707,7 @@ class ObjectToolbarView implements PluginView {
         return {
             label: number === null ? 'Footnote ·' : `Footnote ${number} ·`,
             short: number === null ? 'Footnote' : `Footnote ${number}`,
+            tiny: number === null ? undefined : String(number),
             code: label ?? '',
             after: chip !== null ? ` · ${chip.text}` : count > 1 ? ` · ${count} references` : undefined,
             title: chip !== null ? chip.title : `The text of footnote ${number as number}, where the file writes it.`,
