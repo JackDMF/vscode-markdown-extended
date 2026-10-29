@@ -685,6 +685,24 @@ suite('Editor footnotes (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
+    test('at 520 px the first Backspace\'s hint stacks with the bar that comes, over no text (UX review 2)', async function () {
+        this.timeout(20000);
+        try {
+            await page.setViewport({ width: 520, height: 900 });
+            await show(COTK);
+            await caretAt(' fragte, wurde');
+            await page.keyboard.press('Backspace');
+            await delay(600);
+            const shownBar = await boxOf(BAR);
+            const hinted = await boxOf('.mep-hint');
+            assert.ok(shownBar !== null && hinted !== null && !overlaps(shownBar, hinted), JSON.stringify({ shownBar, hinted }));
+            assert.deepStrictEqual(await coveredText('.mep-hint'), [], `the hint covers no text: ${JSON.stringify(hinted)}`);
+            await page.keyboard.press('Escape');
+        } finally {
+            await page.setViewport({ width: 1280, height: 900 });
+        }
+    });
+
     test('after Insert › Footnote the hint is placed again when the entry\'s bar comes, off the bar and off the caret\'s line', async function () {
         this.timeout(20000);
         await show(COTK);
@@ -705,6 +723,7 @@ suite('Editor footnotes (e2e)', () => {
         assert.ok(shownBar !== null && hinted !== null, 'bar and hint both show');
         assert.ok(!overlaps(shownBar, hinted), `the hint keeps off the bar: ${JSON.stringify({ shownBar, hinted })}`);
         assert.ok(off(hinted, line), `and off the caret's line: ${JSON.stringify({ hinted, line })}`);
+        assert.deepStrictEqual(await coveredText('.mep-hint'), [], `nor over the entry above (UX review 2): ${JSON.stringify(hinted)}`);
     });
 
     test('Alt+Enter on a reference whose bar stands above it: the first verb\'s tooltip goes above the bar, off the reference\'s line', async function () {

@@ -164,7 +164,7 @@ class CaretHint {
 
     /**
      * A layer appeared or moved (`onLayerPlaced`): a hint at the caret that it
-     * covers is placed again, off it — the bar that comes at the caret's rest
+     * covers is placed again, stacked with it (`placeCaret`) — the bar that comes at the caret's rest
      * after the verb whose hint is showing (Insert › Footnote, a first
      * Backspace) does not hide the hint, nor the hint the bar (#9 wave 2).
      */
@@ -174,7 +174,7 @@ class CaretHint {
         }
         const r = this.el.getBoundingClientRect();
         if (r.left < layer.right && r.right > layer.left && r.top < layer.bottom && r.bottom > layer.top) {
-            this.placeCaret(this.near);
+            this.placeCaret(this.near, layer);
         }
     }
 
@@ -268,7 +268,7 @@ class CaretHint {
      * table's in a table cell — or under `near`: placed as a layer, under it,
      * else above it, off every open layer.
      */
-    private placeCaret(near?: Element): Placement | null {
+    private placeCaret(near?: Element, layer?: Rect): Placement | null {
         this.near = near;
         this.el.dataset.at = 'caret';
         this.el.removeAttribute('data-fixed');
@@ -291,7 +291,10 @@ class CaretHint {
         this.el.style.top = '0px';
         // Placed in the mount's frame, written in the overlay's coordinates.
         this.placedAt = placedKey(at);
-        const p = placeLayer(this.el, at, { view: this.view, mount, space: 'viewport', caret: near === undefined });
+        // A layer came over it: stacked with that layer — under it, at its left, else above the caret's line and
+        // it — by the bars' own text test (UX review 2): never over the line being read above.
+        const anchor = layer === undefined ? at : { left: layer.left, right: Math.max(at.right, layer.right), top: Math.min(at.top, layer.top), bottom: Math.max(at.bottom, layer.bottom) };
+        const p = placeLayer(this.el, anchor, { view: this.view, mount, space: 'viewport', caret: near === undefined, covered: layer !== undefined });
         this.writeAt(p);
         this.el.toggleAttribute('data-flipped', p.side === 'above');
         return p;
