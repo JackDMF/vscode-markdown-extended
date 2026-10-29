@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.11.0 — Footnotes Where They Are Written
 
 - Footnotes are edited in place: references as numbers in the text, their text where it is written.
 - Backspace or Delete beside a footnote reference selects it; pressed again it deletes it, with its text if it was the last.
