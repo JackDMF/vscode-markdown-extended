@@ -24,7 +24,8 @@
 - A footnote reference (`[^x]`) or inline footnote (`^[…]`) in a sidenote's or marginal note's text is a footnote in the preview and export, numbered where it is written and listed with the others; it was literal text, its definition left out.
 - A bar standing above the text it is about shows its tooltips above itself, so they no longer cover that line.
 - A bar for something inside a margin note stands under the note, out to the window's edge; it reaches into the text only where the text column is empty at that height, and shortens its verbs first.
-- A hint at the caret moves out of the way when a bar appears after it.
+- A hint at the caret stacks with a bar that appears after it, instead of covering the bar or the line above.
+- Alt+Enter focuses a bar's first action without showing its tooltip over the text; arrow keys, Tab and the pointer still show it.
 
 ## v4.10.0 — Says Why, Keeps Its Place
 
