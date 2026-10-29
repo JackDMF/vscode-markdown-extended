@@ -287,6 +287,96 @@ img.mep-pending-range {
 }
 
 /* ------------------------------------------------------------------------- */
+/* Footnotes edited in place (wave 4 #5b, `webview/footnotes.ts`)            */
+/* ------------------------------------------------------------------------- */
+
+/* A reference: an atom, the preview's mark in the link colour (#1), the number only. */
+.ProseMirror .mep-fn-ref {
+    margin: 0;
+    padding: 0 1px;
+    font-size: 75%;
+    line-height: 0;
+    color: var(--vscode-textLink-foreground, LinkText);
+    border: 0;
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+.ProseMirror .mep-fn-ref:hover { outline: 1px dashed var(--vscode-editorWidget-border, var(--vscode-contrastBorder, GrayText)); }
+.ProseMirror .mep-fn-ref.ProseMirror-selectednode { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: 0; }
+
+/* A label nothing defines: its text, as the preview leaves it, under a muted dotted line. */
+.ProseMirror .mep-fn-ref.mep-fn-missing {
+    padding: 0;
+    font-size: inherit;
+    line-height: inherit;
+    vertical-align: baseline;
+    color: inherit;
+    text-decoration: underline dotted var(--vscode-descriptionForeground, GrayText);
+    cursor: text;
+}
+
+/* A `[^x]` written as text whose label nothing defines: the same muted dotted line (the preview shows it as text). */
+.ProseMirror .mep-fn-literal { text-decoration: underline dotted var(--vscode-descriptionForeground, GrayText); }
+
+/* The rule above a run of entries: the preview's footnotes-sep, drawn by the editor, not text. */
+.ProseMirror .mep-fn-sep { margin: 18px 0 10px; }
+
+/* An entry: its number (not text), then the definition's blocks; ↩ and the chip run inline. */
+.ProseMirror .mep-fn-entry {
+    display: grid;
+    grid-template-columns: 2.2em minmax(0, 1fr);
+    column-gap: 2px;
+    margin: 0 0 6px;
+    padding: 1px 4px 1px 0;
+    border-radius: 3px;
+}
+
+.ProseMirror .mep-fn-entry .mep-fn-body > p { margin: 0; }
+.ProseMirror .mep-fn-entry .mep-fn-body > * + * { margin-top: 6px; }
+.ProseMirror .mep-fn-num { text-align: right; padding-right: 6px; color: var(--vscode-descriptionForeground, GrayText); user-select: none; }
+.ProseMirror .mep-fn-back { margin-inline-start: 4px; color: var(--vscode-textLink-foreground, LinkText); user-select: none; cursor: pointer; }
+
+/* The entry the caret is in: the editor's line-highlight tint, so the eye finds it after Go to footnote text. */
+.ProseMirror .mep-fn-entry.mep-fn-current {
+    background: var(--vscode-editor-lineHighlightBackground, var(--vscode-list-hoverBackground, transparent));
+    box-shadow: inset 0 0 0 1px var(--vscode-editor-lineHighlightBorder, var(--vscode-contrastActiveBorder, transparent));
+}
+
+/* An entry with no text yet (Insert › Footnote without a selection): what to type, drawn, not text. */
+.ProseMirror .mep-fn-entry .mep-fn-body > p:only-child:has(> br.ProseMirror-trailingBreak:only-child)::before {
+    content: "Footnote text";
+    color: var(--vscode-input-placeholderForeground, GrayText);
+    pointer-events: none;
+}
+
+/* Not referenced: a dashed edge and a muted chip say why the preview leaves it out; the text keeps its colour (contrast). */
+.ProseMirror .mep-fn-orphan .mep-fn-body { border-left: 2px dashed var(--vscode-descriptionForeground, GrayText); padding-left: 6px; }
+
+.ProseMirror .mep-fn-chip {
+    display: inline-block;
+    margin-inline-start: 6px;
+    padding: 0 5px;
+    font: 11px/14px var(--vscode-font-family, sans-serif);
+    font-style: normal;
+    font-weight: normal;
+    vertical-align: 1px;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, GrayText);
+    /* The text's own muted colour: the widget border measured 1.7:1 in Light Modern, under the 3:1 a boundary needs (AC15). */
+    border: 1px dashed var(--vscode-descriptionForeground, GrayText);
+    border-radius: 3px;
+    user-select: none;
+}
+
+/* At the start of an entry that does not begin with an italic word: before its text, the gap after it. */
+.ProseMirror .mep-fn-chip.mep-fn-chip-lead { margin-inline: 0 6px; }
+
+@media (max-width: 600px) {
+    .ProseMirror .mep-fn-entry { grid-template-columns: 1.8em minmax(0, 1fr); }
+}
+
+/* ------------------------------------------------------------------------- */
 /* Formatting toolbar, its menus and preview card, and the selection bubble   */
 /* ------------------------------------------------------------------------- */
 
@@ -2089,6 +2179,23 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     color: var(--vscode-descriptionForeground, #888);
 }
 .mep-card-source { padding-left: 20px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
+/* A footnote's section (wave 4 #5b): its title, its text as the entry shows it, how to go there — no severity icon to align with. */
+.mep-card-footnote .mep-card-source { padding-left: 0; }
+/* Its title is one line of text that wraps as text: the label inline in the code font, not a flex row of columns (UX review 2). */
+.mep-card-footnote .mep-card-footnote-title { display: block; }
+.mep-card-footnote .mep-card-footnote-title .mep-card-code { display: inline; }
+/* The chip the card names, drawn as the page draws it (`.mep-fn-chip`), so it is recognised there. */
+.mep-card-chip {
+    display: inline-block;
+    padding: 0 5px;
+    font: 11px/14px var(--vscode-font-family, sans-serif);
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, GrayText);
+    border: 1px dashed var(--vscode-descriptionForeground, GrayText);
+    border-radius: 3px;
+}
+.mep-card-footnote-body { margin: 4px 0; }
+.mep-card-footnote-body > p { margin: 0 0 4px; }
 .mep-card-fixes-label { padding-left: 20px; margin-top: 2px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
 .mep-card-fix { padding-left: 20px; }
 .mep-language-card a {

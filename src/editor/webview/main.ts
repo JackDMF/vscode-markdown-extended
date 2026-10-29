@@ -39,6 +39,7 @@ import { lensPlugin, lensVerbsAt, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
 import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
+import { sortFootnotesCommand } from './footnotes';
 import { resyncTransaction } from './resync';
 import { changeIncludeTransaction, insertLineTransaction } from './toolbar/commands';
 import { refreshToolbar, toolbarPlugin, toolbarStatusSlot } from './toolbar/toolbar';
@@ -1069,6 +1070,11 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'revealAnchor':
             revealAnchor(msg.anchor, msg.line);
+            break;
+        case 'sortFootnotes':
+            if (view) {
+                sortFootnotesCommand(view);
+            }
             break;
         case 'includeChosen':
             applyInclude(msg.requestId, msg.insert);

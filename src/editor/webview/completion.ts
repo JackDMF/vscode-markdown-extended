@@ -25,6 +25,7 @@ import { PositionMap, caretOf } from '../positions';
 import type { CompletionEntry, HostMessage, WebviewMessage } from '../protocol';
 import { CompletionListView } from './completionList';
 import { showHint } from './hint';
+import { placeLayer } from './placement';
 
 /** How long the typing rests after a trigger before the providers are asked. */
 export const COMPLETION_ASK_DELAY_MS = 80;
@@ -358,25 +359,18 @@ class CaretCompletion implements PluginView {
         this.place(anchor, $head.pos);
     }
 
-    /** Under the caret's line, starting where the items begin; above it when below has no room. */
+    /**
+     * Under the caret's line, starting where the items begin; above it when
+     * below has no room — every layer's rule (`placeLayer`): under the row,
+     * inside the layer edge, off the other open layers.
+     */
     private place(anchor: number, head: number): void {
         if (!this.list) {
             return;
         }
-        const el = this.list.el;
-        const base = this.mount.getBoundingClientRect();
         const start = this.view.coordsAtPos(anchor);
         const caret = this.view.coordsAtPos(head);
-        const width = el.offsetWidth;
-        const height = el.offsetHeight;
-        let left = start.left - base.left;
-        left = Math.max(0, Math.min(left, base.width - width));
-        let top = caret.bottom + 2;
-        if (top + height > window.innerHeight && caret.top - 2 - height >= 0) {
-            top = caret.top - 2 - height;
-        }
-        el.style.left = `${left}px`;
-        el.style.top = `${top - base.top}px`;
+        placeLayer(this.list.el, { left: start.left, top: caret.top, right: Math.max(start.left, caret.right), bottom: caret.bottom }, { view: this.view, mount: this.mount, space: 'mount' });
     }
 }
 

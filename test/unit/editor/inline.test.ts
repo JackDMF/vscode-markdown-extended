@@ -349,7 +349,12 @@ suite('Editor inline constructs: written back by rule', () => {
     test('an email address before code holding an @ is text and code, and is written back so', () => {
         const source = 'Mail a@b.c and `@x` or pay $5 for `$y`.\n';
         assert.strictEqual(shape(topChildren(parseDocument(md, source).doc)[0]), 'paragraph("Mail a@b.c and " [code]"@x" " or pay $5 for " [code]"$y" ".")');
-        assert.strictEqual(assertStable(source), 'Mail a\\@b.c and `@x` or pay \\$5 for `$y`.\n');
+        assert.strictEqual(assertStable(source), 'Mail a@b.c and `@x` or pay \\$5 for `$y`.\n');
+    });
+
+    test('an @ glued to a letter or digit opens nothing and is written as it stands; one that could open is escaped', () => {
+        assert.strictEqual(assertStable('x @a@{data-x="@"} and @b@\n'), 'x @a@{data-x="@"} and @b@\n');
+        assert.strictEqual(assertStable('Text@ and 5 @ x\n'), 'Text@ and 5 \\@ x\n');
     });
 
     test('a reference with no text is written as &nbsp;, which the plugin accepts, and stays one', () => {

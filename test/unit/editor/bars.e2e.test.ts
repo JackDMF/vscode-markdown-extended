@@ -648,6 +648,40 @@ suite('Editor object bars (e2e)', () => {
         }
     });
 
+    test('a block bar kept short of a note is placed once per scroll frame, not fitted wide and short again; it stays short of the note', async function () {
+        this.timeout(30000);
+        await page.addStyleTag({ content: ':root { --md-note-width: 500px; }' });
+        try {
+            const body = Array.from({ length: 12 }, (_, k) => `line ${k + 1} of the note's body beside the column`).join(', ');
+            const tail = Array.from({ length: 40 }, (_, k) => `Paragraph ${k + 1} below, so the page scrolls.`).join('\n\n');
+            await openRow({ ...(rows.find(r => r.slug === 'table') as Row), source: `Intro with a ++note|${body}++ here.\n\n| a | b |\n| - | - |\n| one | two |\n\n${tail}\n`, marker: 'one' });
+            await viewport(1000);
+            const changes = await page.$eval(BAR, async bar => {
+                const frame = () => new Promise(r => requestAnimationFrame(() => r(null)));
+                const seen: string[] = [];
+                const watch = new MutationObserver(list => list.forEach(m => seen.push(`${(m.target as Element).className}:${m.attributeName}`)));
+                watch.observe(bar, { attributes: true, subtree: true, attributeFilter: ['style', 'class', 'hidden'] });
+                window.scrollBy(0, 3);
+                await frame();
+                await frame();
+                watch.disconnect();
+                const note = document.querySelector('.ProseMirror .sidenote') as HTMLElement;
+                return { seen, right: bar.getBoundingClientRect().right, noteLeft: note.getBoundingClientRect().left };
+            });
+            assert.ok(changes.right <= changes.noteLeft - 4 + 0.5, `after the scroll the bar still ends short of the note: ${JSON.stringify(changes)}`);
+            // Moved with the text, not refitted: the wide fit and the short one each rewrote the bar (8 writes before).
+            assert.deepStrictEqual(changes.seen, [], `nothing rewritten on the scroll: ${JSON.stringify(changes)}`);
+        } finally {
+            await page.evaluate(() => document.querySelectorAll('style').forEach(el => {
+                if (el.textContent === ':root { --md-note-width: 500px; }') {
+                    el.remove();
+                }
+            }));
+            await page.evaluate(() => window.scrollTo(0, 0));
+            await viewport(WIDE);
+        }
+    });
+
     test('a block bar grown past the column keeps out of an open card in the part past it: the band checked is the band it stands in', async function () {
         this.timeout(20000);
         // Two rules above the table and nothing below it: room for the bar on both sides — the card takes one, the other is free.

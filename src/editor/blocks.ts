@@ -4,6 +4,7 @@ import { InlineEngineDefinition } from './inlineEngine';
 import { INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderOfToken, namesOf } from './inlineLiterals';
 import { textBeforeAttrs } from '../plugin/markdownItAttrs';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
+import { footnoteMeta } from './footnoteEngine';
 
 /**
  * The token stream → top-level source blocks step of the rich editor.
@@ -103,6 +104,8 @@ export function takenLiteral(inline: Token | undefined, beforeLine = false): str
  * - `end` — at the end of the block's last line, after a space: a paragraph's
  *   `text {.a}`, a heading's `# Title {#id}`, a fence's opening line
  *   ```` ```js {.a} ````, a rule's `--- {#id}`;
+ * - `glued` — a fence's, right after its info string with no space
+ *   (```` ```js title={.a} ````);
  * - `line` — on a line of its own right after the block's last line: a
  *   paragraph's or a list's `{.a}` below its text, which the plugin reads
  *   through the soft break before it; a quote's `> {.a}` under its last
@@ -116,7 +119,7 @@ export function takenLiteral(inline: Token | undefined, beforeLine = false): str
  * first paragraph, at any depth (`recoverItemLiterals`), and is the item's
  * `literal`, not a top-level block's `attrsSuffix`.
  */
-export type AttrsPlacement = 'end' | 'line' | 'blank';
+export type AttrsPlacement = 'end' | 'glued' | 'line' | 'blank';
 
 /** A top-level block's attribute literal, verbatim, and where it was written. */
 export interface BlockAttrs {
@@ -220,11 +223,17 @@ export const CONTAINER_CLOSE = 'container_container_close';
  */
 const CONTAINER_ATTRS_REASON = 'container attributes (on its ::: line or the line before its closing :::), which the container node does not keep';
 
+/** The tokens of a footnote's definition (markdown-it-footnote), a block of its own in a parse in place (`footnoteEngine.ts`). */
+export const FOOTNOTE_OPEN = 'footnote_reference_open';
+const FOOTNOTE_CLOSE = 'footnote_reference_close';
+
 /** Top-level tokens that can open an editable block. Anything else at top level is a raw block. */
 export const EDITABLE_TOP_LEVEL_TOKENS: ReadonlySet<string> = new Set([
     'paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open',
     'blockquote_open', 'fence', 'code_block', 'hr',
     CONTAINER_OPEN, 'admonition_open', 'table_open',
+    // A footnote's definition where it is written (`FOOTNOTES_IN_PLACE`): top level only.
+    FOOTNOTE_OPEN,
 ]);
 
 /** Every block-level token an editable block may contain, at any depth. */
@@ -269,6 +278,8 @@ export const EDITABLE_INLINE_TOKENS: ReadonlySet<string> = new Set([
     'wiki_embed',
     // An emoji the host read (`markdownItEmoji.ts`): one atom carrying its spelling.
     'emoji',
+    // A footnote reference, `[^label]` or an inline `^[…]` (markdown-it-footnote): one atom carrying its spelling.
+    'footnote_ref',
     // … and the note family (`markdownItSidenote.ts`), whose reference and body are inline content.
     'sidenote_open', 'sidenote_ref_open', 'sidenote_ref_close', 'sidenote_content_open', 'sidenote_content_close', 'sidenote_close',
     'marginal_note_open', 'marginal_note_ref_open', 'marginal_note_ref_close',
@@ -386,6 +397,37 @@ export interface SourceBlock {
     inlineLiterals: string[];
     /** For an editable block: the literal of each list item carrying one, in token order (`recoverItemLiterals`). */
     itemLiterals: string[];
+    /** The footnotes its tokens hold, as the engine numbers them (`footnotesIn`); `null` for none. */
+    footnotes: BlockFootnotes | null;
+}
+
+/**
+ * A block's footnotes, in the order the engine counts them: each reference
+ * (its label, `null` for an inline footnote `^[…]`) and each label it defines.
+ * What a source block tells the page's numbering, which cannot read its HTML.
+ */
+export interface BlockFootnotes {
+    refs: (string | null)[];
+    defines: string[];
+}
+
+/** The footnotes of the tokens `[start, end)` (`BlockFootnotes`), in stream order — the order of the engine's inline pass; `null` for none. */
+function footnotesIn(tokens: readonly Token[], start: number, end: number): BlockFootnotes | null {
+    const refs: (string | null)[] = [];
+    const defines: string[] = [];
+    for (let i = start; i < end; i++) {
+        const t = tokens[i];
+        if (t.type === 'footnote_reference_open') {
+            defines.push((t.meta as { label: string }).label);
+        }
+        for (const child of t.children ?? []) {
+            if (child.type === 'footnote_ref') {
+                const label = (child.meta as { label?: unknown } | null)?.label;
+                refs.push(typeof label === 'string' ? label : null);
+            }
+        }
+    }
+    return refs.length > 0 || defines.length > 0 ? { refs, defines } : null;
 }
 
 export interface GroupedBlocks {
@@ -562,6 +604,10 @@ function pipeTableNotEditableBecause(tokens: readonly Token[], group: TokenGroup
                     if (NOTES_WITH_REFERENCE.has(child.type)) {
                         return `${child.type} in a table cell: its | is a cell boundary`;
                     }
+                    const note = footnoteMeta(child);
+                    if (note !== null && 'source' in note && note.source.includes('|')) {
+                        return 'footnote_ref in a table cell: its | is a cell boundary';
+                    }
                     if (child.type === 'hardbreak' || child.type === 'softbreak') {
                         return `${child.type} in a table cell`;
                     }
@@ -593,8 +639,13 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
     }
     /** The first line after each enclosing container's or admonition's own lines, innermost last. */
     const wrapperEnds: number[] = [];
+    // A footnote's definition is editable where it opens the group; one inside a block is not (`nested …`).
+    const ownDefinition = (i: number) => tokens[group.start].type === FOOTNOTE_OPEN && (i === group.start || (i === group.end - 1 && tokens[i].type === FOOTNOTE_CLOSE));
     for (let i = group.start; i < group.end; i++) {
         const t = tokens[i];
+        if (ownDefinition(i)) {
+            continue;
+        }
         if (!EDITABLE_BLOCK_TOKENS.has(t.type)) {
             return `nested ${t.type}`;
         }
@@ -647,6 +698,10 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
         if (inTitle && (t.children ?? []).some(c => injectionMarkOf(c) !== undefined)) {
             return 'injected content in an admonition title';
         }
+        // The title is a string: a reference there has no atom to be.
+        if (inTitle && (t.children ?? []).some(c => c.type === 'footnote_ref')) {
+            return 'footnote_ref in an admonition title';
+        }
         const because = inlineNotEditable(t.children ?? []);
         if (because !== null) {
             return inTitle ? `${because} in an admonition title` : because;
@@ -673,6 +728,11 @@ function inlineNotEditable(children: readonly Token[]): string | null {
             if (typeof (child.meta as { source?: unknown } | null)?.source !== 'string') {
                 // The host could not tell how it was spelled, so it could not be written back as it was.
                 return 'emoji without its spelling';
+            }
+        } else if (child.type === 'footnote_ref') {
+            const because = footnoteNotEditable(child, rawDepth > 0);
+            if (because !== null) {
+                return because;
             }
         }
         if (NOTE_OPEN_TOKENS.has(child.type)) {
@@ -715,6 +775,31 @@ function inlineNotEditable(children: readonly Token[]): string | null {
         }
     }
     return null;
+}
+
+/**
+ * Why a footnote reference cannot be an atom, or `null` when it can: one in
+ * superscript or subscript, whose text is written as it is; an inline footnote
+ * holding a footnote of its own (the engine numbers both alike and loses one),
+ * or written over two lines, which its one-line field cannot hold; one the
+ * engine did not number (an inline footnote in a note's text, before notes
+ * shared the document's footnotes).
+ */
+function footnoteNotEditable(token: Token, inRawText: boolean): string | null {
+    if (inRawText) {
+        return 'footnote_ref inside sup/sub';
+    }
+    const meta = footnoteMeta(token);
+    if (meta === null || 'label' in meta) {
+        return null;
+    }
+    if ('broken' in meta) {
+        return 'inline footnote in a note';
+    }
+    if (meta.nested) {
+        return 'footnote inside an inline footnote';
+    }
+    return meta.source.includes('\n') ? 'multi-line inline footnote' : null;
 }
 
 /** The top-level openers whose `{…}` the editor keeps as `attrsSuffix`, written back where it stood. */
@@ -825,8 +910,10 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
             return literal === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix: literal, placement: 'end' }, endLine: null };
         }
         case 'fence': {
-            const literal = endLiteralOf(lines[start]?.text ?? '');
-            return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
+            const line = (lines[start]?.text ?? '').trimEnd();
+            const literal = endLiteralOf(line);
+            const glued = literal !== null && !/\s/.test(line.charAt(line.length - literal.length - 1));
+            return reads(literal) ? { attrs: { suffix: literal, placement: glued ? 'glued' : 'end' }, endLine: null } : where;
         }
         case 'hr': {
             const literal = endLiteralOf(open.markup);
@@ -1252,6 +1339,7 @@ export function groupSourceBlocks(tokens: readonly Token[], lines: readonly Sour
         attrs: l.classification.attrs,
         inlineLiterals: l.classification.inlineLiterals,
         itemLiterals: l.classification.itemLiterals,
+        footnotes: footnotesIn(tokens, l.tokenRange[0], l.tokenRange[1]),
     }));
     return { blocks, tail };
 }

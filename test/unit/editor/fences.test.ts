@@ -12,11 +12,11 @@ import { hostEngine } from './helpers';
 const languageCompletions = (doc: Node, query: string) => languageCompleter(doc)(query);
 
 /** The first block of `text` as the editor parses it: a code block's attributes. */
-function codeBlockOf(text: string): { markup: string; params: string; attrsSuffix: string | null; content: string } {
+function codeBlockOf(text: string): { markup: string; params: string; attrsSuffix: string | null; attrsPlacement: string | null; content: string } {
     const { doc } = parseDocument(hostEngine(), text, {});
     const node = doc.firstChild!;
     assert.strictEqual(node.type.name, 'code_block');
-    return { markup: node.attrs.markup as string, params: node.attrs.params as string, attrsSuffix: node.attrs.attrsSuffix as string | null, content: node.textContent };
+    return { markup: node.attrs.markup as string, params: node.attrs.params as string, attrsSuffix: node.attrs.attrsSuffix as string | null, attrsPlacement: node.attrs.attrsPlacement as string | null, content: node.textContent };
 }
 
 /**
@@ -25,7 +25,7 @@ function codeBlockOf(text: string): { markup: string; params: string; attrsSuffi
  */
 suite('Editor code blocks: the opening line', () => {
     suite('openingLineOf ↔ parseOpeningLine: what the file reads is what the field shows', () => {
-        for (const line of ['```', '```js', '```js {.numbered}', '````', '````ts title=x {#a .b}', '~~~', '~~~sh', '~~~a`b {.x}']) {
+        for (const line of ['```', '```js', '```js {.numbered}', '````', '````ts title=x {#a .b}', '```js title={.a}', '~~~', '~~~sh', '~~~a`b {.x}']) {
             test(line, () => {
                 const block = codeBlockOf(`${line}\nx\n${line.replace(/[^`~].*$/, '')}\n`);
                 assert.strictEqual(openingLineOf(block), line, 'composed from the parsed node');

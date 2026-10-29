@@ -4,7 +4,7 @@ import { ActiveVisualEditorTracker } from './activeEditor';
 import { EditorEngineHost } from './engineHost';
 import { editorPage, localResourceRoots } from './html';
 import { collectIncludeProviders } from './includes';
-import { VisualEditorSession } from './session';
+import { VisualEditorSession, sortFootnotesIn } from './session';
 
 import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
 
@@ -88,7 +88,24 @@ export class CommandOpenVisualEditor extends Command {
 }
 
 /**
- * Register the rich editor and its command.
+ * `markdownExtended.sortFootnotes`: the active Visual Editor's footnote texts
+ * in number order (wave 4 #5b). Offered in the palette only while one is active.
+ */
+export class CommandSortFootnotes extends Command {
+    constructor(private readonly tracker: ActiveVisualEditorTracker | undefined) {
+        super('markdownExtended.sortFootnotes');
+    }
+
+    execute(): void {
+        const active = this.tracker?.active();
+        if (active === undefined || !sortFootnotesIn(active.uri)) {
+            vscode.window.showInformationMessage('Open a Markdown file in the Visual Editor first, then run "Sort Footnotes".');
+        }
+    }
+}
+
+/**
+ * Register the rich editor and its commands.
  *
  * `engines` is the extension's one engine host, which `activate` owns: the
  * text editor's toggles read documents with the same engine.
@@ -107,5 +124,6 @@ export function registerVisualEditor(
             webviewOptions: { retainContextWhenHidden: true },
         }),
         new CommandOpenVisualEditor(),
+        new CommandSortFootnotes(tracker),
     );
 }

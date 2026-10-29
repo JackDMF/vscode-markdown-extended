@@ -7,6 +7,7 @@ import { Environment, MarkdownIt, Options, Token } from '../@types/markdown-it';
 import {
     BlockAttrs,
     InjectionMark,
+    SourceLine,
     NOTE_OPEN_TOKENS,
     SourceBlock,
     carriesInlineLiteral,
@@ -25,6 +26,7 @@ import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 import { unreadEmoji } from './serialize';
 import { HAS_AN_EMOJI, sourceReasonWords } from './sourceReason';
+import { FOOTNOTES_IN_PLACE, footnoteMeta, inPlaceEnv } from './footnoteEngine';
 
 /**
  * A document as the editor holds it: the ProseMirror tree plus the two facts
@@ -59,10 +61,20 @@ export function parsedDocumentFromJSON(json: ParsedDocumentJSON): ParsedDocument
  * content): entry `i` is the document's child `i`, because `parseDocument`
  * builds its children from the same grouping and refuses a document whose
  * counts disagree. What the lens rows are placed by (`host/lenses.ts`).
- * `definition` as `parseDocument` takes it, so the two group alike.
+ * `definition` as `parseDocument` takes it, and footnotes in place as it reads
+ * them (`placed`), so the two group alike.
  */
 export function blockLineRanges(md: MarkdownIt, text: string, env: Environment = {}, definition: InlineEngineDefinition = definitionOf(md)): ([number, number] | null)[] {
-    return groupSourceBlocks(md.parse(text, env), splitLines(text), definition).blocks.map(b => b.lineRange);
+    return groupSourceBlocks(md.parse(text, placed(env)), splitLines(text), definition).blocks.map(b => b.lineRange);
+}
+
+/**
+ * `env` for a parse of the editor's: footnote definitions kept where they are
+ * written (`FOOTNOTES_IN_PLACE`), each one a block of its own. One the caller
+ * made for it (`inPlaceEnv`, with the labels a part is read with) is kept.
+ */
+function placed(env: Environment): Environment {
+    return env[FOOTNOTES_IN_PLACE] === true ? env : inPlaceEnv(env);
 }
 
 /**
@@ -95,6 +107,39 @@ function decodeAttribute(value: string): string {
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&amp;/g, '&');
+}
+
+/**
+ * The opening tokens of the nested blocks that start on the line after the
+ * block before them in the same parent, with no blank line between — by the
+ * line maps markdown-it gives every block. A top-level block's `gap` holds that.
+ */
+function joinedBlocks(tokens: readonly Token[]): WeakSet<object> {
+    const joined = new WeakSet<object>();
+    // The line the last closed child of each level ended on; a parent opening starts its children afresh.
+    const lastEnd: (number | undefined)[] = [];
+    const open: (readonly [number, number] | null)[] = [];
+    const seen = (t: Token, end: number | undefined) => {
+        if (t.level > 0 && t.map && lastEnd[t.level] !== undefined && lastEnd[t.level] === t.map[0]) {
+            joined.add(t);
+        }
+        lastEnd[t.level] = end;
+    };
+    for (const t of tokens) {
+        if (!t.block || t.type === 'inline') {
+            continue;
+        }
+        if (t.nesting === 1) {
+            seen(t, undefined);
+            open.push(t.map ? [t.map[0], t.map[1]] : null);
+            lastEnd[t.level + 1] = undefined;
+        } else if (t.nesting === -1) {
+            lastEnd[t.level] = open.pop()?.[1];
+        } else {
+            seen(t, t.map?.[1]);
+        }
+    }
+    return joined;
 }
 
 /** markdown-it marks the paragraphs of a tight list hidden; the first one of the list's own items answers for it. */
@@ -205,22 +250,25 @@ function copyToken(token: Token): Token {
  * preview uses, other extensions' rules included, which is why parsing runs in
  * the extension host. `env` is handed to markdown-it and to every render of a
  * raw or injected block, so rules that keep per-document state there (footnotes,
- * Req Explorer's index lookups) see one document.
+ * Req Explorer's index lookups) see one document. Footnote definitions are
+ * read where they are written (`placed`), each a block of its own.
  *
  * `definition` is what the page's engine is built from for `md`
  * (`inlineEngineDefinition`), by default read off `md` (`definitionOf`): the
  * literals the parse finds are judged with it (`groupSourceBlocks`), as the
  * page judges the literals it writes, so both answer alike under any setting.
  *
- * `parsed`, where given, is `md.parse(text, env)` already made, which the
+ * `parsed`, where given, is `md.parse(text, env)` already made — `env` one
+ * with footnotes in place (`inPlaceEnv`) — which the
  * page's save reads too: a block rendered from it is rendered from a copy, as
  * a renderer may write to the tokens it renders (an image's `alt`).
  *
  * Throws when the document cannot be represented without losing a byte; the
  * caller then keeps the text editor.
  */
-export function parseDocument(md: MarkdownIt, text: string, env: Environment = {}, definition: InlineEngineDefinition = definitionOf(md), parsed?: Token[]): ParsedDocument {
+export function parseDocument(md: MarkdownIt, text: string, givenEnv: Environment = {}, definition: InlineEngineDefinition = definitionOf(md), parsed?: Token[]): ParsedDocument {
     const engine = md as EngineWithOptions;
+    const env = placed(givenEnv);
     const tokens = parsed ?? md.parse(text, env);
     const lines = splitLines(text);
     const { blocks, tail } = groupSourceBlocks(tokens, lines, definition);
@@ -265,7 +313,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 const [start, end] = block.tokenRange;
                 const table = start < end && tokens[start].type === 'table_open';
                 const construct = table ? (block.reason.includes('(multimd)') ? 'multimd table' : 'table') : sourceReasonWords(block.reason, block.src ?? '');
-                stream.push(synthetic('raw_block', { src: block.src ?? '', gap: block.gap, html: render(block), construct }));
+                stream.push(synthetic('raw_block', { src: block.src ?? '', gap: block.gap, html: render(block), construct, footnotes: block.footnotes }));
                 break;
             }
             case 'injected':
@@ -336,7 +384,8 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
         }
     }
 
-    const sourceOf = (tok: StreamToken) => topAttrs.get(tok) ?? { src: null, gap: null };
+    const joined = joinedBlocks(tokens);
+    const sourceOf = (tok: StreamToken) => topAttrs.get(tok) ?? { src: null, gap: null, joined: joined.has(tok) };
     const suffixOf = (tok: StreamToken) => {
         const found = blockAttrs.get(tok);
         return { attrsSuffix: found?.suffix ?? null, attrsPlacement: found?.placement ?? null };
@@ -359,6 +408,14 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 const map = real(tok).map;
                 let source = map ? lines.slice(map[0], map[1]).map(l => l.text) : [];
                 let content = (s[i + 1]?.type === 'inline' ? s[i + 1].content : '').split('\n');
+                // An entry's first paragraph (plan §3a, review 2 L-d): its first line's `[^label]: ` counts as wide as
+                // the indent of the lines after it, as the save writes it (`entryHead`): the width is the text's,
+                // however long the label.
+                if (s[i - 1]?.type === 'footnote_reference_open' && source.length > 0) {
+                    const head = /^\[\^[^\]]+\]:[ \t]*/.exec(source[0])?.[0] ?? '';
+                    const indent = source.length > 1 ? (/^[ \t]*/.exec(source[1]) as RegExpExecArray)[0] : '';
+                    source = [indent + source[0].slice(head.length), ...source.slice(1)];
+                }
                 // The width is the text's: the attribute literal is written after
                 // it is wrapped (`serialize.ts`), so it is no evidence of the width.
                 const literal = blockAttrs.get(tok) ?? foreignLiteral.get(tok);
@@ -433,6 +490,15 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             }),
         },
         list_item: { block: 'list_item', getAttrs: tok => ({ literal: itemLiteral.get(tok) ?? null }) },
+        // A footnote's definition, kept where it is written (`FOOTNOTES_IN_PLACE`): its label and how it is spelled.
+        footnote_reference: {
+            block: 'footnote_entry',
+            getAttrs: (tok, s, i) => {
+                const label = (real(tok).meta as { label: string }).label;
+                const first = s[i + 1]?.type === 'paragraph_open' ? real(s[i + 1]).map : null;
+                return { ...sourceOf(tok), label, ...entrySpelling(lines, real(tok).map, label, first) };
+            },
+        },
         // A pipe table (`blocks.ts` let only the GFM form through): the rows
         // are the table's children, `thead` and `tbody` no node of their own;
         // a cell's alignment is the `style` the plugin set from the delimiter row.
@@ -481,6 +547,14 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
         wiki_embed: {
             node: 'wiki_embed',
             getAttrs: tok => ({ source: ((real(tok).meta as { source?: string } | null)?.source) ?? real(tok).content }),
+        },
+        // A footnote reference or an inline footnote: one atom carrying its label, or its text as written (`footnoteEngine.ts`).
+        footnote_ref: {
+            node: 'footnote_ref',
+            getAttrs: tok => {
+                const meta = footnoteMeta(real(tok));
+                return meta !== null && 'label' in meta ? { label: meta.label, source: null } : { label: null, source: meta !== null && 'source' in meta ? meta.source : '' };
+            },
         },
         // An emoji: one atom carrying its spelling as the host read it (`markdownItEmoji.ts`), its name and glyph.
         emoji: {
@@ -549,6 +623,33 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     return { doc: withUnplacedAsSource(doc, blocks, render), eol: detectEol(text), tail };
 }
 
+/**
+ * How a footnote's definition is written, which a changed one is written
+ * with again (`serialize.ts`): what stands between `]:` and its text
+ * (`space`); the prefix of its first paragraph's next line, `''` for a lazy
+ * one, `null` for a one-line paragraph or none (`continuation`); and how its
+ * first hard break is written, two spaces or a backslash (`breakStyle`).
+ * `map` is the definition's lines, `first` its first paragraph's.
+ */
+function entrySpelling(lines: readonly SourceLine[], map: number[] | null, label: string, first: number[] | null): { space: string; continuation: string | null; breakStyle: string | null } {
+    const head = map === null ? '' : lines[map[0]]?.text ?? '';
+    const marker = `[^${label}]:`;
+    const at = head.indexOf(marker);
+    const space = at < 0 ? ' ' : (/^[ \t]*/.exec(head.slice(at + marker.length)) as RegExpExecArray)[0];
+    const continuation = first !== null && first[1] - first[0] > 1 ? (/^[ \t]*/.exec(lines[first[0] + 1]?.text ?? '') as RegExpExecArray)[0] : null;
+    let breakStyle: string | null = null;
+    for (let k = map?.[0] ?? 0; map !== null && k < map[1] - 1 && breakStyle === null; k++) {
+        const text = lines[k]?.text ?? '';
+        const backslashes = (/\\*$/.exec(text) as RegExpExecArray)[0].length;
+        if (backslashes % 2 === 1 && (lines[k + 1]?.text ?? '').trim() !== '') {
+            breakStyle = '\\';
+        } else if (/\S {2,}$/.test(text) && (lines[k + 1]?.text ?? '').trim() !== '') {
+            breakStyle = '  ';
+        }
+    }
+    return { space, continuation, breakStyle };
+}
+
 /** Whether a parse is judging emoji already (`withUnplacedAsSource`): the judge parses what it writes, which needs no judging. */
 let judgingEmoji = false;
 
@@ -586,7 +687,7 @@ function withUnplacedAsSource(doc: Node, blocks: readonly SourceBlock[], render:
             });
             if (block.kind === 'editable' && holds && unreadEmoji(node) === null) {
                 changed = true;
-                children.push(editorSchema.nodes.raw_block.create({ src: block.src ?? '', gap: block.gap, html: render(block), construct: HAS_AN_EMOJI }));
+                children.push(editorSchema.nodes.raw_block.create({ src: block.src ?? '', gap: block.gap, html: render(block), construct: HAS_AN_EMOJI, footnotes: block.footnotes }));
             } else {
                 children.push(node);
             }

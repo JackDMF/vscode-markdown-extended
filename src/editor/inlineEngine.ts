@@ -4,6 +4,7 @@ import { MarkdownIt, Token } from '../@types/markdown-it';
 import { PAGE_PLUGINS, PAGE_PLUGINS_IN_ORDER, isPagePlugin } from '../plugin/inlinePlugins';
 import { MarkdownItAttrs, readsAttrs } from '../plugin/markdownItAttrs';
 import { useMathStandIn } from './mathStandIn';
+import { useFootnotesInPlace } from './footnoteEngine';
 import { SIDEBAR_SPAN_META } from '../plugin/markdownItSidenote';
 import { WIKI_EMBED_TOKEN, readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
 import { EMOJI_RULE, readsEmoji } from '../plugin/markdownItEmoji';
@@ -256,6 +257,8 @@ export function createInlineEngine(definition: InlineEngineDefinition, withFront
     if (!definition.emoji && readsEmoji(md)) {
         md.core.ruler.disable(EMOJI_RULE);
     }
+    // As the host's engine reads them in place (`createEditorEngine`), where a read-back asks for it.
+    useFootnotesInPlace(md);
     return definition.math ? useMathStandIn(md) : md;
 }
 

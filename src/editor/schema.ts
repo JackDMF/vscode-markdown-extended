@@ -31,8 +31,16 @@ import { EMBED_WAY_BACK, VERB } from './verbs';
  * Inline, a textblock holds text under the marks at the end of this file —
  * CommonMark's and this extension's own (`==`, `^`, `~`, `~~`, `[[…]]`), and an
  * attribute span (`[text]{…}`) — images, hard breaks, Req Explorer's badges,
- * and the note family (sidenotes, marginal notes, sidebars), each drawn as the
- * element the engine renders.
+ * footnote references, and the note family (sidenotes, marginal notes,
+ * sidebars), each drawn as the element the engine renders.
+ *
+ * Footnotes (wave 4 #5b): a reference, `[^label]` or an inline `^[…]`, is an
+ * inline atom (`footnote_ref`) wherever text may stand — a paragraph at any
+ * depth, a heading, a table cell, a note's reference or body. Its number is
+ * the page's to count, never an attribute (`webview/footnotes.ts`). A
+ * definition, `[^label]: …`, is a `footnote_entry` where the file writes it,
+ * at the top level, holding blocks as a list item does; an unused one and a
+ * repeated label are entries too, which the page marks.
  *
  * Two editable nodes hold blocks of their own and mirror their plugin's DOM:
  * `container` (`::: name info` … `:::`, a `div` with the info's classes) and
@@ -52,7 +60,7 @@ import { EMBED_WAY_BACK, VERB } from './verbs';
 /** The top-level editable node types, whose `src` the fidelity plugin clears on change. */
 export const EDITABLE_TOP_NODES: ReadonlySet<string> = new Set([
     'paragraph', 'heading', 'bullet_list', 'ordered_list', 'blockquote', 'code_block', 'horizontal_rule',
-    'container', 'admonition', 'table',
+    'container', 'admonition', 'table', 'footnote_entry',
 ]);
 
 /** The nodes that hold blocks and are written around them: a container and an admonition. */
@@ -65,7 +73,7 @@ export const SUFFIX_NODES: ReadonlySet<string> = new Set([
 
 /**
  * A top-level block's `{…}` literal, verbatim, and where it stood
- * (`AttrsPlacement` in `blocks.ts`: `end`, `line`, `blank`). Both `null` on a
+ * (`AttrsPlacement` in `blocks.ts`: `end`, `glued`, `line`, `blank`). Both `null` on a
  * block that has none; a nested block never carries one (`fidelity.ts`).
  */
 const suffixAttrs = {
@@ -99,17 +107,39 @@ export function admonitionTitleSpec(title: string): DOMOutputSpec {
 }
 
 /** The type an admonition's classes name: the first known one, else `note`, as the plugin decides. */
+/**
+ * A pasted list: the editor's own copy says so with data-tight; a loose list's
+ * items hold paragraphs, a tight one's (as markdown-it renders it) hold text.
+ */
+function listDomIsTight(dom: HTMLElement): boolean {
+    if (dom.hasAttribute('data-tight')) {
+        return true;
+    }
+    return !Array.from(dom.children).some(li => Array.from(li.children).some(c => c.tagName === 'P'));
+}
+
 function admonitionTypeOf(dom: HTMLElement): string {
     return Array.from(dom.classList).find(c => c !== 'admonition' && ADMONITION_TYPES.includes(c)) ?? 'note';
+}
+
+/** A footnote reference's spelling, as the file holds it: `[^label]`, or `^[source]` for an inline footnote. */
+export function footnoteSpelling(node: Node): string {
+    const label = node.attrs.label as string | null;
+    return label !== null ? `[^${label}]` : `^[${node.attrs.source as string}]`;
 }
 
 /** The top-level node types emitted from `src` whatever happens to them. */
 export const SOURCE_NODES: ReadonlySet<string> = new Set(['front_matter', 'raw_block', 'injected_block']);
 
-/** `src` and `gap`, on every node that can stand at top level. */
+/**
+ * `src` and `gap`, on every node that can stand at top level; and `joined`, on a
+ * nested one the file wrote straight under the block before it, with no blank
+ * line (`#### Video` then `- …` in a quote) — a top-level block's `gap` says that.
+ */
 const sourceAttrs = {
     src: { default: null as string | null },
     gap: { default: null as string | null },
+    joined: { default: false },
 };
 
 function headingDOM(node: Node): DOMOutputSpec {
@@ -390,7 +420,7 @@ export function alignOfStyle(style: string | null | undefined): TableAlign {
 }
 
 /** The inline content of a table cell: the paragraph's, without hard breaks and the notes with a reference. */
-export const TABLE_CELL_CONTENT = '(text | image | inline_atom | wiki_embed | emoji | left_sidebar | right_sidebar)*';
+export const TABLE_CELL_CONTENT = '(text | image | inline_atom | wiki_embed | emoji | footnote_ref | left_sidebar | right_sidebar)*';
 
 const tableSpecs = tableNodes({
     tableGroup: 'top_block',
@@ -448,7 +478,7 @@ export const editorSchema = new Schema({
         },
         heading: {
             // A note is written inside the heading's one line; a hard break is not.
-            content: '(text | image | inline_atom | wiki_embed | emoji | sidenote | marginal_note | left_sidebar | right_sidebar)*',
+            content: '(text | image | inline_atom | wiki_embed | emoji | footnote_ref | sidenote | marginal_note | left_sidebar | right_sidebar)*',
             group: 'block',
             defining: true,
             attrs: {
@@ -532,10 +562,11 @@ export const editorSchema = new Schema({
                 ...sourceAttrs,
                 /** The bullet character the list was written with. */
                 bullet: { default: '-' },
-                tight: { default: false },
+                /** A list made in the editor is tight, as a Markdown author writes one. */
+                tight: { default: true },
                 ...suffixAttrs,
             },
-            parseDOM: [{ tag: 'ul', getAttrs: (dom: HTMLElement) => ({ tight: dom.hasAttribute('data-tight') }) }],
+            parseDOM: [{ tag: 'ul', getAttrs: (dom: HTMLElement) => ({ tight: listDomIsTight(dom) }) }],
             toDOM(node): DOMOutputSpec { return ['ul', withSuffix(node, { 'data-tight': node.attrs.tight ? 'true' : null }), 0]; },
         },
         ordered_list: {
@@ -546,14 +577,14 @@ export const editorSchema = new Schema({
                 order: { default: 1 },
                 /** `.` or `)`, as written. */
                 delimiter: { default: '.' },
-                tight: { default: false },
+                tight: { default: true },
                 ...suffixAttrs,
             },
             parseDOM: [{
                 tag: 'ol',
                 getAttrs: (dom: HTMLElement) => ({
                     order: dom.hasAttribute('start') ? Number(dom.getAttribute('start')) : 1,
-                    tight: dom.hasAttribute('data-tight'),
+                    tight: listDomIsTight(dom),
                 }),
             }],
             toDOM(node): DOMOutputSpec {
@@ -620,6 +651,36 @@ export const editorSchema = new Schema({
             attrs: { ...sourceAttrs, ...suffixAttrs },
             toDOM(node): DOMOutputSpec { return ['table', withSuffix(node), ['tbody', 0]]; },
         },
+        // A footnote's text where the file writes it, `[^label]: …` (wave 4 #5b): a
+        // top-level block holding blocks, the first written on the definition's
+        // line, the others indented by four. Drawn as an item of the rendered
+        // list is drawn; its number is the page's (`webview/footnotes.ts`).
+        // Top level only (`top_block`): a definition inside another block stays source.
+        footnote_entry: {
+            group: 'top_block',
+            content: 'block+',
+            defining: true,
+            isolating: true,
+            attrs: {
+                /** The label of `[^label]:`. */
+                label: {},
+                ...sourceAttrs,
+                /** What stands between `]:` and the text, as written. */
+                space: { default: ' ' },
+                /** The first paragraph's continuation lines' prefix as written: `''` (lazy), `'  '`, `'    '`; `null` for one not read. */
+                continuation: { default: null as string | null },
+                /** How a hard break in it is written: `'  '` (two spaces) or `'\\'`; `null` for none read. */
+                breakStyle: { default: null as string | null },
+            },
+            parseDOM: [{
+                tag: 'div[data-mep-fn-entry]',
+                contentElement: 'div.mep-fn-body',
+                getAttrs: (dom: HTMLElement) => ({ label: dom.getAttribute('data-mep-fn-entry') ?? '' }),
+            }],
+            toDOM(node): DOMOutputSpec {
+                return ['div', { class: 'mep-fn-entry', 'data-mep-fn-entry': node.attrs.label as string }, ['div', { class: 'mep-fn-body' }, 0]];
+            },
+        },
         table_row: tableSpecs.table_row,
         table_header: spanless(tableSpecs.table_header),
         table_cell: spanless(tableSpecs.table_cell),
@@ -648,6 +709,12 @@ export const editorSchema = new Schema({
                  * parse; `null` when no word says more (a block the page inserted, before its parse).
                  */
                 construct: { default: null as string | null },
+                /**
+                 * The footnotes the block holds, which the page cannot read from its HTML: each
+                 * reference in order (its label, `null` for an inline footnote) and each label it
+                 * defines (`SourceBlock.footnotes`), so the numbers count it; `null` for none.
+                 */
+                footnotes: { default: null as { refs: (string | null)[]; defines: string[] } | null },
             },
             parseDOM: [{
                 tag: 'div[data-mep-raw]',
@@ -794,6 +861,37 @@ export const editorSchema = new Schema({
             toDOM(node): DOMOutputSpec {
                 const source = node.attrs.source as string;
                 return ['span', { class: 'mep-emoji', 'data-mep-emoji': source, 'data-mep-emoji-name': node.attrs.name as string, title: `Emoji ${source} — kept as written` }, node.attrs.glyph as string];
+            },
+        },
+        // A footnote reference: `[^label]`, or an inline footnote `^[source]`
+        // (markdown-it-footnote). One unit, written back as its spelling, never
+        // escaped. Its number is no attribute: the page counts it as the engine
+        // does (`webview/footnotes.ts`), so renumbering is never a change of the
+        // document. Its text, where ProseMirror reads text, is its spelling; the
+        // editor's own copy keeps the atom by its `data-mep-fn`.
+        footnote_ref: {
+            inline: true,
+            group: 'inline note_inline',
+            atom: true,
+            selectable: true,
+            draggable: true,
+            attrs: {
+                /** The label of `[^label]`; `null` for an inline footnote. */
+                label: { default: null as string | null },
+                /** An inline footnote's text, verbatim between `^[` and `]`; `null` for a reference. */
+                source: { default: null as string | null },
+            },
+            leafText: node => footnoteSpelling(node),
+            // Only the editor's own copy: the preview's `sup.footnote-ref` does not say its label.
+            parseDOM: [{
+                tag: 'sup[data-mep-fn]',
+                priority: 60,
+                getAttrs: (dom: HTMLElement) => ({ label: dom.getAttribute('data-mep-fn-label'), source: dom.getAttribute('data-mep-fn-source') }),
+            }],
+            toDOM(node): DOMOutputSpec {
+                const label = node.attrs.label as string | null;
+                const spelled = label !== null ? { 'data-mep-fn-label': label } : { 'data-mep-fn-source': node.attrs.source as string };
+                return ['sup', { class: 'footnote-ref mep-fn-ref', 'data-mep-fn': '', ...spelled }, footnoteSpelling(node)];
             },
         },
         sidenote: noteNode(SN.refClass, 'sidenote_body', SN.noteClass, SN.anchorClass),

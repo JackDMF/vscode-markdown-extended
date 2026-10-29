@@ -37,7 +37,7 @@ import { APPLY_BINDING, UNDO_BINDING, keyLabel } from '../keys';
 import { REANNOUNCE_GAP_MS, refusalMs } from '../refusal';
 import { Said, saidParts, saidText } from '../tips';
 import { placeOfElement } from './focusPlace';
-import { Frame, LAYER_GUTTER, Placement, Rect, VIEWPORT, caretRect, placeAtControl, placeAtEntry, placeLayer, readFrame } from './placement';
+import { Frame, LAYER_GUTTER, Placement, Rect, VIEWPORT, caretRect, inlineBox, onLayerPlaced, placeAtControl, placeAtEntry, placeLayer, readFrame } from './placement';
 import { partNode } from './tooltip';
 
 export type HintTone = 'refusal' | 'neutral';
@@ -99,7 +99,12 @@ class CaretHint {
     /** The control or entry the refusal showing stands at, for `dismissRefusal(view, within)`. */
     private anchorEl: Element | null = null;
     /** The last announcement: what, where, when — a repeat within `REANNOUNCE_GAP_MS` at the same place is not said again. */
-    private lastSaid: { text: string; x: number; y: number; time: number } | null = null;
+    private lastSaid: { text: string; at: string; time: number } | null = null;
+    /** What the hint was last placed at — the caret's line, the table, a control — not where it landed, which the other layers move. */
+    private placedAt = '';
+    /** The element a hint at the caret was placed under (`placeCaret`'s `near`), to place it again there when a layer comes. */
+    private near: Element | undefined;
+    private readonly unwatch: () => void;
     private readonly listeners: [EventTarget, string, EventListener][] = [];
 
     constructor(private readonly view: EditorView) {
@@ -154,6 +159,23 @@ class CaretHint {
                 this.dismiss();
             }
         });
+        this.unwatch = onLayerPlaced(view, layer => this.layerPlaced(layer));
+    }
+
+    /**
+     * A layer appeared or moved (`onLayerPlaced`): a hint at the caret that it
+     * covers is placed again, stacked with it (`placeCaret`) — the bar that comes at the caret's rest
+     * after the verb whose hint is showing (Insert › Footnote, a first
+     * Backspace) does not hide the hint, nor the hint the bar (#9 wave 2).
+     */
+    private layerPlaced(layer: Rect): void {
+        if (this.el.hidden || this.el.dataset.at !== 'caret' || (this.near !== undefined && !this.near.isConnected)) {
+            return;
+        }
+        const r = this.el.getBoundingClientRect();
+        if (r.left < layer.right && r.right > layer.left && r.top < layer.bottom && r.bottom > layer.top) {
+            this.placeCaret(this.near, layer);
+        }
     }
 
     private listen(target: EventTarget, type: string, fn: (e: Event) => void): void {
@@ -241,8 +263,13 @@ class CaretHint {
         this.el.hidden = false;
     }
 
-    /** At the caret's line — a selected node's box for a node selection — or under `near`: placed as a layer, under the line, else above it, off every open layer. */
-    private placeCaret(near?: Element): Placement | null {
+    /**
+     * At the caret's line — a selected node's box for a node selection, the
+     * table's in a table cell — or under `near`: placed as a layer, under it,
+     * else above it, off every open layer.
+     */
+    private placeCaret(near?: Element, layer?: Rect): Placement | null {
+        this.near = near;
         this.el.dataset.at = 'caret';
         this.el.removeAttribute('data-fixed');
         const mount = this.view.dom.parentElement;
@@ -254,15 +281,20 @@ class CaretHint {
         if (near) {
             at = rectOf(near.getBoundingClientRect());
         } else if (sel instanceof NodeSelection && this.view.nodeDOM(sel.from) instanceof Element) {
-            at = rectOf((this.view.nodeDOM(sel.from) as Element).getBoundingClientRect());
+            // An inline node by its line (`inlineBox`): a raised `[n]`'s own box is inside the line the hint keeps off.
+            at = (sel.node.isInline ? inlineBox(this.view, sel.from) : null) ?? rectOf((this.view.nodeDOM(sel.from) as Element).getBoundingClientRect());
         } else {
-            at = caretRect(this.view, sel.head);
+            at = tableAround(this.view, sel.head, mount) ?? caretRect(this.view, sel.head);
         }
         // Measured at the overlay's left edge: its width is its text's, not the room left where it stood.
         this.el.style.left = '0px';
         this.el.style.top = '0px';
         // Placed in the mount's frame, written in the overlay's coordinates.
-        const p = placeLayer(this.el, at, { view: this.view, mount, space: 'viewport', caret: near === undefined });
+        this.placedAt = placedKey(at);
+        // A layer came over it: stacked with that layer — under it, at its left, else above the caret's line and
+        // it — by the bars' own text test (UX review 2): never over the line being read above.
+        const anchor = layer === undefined ? at : { left: layer.left, right: Math.max(at.right, layer.right), top: Math.min(at.top, layer.top), bottom: Math.max(at.bottom, layer.bottom) };
+        const p = placeLayer(this.el, anchor, { view: this.view, mount, space: 'viewport', caret: near === undefined, covered: layer !== undefined });
         this.writeAt(p);
         this.el.toggleAttribute('data-flipped', p.side === 'above');
         return p;
@@ -288,6 +320,7 @@ class CaretHint {
         this.el.style.top = '0px';
         const size = { width: this.el.offsetWidth, height: this.el.offsetHeight };
         const control = rectOf(place.el.getBoundingClientRect());
+        this.placedAt = placedKey(control);
         // The window less the layers' gutter at its right edge.
         const viewport = VIEWPORT();
         const inWindow: Frame = { ...viewport, layerEdge: viewport.layerEdge - LAYER_GUTTER };
@@ -315,16 +348,15 @@ class CaretHint {
 
     /** Say `text` in the live region: emptied now, set on the next frame, so the same words are announced again. */
     private announce(text: string, p: Placement | null): void {
-        const x = Math.round(p?.x ?? 0);
-        const y = Math.round(p?.y ?? 0);
+        const at = p === null ? '' : this.placedAt;
         const now = performance.now();
         const last = this.lastSaid;
-        if (last !== null && last.text === text && last.x === x && last.y === y && now - last.time < REANNOUNCE_GAP_MS) {
+        if (last !== null && last.text === text && last.at === at && now - last.time < REANNOUNCE_GAP_MS) {
             // A sliding window: a held key repeats faster than the gap, so it stays silent for the whole hold.
             last.time = now;
             return;
         }
-        this.lastSaid = { text, x, y, time: now };
+        this.lastSaid = { text, at, time: now };
         this.say(text);
     }
 
@@ -418,6 +450,7 @@ class CaretHint {
     }
 
     destroy(): void {
+        this.unwatch();
         clearTimeout(this.timer);
         cancelAnimationFrame(this.sayFrame);
         cancelAnimationFrame(this.armFrame);
@@ -487,7 +520,7 @@ export function showHint(view: EditorView, text: Said, tone: HintTone, near?: El
  * text — Ctrl+Z`), beside the caret of `view`: neutral, and gone at the next
  * change of the document, which makes it stale.
  */
-export function showChangeHint(view: EditorView, text: string, near?: Element): void {
+export function showChangeHint(view: EditorView, text: Said, near?: Element): void {
     hints.get(view)?.show(text, 'neutral', near, 'change');
 }
 
@@ -573,4 +606,30 @@ export function hintPlugin(): Plugin {
             };
         },
     });
+}
+
+/** One place, to the pixel: what `announce` compares. */
+function placedKey(r: Rect): string {
+    return `${Math.round(r.left)},${Math.round(r.top)}`;
+}
+
+/**
+ * The table the caret at `pos` stands in, where the window shows it whole: a
+ * hint at the caret's line would cover the next row (or, flipped, the one
+ * before), so it stands under or above the table, as the table's bar does.
+ */
+function tableAround(view: EditorView, pos: number, mount: HTMLElement): Rect | null {
+    let table: Element | null = null;
+    try {
+        const { node } = view.domAtPos(pos);
+        table = (node instanceof Element ? node : node.parentElement)?.closest('table') ?? null;
+    } catch {
+        return null;
+    }
+    if (table === null || !view.dom.contains(table)) {
+        return null;
+    }
+    const r = table.getBoundingClientRect();
+    const frame = readFrame(mount);
+    return r.top >= frame.ceiling && r.bottom <= frame.floor ? rectOf(r) : null;
 }

@@ -13,6 +13,8 @@ import { INLINE_LITERAL_HOLDERS, NOTE_NAMES, namesOf } from './inlineLiterals';
 /** A token type the editor does not edit, by what a person calls it: with its article where a block can hold one. */
 const TOKEN_WORDS: ReadonlyMap<string, { noun: string; article: string }> = new Map([
     ['footnote_ref', { noun: 'footnote', article: 'a ' }],
+    // A definition (`[^x]: …`), a block of its own where it is written (`FOOTNOTES_IN_PLACE`).
+    ['footnote_reference_open', { noun: 'footnote text', article: '' }],
     ['dl_open', { noun: 'definition list', article: 'a ' }],
     ['toc_open', { noun: 'table of contents', article: 'a ' }],
     ['abbr_open', { noun: 'abbreviation', article: 'an ' }],
@@ -85,6 +87,11 @@ const SENTENCES: readonly [RegExp, string][] = [
     [/^container attributes/, 'container attributes'],
     [/^admonition with more than one class/, 'admonition'],
     [/^emoji /, HAS_AN_EMOJI],
+    // What keeps a footnote reference from being one atom (`footnoteNotEditable`, `blocks.ts`).
+    [/^multi-line inline footnote$/, 'has a footnote over two lines'],
+    [/^footnote inside an inline footnote$/, 'has a footnote in a footnote'],
+    [/^inline footnote in a note$/, 'has a footnote in a note'],
+    [/^footnote_ref in a table cell/, 'has a footnote in a table'],
 ];
 
 /**

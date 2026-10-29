@@ -12,7 +12,7 @@
  * other link is followed as a Ctrl+clicked one in the text is.
  */
 import { lensLabelNodes } from './lenses';
-import { placeLayer } from './placement';
+import { Rect, openLayers, placeLayer } from './placement';
 
 /**
  * The class of a card's hover section, whose HTML a provider wrote.
@@ -33,6 +33,8 @@ export interface CardAnchor {
     left: number;
     top: number;
     bottom: number;
+    /** What the card keeps off besides the open layers: what it tells the reader to look for (the literal card's chips, UX review 2). */
+    keepOff?: readonly Rect[];
 }
 
 /**
@@ -145,7 +147,8 @@ export class LanguageCard {
 
     /** Below the range it is about, else above it, off the other open layers: the one policy (`placement.ts`). */
     private place(anchor: CardAnchor): void {
-        placeLayer(this.el, { left: anchor.left, top: anchor.top, right: anchor.left, bottom: anchor.bottom }, { mount: this.mount, space: 'mount' });
+        const avoid = anchor.keepOff === undefined ? undefined : [...openLayers(this.mount, this.el), ...anchor.keepOff];
+        placeLayer(this.el, { left: anchor.left, top: anchor.top, right: anchor.left, bottom: anchor.bottom }, { mount: this.mount, space: 'mount', avoid });
     }
 
     private click(e: MouseEvent): void {

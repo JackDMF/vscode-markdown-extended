@@ -6,11 +6,12 @@ import type { Mapping } from 'prosemirror-transform';
 import { ALPHANUMERIC, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, opensInsideWords, plainWikiEmbed, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { AttrPair, NOTE_SYNTAX_CHARS, fenceHolder, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
 import { DEFAULT_FENCE, fenceOf, savedFence, savedOpeningLine } from './fences';
-import { Token } from '../@types/markdown-it';
+import { Environment, Token } from '../@types/markdown-it';
 import { AttrsCut, attrsCutsIn, attrsGivenTo } from '../plugin/markdownItAttrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
-import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
+import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema, footnoteSpelling } from './schema';
 import { parseDocument } from './parse';
+import { inPlaceEnv } from './footnoteEngine';
 import { NOTE_CLOSE_TOKENS, NOTE_OPEN_TOKENS } from './blocks';
 import { INLINE_LITERAL_HOLDERS, holderOfCarrier, namesOf } from './inlineLiterals';
 import { markNoun, noteNoun, partLabel } from './refusal';
@@ -93,6 +94,12 @@ interface StateInternals {
     noteMarker?: string;
     /** Whether a table cell is being written (`writeTable`); this module's own field. */
     inTableCell?: boolean;
+    /** How a hard break is written in the footnote entry being written (`footnote_entry`), when one is; this module's own field. */
+    entryBreak?: string;
+    /** The paragraph written next is a footnote entry's first, its `[^label]: ` written already: that head counts as wide as the indent of its lines after it (`footnote_entry`, plan §3a). */
+    entryHead?: boolean;
+    /** prosemirror-markdown's own: the block whose separator is still to be written, if any. */
+    closed: unknown;
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
     flushClose(size?: number): void;
     /** prosemirror-markdown's own: the serializer's node writers and mark specs, which a state of its own is made with. */
@@ -225,8 +232,11 @@ function escapeTrailingBang(st: StateInternals): void {
  * What prosemirror-markdown's CommonMark escaping does not cover and this
  * engine would otherwise read as syntax: an HTML tag or entity (`html: true`),
  * `==mark==`, `^sup^`, `++sidenote++`, `!!marginal note!!`, the sidebars'
- * `$`/`@` (every one, although the sidebar rule reads only those its
- * flanking allows as markers: `sidebarCanOpen`, `sidebarCanClose`), and an
+ * markers — every `$`, which VS Code's math reads after a letter too
+ * (`x$y$`), and an `@` where one could open (`sidebarCanOpen`: no ASCII letter
+ * or digit right before it, as far as the text being escaped shows — its first
+ * character is escaped either way; one that cannot open closes nothing, every
+ * one that could being escaped: `a@b.c` and `Text@` stay as written), and an
  * emoji shortcode. Each gets a CommonMark backslash escape, which every rule
  * respects because the escape is consumed before they see the character. One
  * alternative per syntax, joined under the `u` flag. An emoji shortcut is
@@ -238,7 +248,7 @@ const ESCAPE_EXTRA_PARTS: readonly string[] = [
     /=(?==)|(?<==)=/.source, // ==mark==
     /\+(?=\+)|(?<=\+)\+/.source, // ++sidenote++
     /!(?=!)|(?<=!)!/.source, // !!marginal note!!
-    /[$@^]/.source, // the sidebars' markers, ^sup^
+    /[$^]|(?<![A-Za-z0-9])@/.source, // `$` (a left sidebar, VS Code's math), ^sup^, an `@` that could open
     /:(?=[A-Za-z_+-][\w+-]*:)/.source, // an emoji shortcode
 ];
 const ESCAPE_EXTRA = new RegExp(ESCAPE_EXTRA_PARTS.join('|'), 'gu');
@@ -832,6 +842,28 @@ const LibraryState = MarkdownSerializerState as unknown as new (nodes: unknown, 
  * the `*` between `=` and `b` cannot close, while the library's
  * `*~~==a==~~*~~b~~` reads as written.
  */
+/**
+ * Whether `next` may follow `prev` with no blank line and still read as its own
+ * block: anything after a heading, which ends at its line; a heading, written
+ * `#`, or a quote after anything; a list after a paragraph or a quote when it
+ * may interrupt a paragraph — bullets, or numbers from 1, with a first item
+ * that holds text.
+ */
+function joinsStraight(prev: Node, next: Node): boolean {
+    if (prev.type.name === 'heading' || next.type.name === 'heading' || next.type.name === 'blockquote') {
+        return true;
+    }
+    if (prev.type.name !== 'paragraph' && prev.type.name !== 'blockquote') {
+        return false;
+    }
+    const name = next.type.name;
+    if (name !== 'bullet_list' && !(name === 'ordered_list' && next.attrs.order === 1)) {
+        return false;
+    }
+    const first = next.firstChild?.firstChild;
+    return first !== null && first !== undefined && first.type.name === 'paragraph' && first.content.size > 0;
+}
+
 export class OrderedInlineState extends LibraryState {
     /**
      * The library's escape with `ESCAPE_EXTRA`, then a backslash before each
@@ -843,8 +875,26 @@ export class OrderedInlineState extends LibraryState {
      * judges writes the text with no shortcut escaped, and says where
      * (`escapedTexts`). A text holding no shortcut is written as escaped.
      */
+    /**
+     * A nested block the file wrote straight under the one before it (`joined`)
+     * is written so again, where the pair reads back as the same two blocks
+     * (`joinsStraight`); elsewhere the library's blank line stays.
+     */
+    render(node: Node, parent: Node, index: number): void {
+        if (node.attrs.joined === true && index > 0 && joinsStraight(parent.child(index - 1), node)) {
+            const st = internals(this);
+            if (st.closed) {
+                st.flushClose(1);
+            }
+        }
+        super.render(node, parent, index);
+    }
+
     esc(str: string, startOfLine = false): string {
-        const escaped = underscoreRunsEscaped(str, super.esc(str, startOfLine));
+        const library = super.esc(str, startOfLine);
+        // Inside a right sidebar every `@` closes it, the glued ones `ESCAPE_EXTRA` leaves too.
+        const closing = internals(this).notePart === 'right' ? library.replace(/(?<=[A-Za-z0-9])@/g, '\\@') : library;
+        const escaped = underscoreRunsEscaped(str, closing);
         if (!SHORTCUT_PRETEST.test(escaped)) {
             return escaped;
         }
@@ -1181,6 +1231,11 @@ function inlineModel(parent: Node): string {
             parts.push(`${marks}emoji(${JSON.stringify(child.attrs.source)})`);
             return;
         }
+        if (child.type.name === 'footnote_ref') {
+            // A reference by its spelling: a label read back as another, or as text, is not this one.
+            parts.push(`${marks}footnote_ref(${JSON.stringify(footnoteSpelling(child))})`);
+            return;
+        }
         parts.push(child.type.name === 'hard_break' ? 'hard_break' : `${marks}${child.type.name}(${inlineModel(child)})`);
     });
     flush();
@@ -1216,21 +1271,94 @@ class EditorMarkdownSerializer extends MarkdownSerializer {
 
 type NodeSerializers = ConstructorParameters<typeof MarkdownSerializer>[0];
 
+/** A reference written as text: `[^label]`. */
+const LITERAL_REFERENCE = /\[\^([^\]\s]+)\]/g;
+
+/**
+ * `text`, a text node's, cut where it holds `[^label]` with a label the
+ * document being written does not define (`currentFootnoteLabels`, known only
+ * inside `withFootnoteLabels`) — those
+ * parts `literal`, written unescaped (Q2, Daniel 2026-10-28) — but one right
+ * before `(`, `[` or `{`, or before more of the line than this text holds
+ * (review 1 M1); none in code, superscript or subscript, whose text is written as it is anyway, and none
+ * in a textblock holding another caret, which it would pair with as a
+ * superscript. `[]` where it holds none.
+ */
+function undefinedLiterals(text: string, node: Node, parent: Node): { text: string; literal: boolean }[] {
+    if (!footnoteLabelsKnown || !text.includes('[^') || node.marks.some(m => m.type.spec.code === true || m.type.name === 'sup' || m.type.name === 'sub')) {
+        return [];
+    }
+    // Two carets unescaped in one textblock pair as a superscript (markdown-it-sup-alt): `[^a] … [^b]`. Escaped, as before Q2.
+    if ((parent.textContent.match(/\^/g) ?? []).length > 1) {
+        return [];
+    }
+    const parts: { text: string; literal: boolean }[] = [];
+    let last = 0;
+    for (const m of text.matchAll(LITERAL_REFERENCE)) {
+        if (currentFootnoteLabels.includes(m[1])) {
+            continue;
+        }
+        const at = m.index ?? 0;
+        // Right before `(`, `[` or `{` it would read as a link, a reference link or attributes: escaped, as before Q2 —
+        // so at a text's end too, unless the textblock ends there (review 1 M1, Daniel).
+        const next = text.charAt(at + m[0].length);
+        if (next === '' ? parent.lastChild !== node : '([{'.includes(next)) {
+            continue;
+        }
+        if (at > last) {
+            parts.push({ text: text.slice(last, at), literal: false });
+        }
+        parts.push({ text: m[0], literal: true });
+        last = at + m[0].length;
+    }
+    if (parts.length === 0) {
+        return [];
+    }
+    if (last < text.length) {
+        parts.push({ text: text.slice(last), literal: false });
+    }
+    return parts;
+}
+
+/**
+ * Whether what is written next stands right after a footnote reference's
+ * `[^label]` (child `index` of `parent` follows one, and no mark's delimiter
+ * came between): a `(` there would make the two a link.
+ */
+function afterFootnoteLabel(st: StateInternals, parent: Node, index: number): boolean {
+    const before = index > 0 ? parent.child(index - 1) : null;
+    return before?.type.name === 'footnote_ref' && before.attrs.label !== null && st.out.endsWith(`]${HOLD_CLOSE}`);
+}
+
 /** The inline node serializers, shared by the block serializer and the inline-only one. */
 const inlineNodes: NodeSerializers = {
-    text(state, node) {
+    text(state, node, parent, index) {
         const text = (node.text ?? '').replace(HOLD_RE, '');
         const st = internals(state);
+        if (afterFootnoteLabel(st, parent, index) && text.startsWith('(')) {
+            // `[^x](u)` is a link to the engine, whose link rule runs before the footnote's.
+            state.write('\\');
+        }
+        // A `[^x]` written as text whose label the document does not define stays as written (Q2): escaped,
+        // a definition written later would no longer find it. Read back as the text it is (`readItems`).
+        const literals = st.inAutolink ? [] : undefinedLiterals(text, node, parent);
         if (st.notePart === undefined || st.inAutolink) {
-            state.text(text, !st.inAutolink);
+            if (literals.length === 0) {
+                state.text(text, !st.inAutolink);
+                return;
+            }
+            for (const part of literals) {
+                state.text(part.text, !part.literal);
+            }
             return;
         }
         // Superscript and subscript in a sidebar keep the backslash escape:
         // their plugins read no character reference, the sidebar rule reads
         // an escaped marker as no end, and the plugins unescape it.
         const sidebarRaw = (st.notePart === 'left' || st.notePart === 'right') && node.marks.some(m => m.type.name === 'sup' || m.type.name === 'sub');
+        const escaped = literals.length === 0 ? state.esc(text, false) : literals.map(part => (part.literal ? part.text : state.esc(part.text, false))).join('');
         // Never at a line start: the note's opening marker is before it.
-        state.text(sidebarRaw ? state.esc(text, false) : partText(st.notePart, state.esc(text, false)), false);
+        state.text(sidebarRaw ? escaped : partText(st.notePart, escaped), false);
     },
     wiki_embed(state, node) {
         const st = internals(state);
@@ -1251,6 +1379,11 @@ const inlineNodes: NodeSerializers = {
         state.write();
         atomCollector?.push({ node, at: internals(state).out.length + HOLD_OPEN.length });
         state.text(HOLD_OPEN + writtenAtom(node.attrs.source as string, internals(state)) + HOLD_CLOSE, false);
+    },
+    footnote_ref(state, node) {
+        // Its spelling, held on one line and never escaped: `[^label]` reads as the reference while the
+        // document defines the label (`readBackEnv`), `^[…]` as the inline footnote it was.
+        state.text(HOLD_OPEN + footnoteSpelling(node) + HOLD_CLOSE, false);
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
@@ -1487,6 +1620,11 @@ export function emojiBeyondAtoms(block: Node): number {
  * origin (`noteRefusal`).
  */
 export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin, causes = true): Said | null {
+    return withFootnoteLabels(doc, () => unwritableInNoteOf(doc, from, to, origin, causes));
+}
+
+/** `unwritableInNote`, with the document's footnote labels set (`withFootnoteLabels`). */
+function unwritableInNoteOf(doc: Node, from: number, to: number, origin: EditOrigin | undefined, causes: boolean): Said | null {
     let reason: Said | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
@@ -2396,12 +2534,16 @@ export const CELL_BREAK_REFUSAL = 'A table cell holds one line — no line break
 /** Why inline code in a table cell holds no `|` (C3, as the critique words it). */
 export const CELL_PIPE_REFUSAL: Said = said`${value('|')} can't go in inline code in a table cell — it would split the row. Type it outside the code.`;
 
+/** Why a footnote in a table cell holds no `|` — its label or an inline footnote's text (review 1 H3), as `CELL_PIPE_REFUSAL` words it. */
+export const FOOTNOTE_CELL_PIPE_REFUSAL: Said = said`${value('|')} can't go in a footnote in a table cell — it would split the row. Take it out of the footnote first.`;
+
 /**
  * Why a table between `from` and `to` cannot be written so that it reads back
  * as itself, or `null` — what the tidy form above has no spelling for, which
  * the page refuses to make (`webview/tables.ts`), as it refuses an unwritable
  * note: a hard break in a cell (a sidebar can hold one), code holding a `|`,
- * an attribute span, emphasis or a link whose literal holds a `|` or a backtick.
+ * a footnote whose label or text holds one, an attribute span, emphasis or a
+ * link whose literal holds a `|` or a backtick.
  */
 export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): Said | null {
     let reason: Said | null = null;
@@ -2422,6 +2564,9 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): S
                 reason = CELL_BREAK_REFUSAL;
             } else if (child.isText && (child.text ?? '').includes('|') && child.marks.some(m => m.type.name === 'code')) {
                 reason = CELL_PIPE_REFUSAL;
+            } else if (child.type.name === 'footnote_ref' && footnoteSpelling(child).includes('|')) {
+                // The row splits at it, escaped or not: the label is no label then, the inline footnote's text cut.
+                reason = FOOTNOTE_CELL_PIPE_REFUSAL;
             } else {
                 const span = [child, ...child.marks].find(c => holderOfCarrier(c.type.name) !== undefined && /[|`]/.test(markLiteralOf(c) ?? ''));
                 if (span !== undefined) {
@@ -2470,12 +2615,44 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             // so the column the first line starts at is known.
             state.write();
             const st = internals(state);
-            const column = characterCount(st.out.slice(st.out.lastIndexOf('\n') + 1));
+            // An entry's first paragraph: its head is no part of the width (plan §3a, review 2 L-d), so a long label
+            // does not widen the lines after it.
+            const column = st.entryHead === true ? characterCount(st.delim) : characterCount(st.out.slice(st.out.lastIndexOf('\n') + 1));
+            st.entryHead = undefined;
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
             const wrapped = wrapInline(paragraphMarkdown(node), limit - column, limit - characterCount(st.delim)).join('\n');
-            state.text(escapedLiterals(node, wrapped, 'paragraph').text, false);
+            const text = escapedLiterals(node, wrapped, 'paragraph').text;
+            state.text(st.entryBreak === undefined ? text : withHardBreaks(text, st.entryBreak), false);
             state.closeBlock(node);
+        },
+        footnote_entry(state, node) {
+            // `[^label]: ` and the first block on its line, that block's next lines prefixed as the file had
+            // them (`continuation`: lazy, as Daniel writes them, or indented); every later block indented by
+            // four. A hard break in it is written as the entry writes one (`breakStyle`, two spaces by default).
+            const st = internals(state);
+            const outer = st.entryBreak;
+            st.entryBreak = (node.attrs.breakStyle as string | null) ?? ENTRY_BREAK;
+            try {
+                node.forEach((child, _offset, i) => {
+                    if (i > 0) {
+                        state.wrapBlock(ENTRY_INDENT, null, node, () => state.render(child, node, i));
+                        return;
+                    }
+                    const paragraph = child.type.name === 'paragraph';
+                    // An empty text is `[^label]:` alone: no space after it at a line's end.
+                    const head = `[^${node.attrs.label as string}]:${paragraph && child.content.size === 0 ? '' : node.attrs.space as string}`;
+                    const continuation = paragraph ? (node.attrs.continuation as string | null) ?? '' : ENTRY_INDENT;
+                    st.entryHead = paragraph;
+                    try {
+                        state.wrapBlock(continuation, head, node, () => state.render(child, node, 0));
+                    } finally {
+                        st.entryHead = undefined;
+                    }
+                });
+            } finally {
+                st.entryBreak = outer;
+            }
         },
         heading(state, node) {
             const suffix = node.attrs.attrsSuffix as string | null;
@@ -2600,6 +2777,25 @@ function listMarkers(node: Node): { indent: string; marker: (i: number) => strin
             return ' '.repeat(maxWidth - n.length) + n + delimiter + ' ';
         },
     };
+}
+
+/** How far a footnote entry's blocks after its first are indented: markdown-it-footnote reads them at `blkIndent + 4`. */
+const ENTRY_INDENT = '    ';
+
+/** How a hard break in a footnote entry is written when the entry read none: as Daniel's files write them. */
+const ENTRY_BREAK = '  ';
+
+/**
+ * `text`, a paragraph as the save writes it, with each hard break — a line
+ * ending in an odd run of backslashes, the last one the break — written as
+ * `style` instead (`'  '`, two spaces; `'\\'` leaves it as it is).
+ */
+function withHardBreaks(text: string, style: string): string {
+    const lines = text.split('\n');
+    return lines.map((line, i) => {
+        const run = (/\\*$/.exec(line) as RegExpExecArray)[0].length;
+        return i < lines.length - 1 && run % 2 === 1 ? line.slice(0, -1) + style : line;
+    }).join('\n');
 }
 
 /** How far an admonition's body is indented: `markdownItAdmonition.ts` reads it at `blkIndent + 4`. */
@@ -2808,6 +3004,128 @@ function ownedLiterals(tokens: readonly Token[], expected: ReadonlyMap<string, r
 }
 
 /**
+ * The environment the page reads back what it writes in: footnote definitions
+ * kept where they are written, as the host's parse keeps them, and the labels
+ * the document defines (`currentFootnoteLabels`), so a part read on its own
+ * reads `[^x]` as the reference it is in the document (`inPlaceEnv`).
+ */
+function readBackEnv(): Environment {
+    return inPlaceEnv(undefined, currentFootnoteLabels);
+}
+
+/** The labels the document being judged or written defines (`withFootnoteLabels`); none outside such a call. */
+let currentFootnoteLabels: readonly string[] = [];
+/** `currentFootnoteLabels` as part of a cache key: a text reads otherwise under other labels. */
+let footnoteLabelsKey = '';
+/** Whether a document's labels are known (`withFootnoteLabels`): outside, every `[^x]` written as text is escaped, as before Q2. */
+let footnoteLabelsKnown = false;
+
+/** Under which labels the written texts the node-keyed caches hold were written (`writtenUnder`). */
+let writtenLabels = '';
+
+/** The node-keyed caches of what was written under one set of labels (`writtenUnder`). */
+interface WrittenCaches {
+    written: typeof writtenCache;
+    cell: typeof cellCache;
+    units: typeof unitsCache;
+    item: typeof itemCache;
+    wrapped: typeof wrappedCache;
+    verdict: typeof verdictCache;
+    start: typeof startCache;
+    keptOut: typeof keptOut;
+}
+
+/**
+ * The caches of the labels written under before the current ones, the last
+ * few: every top-level `withFootnoteLabels` call leaves its labels for none
+ * on its way out and the next comes back to them, so its caches come back
+ * with them instead of being built again (review 1 L2). Forgotten with the
+ * rest when the engine or the write options change (`forgetReadBack`).
+ */
+const keptCaches = new Map<string, WrittenCaches>();
+
+/** How many label sets `keptCaches` keeps besides the current one. */
+const KEPT_LABEL_SETS = 3;
+
+/**
+ * The written texts kept by node (a textblock's, a cell's, a part's) are
+ * kept per set of labels they are written under: a `[^x]` written as text is
+ * escaped or not by them (`undefinedLiterals`). Labels change rarely — a
+ * footnote added, deleted, renamed — so the caches mostly stay; going from a
+ * document's labels to none and back finds them again (`keptCaches`).
+ */
+function writtenUnder(labels: string): void {
+    if (labels === writtenLabels) {
+        return;
+    }
+    keptCaches.set(writtenLabels, { written: writtenCache, cell: cellCache, units: unitsCache, item: itemCache, wrapped: wrappedCache, verdict: verdictCache, start: startCache, keptOut });
+    writtenLabels = labels;
+    const kept = keptCaches.get(labels);
+    keptCaches.delete(labels);
+    writtenCache = kept?.written ?? new WeakMap();
+    cellCache = kept?.cell ?? new WeakMap();
+    unitsCache = kept?.units ?? new WeakMap();
+    itemCache = kept?.item ?? new WeakMap();
+    wrappedCache = kept?.wrapped ?? new WeakMap();
+    verdictCache = kept?.verdict ?? new WeakMap();
+    startCache = kept?.start ?? new WeakMap();
+    keptOut = kept?.keptOut ?? new WeakMap();
+    for (const key of keptCaches.keys()) {
+        if (keptCaches.size <= KEPT_LABEL_SETS) {
+            break;
+        }
+        keptCaches.delete(key);
+    }
+}
+
+/** Each document's footnote labels (`footnoteLabelsOf`), sorted. */
+const labelsCache = new WeakMap<Node, readonly string[]>();
+
+/**
+ * Every label `doc` defines, sorted: each footnote entry's and each a source
+ * block defines (`raw_block.footnotes`). What a reference in it reads by.
+ */
+export function footnoteLabelsOf(doc: Node): readonly string[] {
+    let labels = labelsCache.get(doc);
+    if (labels === undefined) {
+        const found = new Set<string>();
+        doc.forEach(node => {
+            if (node.type.name === 'footnote_entry') {
+                found.add(node.attrs.label as string);
+            }
+            for (const label of (node.attrs.footnotes as { defines: string[] } | null | undefined)?.defines ?? []) {
+                found.add(label);
+            }
+        });
+        labels = [...found].sort();
+        labelsCache.set(doc, labels);
+    }
+    return labels;
+}
+
+/**
+ * `fn`, with the parts it reads back read with the footnote labels `doc`
+ * defines (`readBackEnv`): what writes or judges a document's text — the save,
+ * the edit filter, a literal's read-back — runs in one. The labels before are
+ * put back after, so a nested call leaves its caller's.
+ */
+export function withFootnoteLabels<T>(doc: Node, fn: () => T): T {
+    const before = { labels: currentFootnoteLabels, key: footnoteLabelsKey, known: footnoteLabelsKnown };
+    currentFootnoteLabels = footnoteLabelsOf(doc);
+    footnoteLabelsKey = currentFootnoteLabels.join('\u0000');
+    footnoteLabelsKnown = true;
+    writtenUnder(`\u0001${footnoteLabelsKey}`);
+    try {
+        return fn();
+    } finally {
+        currentFootnoteLabels = before.labels;
+        footnoteLabelsKey = before.key;
+        footnoteLabelsKnown = before.known;
+        writtenUnder(before.known ? `\u0001${before.key}` : '');
+    }
+}
+
+/**
  * What the page's engine with markdown-it-attrs cuts off text in `text`
  * (`LiteralCuts`), `expected` the literals of the textblock's marks
  * (`markLiteralsOf`): a cut that is the first after a mark's closing tag is
@@ -2817,7 +3135,7 @@ function ownedLiterals(tokens: readonly Token[], expected: ReadonlyMap<string, r
  */
 function literalCutsIn(text: string, expected: ReadonlyMap<string, readonly (string | null)[]> = new Map()): LiteralCuts {
     const found: LiteralCuts = { tryable: [], excess: 0, spans: 0, owned: 0 };
-    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, readBackEnv());
     const candidates: AttrsCut[] = [];
     for (const token of tokens) {
         if (token.type !== 'inline') {
@@ -3501,7 +3819,7 @@ function textKey(text: string): string {
  * reads as it reads in the document. Remembered by a digest of the three texts.
  */
 export function seamHolds(leader: string, separator: string, follower: string): boolean {
-    const key = `${textKey(leader)}|${JSON.stringify(separator)}|${textKey(follower)}`;
+    const key = `${textKey(leader)}|${JSON.stringify(separator)}|${textKey(follower)}|${textKey(footnoteLabelsKey)}`;
     const known = seamCache.get(key);
     if (known !== undefined) {
         seamCache.delete(key);
@@ -3511,7 +3829,7 @@ export function seamHolds(leader: string, separator: string, follower: string): 
     // markdown-it reads `\r\n` as one line break, so counting `\n` counts its lines.
     const line = ((leader + separator).match(/\n/g) ?? []).length;
     const md = attrsEngineFor(currentInlineDefinition());
-    const tokens = md.parse(leader + separator + follower, {});
+    const tokens = md.parse(leader + separator + follower, readBackEnv());
     const mapOf = (token: Token) => token.map as number[] | null;
     let holds = !tokens.some(token => {
         const map = mapOf(token);
@@ -3519,7 +3837,7 @@ export function seamHolds(leader: string, separator: string, follower: string): 
     });
     if (holds && !tokens.some(token => token.level === 0 && mapOf(token)?.[0] === line)) {
         const next = tokens.findIndex(token => token.level === 0 && (mapOf(token)?.[0] ?? -1) >= line);
-        holds = readingOf(next < 0 ? tokens : tokens.slice(0, next)) === readingOf(md.parse(leader, {}));
+        holds = readingOf(next < 0 ? tokens : tokens.slice(0, next)) === readingOf(md.parse(leader, readBackEnv()));
     }
     if (seamCache.size >= SEAM_CACHE_SIZE) {
         seamCache.delete(seamCache.keys().next().value as string);
@@ -3530,7 +3848,7 @@ export function seamHolds(leader: string, separator: string, follower: string): 
 
 /** The kind and marker (`-`, `*`, `+`, or the delimiter `.`, `)`) of the top-level list `text` opens with, or with `last` ends with; `null` where it does not. */
 function listMarkerOf(text: string, last: boolean): { kind: string; marker: string } | null {
-    const top = attrsEngineFor(currentInlineDefinition()).parse(text, {}).filter(token => token.level === 0);
+    const top = attrsEngineFor(currentInlineDefinition()).parse(text, readBackEnv()).filter(token => token.level === 0);
     const token = last ? top[top.length - 1] : top[0];
     const kind = /^(bullet|ordered)_list_(?:open|close)$/.exec(token?.type ?? '');
     return kind === null ? null : { kind: kind[1], marker: token.markup };
@@ -3555,7 +3873,7 @@ function remarkedList(leader: string, follower: string, next: () => string | nul
     const after = listMarkerOf(next() ?? '', false);
     const markers = (opens.kind === 'bullet' ? ['-', '*', '+'] : ['.', ')']).filter(m => m !== ends.marker);
     markers.sort((a, b) => Number(a === after?.marker) - Number(b === after?.marker));
-    const tokens = attrsEngineFor(currentInlineDefinition()).parse(follower, {});
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(follower, readBackEnv());
     const close = tokens.findIndex(token => token.level === 0 && token.nesting === -1);
     const items = tokens.slice(0, close).filter(token => token.type === 'list_item_open' && token.level === 1);
     const out: string[] = [];
@@ -3575,7 +3893,7 @@ function remarkedList(leader: string, follower: string, next: () => string | nul
         }
         // Still the same list, read by the parser: `- ***` re-marked is `* ***`, a thematic break.
         const text = lines.join('\n');
-        const again = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+        const again = attrsEngineFor(currentInlineDefinition()).parse(text, readBackEnv());
         const end = again.findIndex(token => token.level === 0 && token.nesting === -1);
         const count = again.slice(0, end).filter(token => token.type === 'list_item_open' && token.level === 1).length;
         if (again[0]?.type === `${opens.kind}_list_open` && again[0].markup === marker && count === items.length) {
@@ -3725,6 +4043,9 @@ function readItems(textblock: Node): ReadItem[] {
             } else if (name === 'wiki_embed') {
                 // By the name it reads as: the writer encodes what its place needs (`&#96;`, `\|`).
                 out.push({ key: `${path}|${name}(${plainWikiEmbed(String(child.attrs.source))})`, marks });
+            } else if (name === 'footnote_ref') {
+                // By its spelling: `[^x]` read as text, or as `[^y]`, is not the reference shown.
+                out.push({ key: `${path}|${name}(${footnoteSpelling(child)})`, marks });
             } else if (child.isLeaf) {
                 out.push({ key: `${path}|${name}(${String(child.attrs.source ?? '')})`, marks });
             } else {
@@ -4064,28 +4385,30 @@ let plainDefinition: { from: InlineEngineDefinition; plain: InlineEngineDefiniti
  * choice of mark order (`readsBack`).
  */
 function comparisonDoc(text: string): Node {
-    const known = comparisonCache.get(text);
+    // Under other footnote labels a text reads otherwise (`readBackEnv`).
+    const key = `${footnoteLabelsKey}\u0001${text}`;
+    const known = comparisonCache.get(key);
     if (known !== undefined) {
-        comparisonCache.delete(text);
-        comparisonCache.set(text, known);
+        comparisonCache.delete(key);
+        comparisonCache.set(key, known);
         return known;
     }
     const definition = comparisonDefinition();
     // Without the typographer the comparison reads with the page's own engine: the tokens `readUnit` read are these.
     const tokens = definition === currentInlineDefinition() ? unitTokens(text) : undefined;
-    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition, tokens).doc;
+    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, readBackEnv(), definition, tokens).doc;
     if (comparisonCache.size >= UNIT_READ_CACHE_SIZE) {
         comparisonCache.delete(comparisonCache.keys().next().value as string);
     }
-    comparisonCache.set(text, doc);
+    comparisonCache.set(key, doc);
     return doc;
 }
 
-/** What `comparisonDoc` read, by the text. */
+/** What `comparisonDoc` read, by the footnote labels and the text. */
 const comparisonCache = new Map<string, Node>();
 
-/** The last text `unitTokens` parsed, and its tokens: a part's literals and its comparison ask one after the other. */
-let lastTokens: { text: string; tokens: Token[] } | null = null;
+/** The last text `unitTokens` parsed, under which footnote labels, and its tokens: a part's literals and its comparison ask one after the other. */
+let lastTokens: { text: string; labels: string; tokens: Token[] } | null = null;
 
 /**
  * `text` with a line end, as `comparisonDoc` parses it, parsed by the page's
@@ -4094,8 +4417,8 @@ let lastTokens: { text: string; tokens: Token[] } | null = null;
  * holds a `{` is parsed once, not once per read.
  */
 function unitTokens(text: string): Token[] {
-    if (lastTokens?.text !== text) {
-        lastTokens = { text, tokens: attrsEngineFor(currentInlineDefinition()).parse(`${text}\n`, {}) };
+    if (lastTokens?.text !== text || lastTokens.labels !== footnoteLabelsKey) {
+        lastTokens = { text, labels: footnoteLabelsKey, tokens: attrsEngineFor(currentInlineDefinition()).parse(`${text}\n`, readBackEnv()) };
     }
     return lastTokens.tokens;
 }
@@ -4114,8 +4437,10 @@ let verdictCache = new WeakMap<Node, { key: string; verdict: UnitVerdict | null 
  * node with the text.
  */
 function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
+    // Under other footnote labels the part reads otherwise (`readBackEnv`).
+    const key = `${unit.key}\u0001${footnoteLabelsKey}`;
     const known = verdictCache.get(unit.anchor);
-    if (known !== undefined && known.key === unit.key) {
+    if (known !== undefined && known.key === key) {
         return known.verdict;
     }
     let verdict: UnitVerdict | null;
@@ -4127,7 +4452,7 @@ function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
         console.error('Markdown Extended: the editor could not read a part of the document back', error);
         verdict = { lost: { literal: null, at: unit.textblocks[0]?.node ?? unit.anchor, cause: { kind: 'unread', noun: '' } }, mismatch: null };
     }
-    verdictCache.set(unit.anchor, { key: unit.key, verdict });
+    verdictCache.set(unit.anchor, { key, verdict });
     return verdict;
 }
 
@@ -4252,6 +4577,7 @@ function sidebarVerdict(unit: WrittenUnit, read: UnitRead): SidebarMismatch | nu
  * writes, not what a text reads as, so the reads by text stay (`reads` false).
  */
 function forgetReadBack(reads = true): void {
+    keptCaches.clear();
     unitsCache = new WeakMap();
     itemCache = new WeakMap();
     wrappedCache = new WeakMap();
@@ -4638,6 +4964,11 @@ export interface SerializedLayout {
  * (`withReadEmoji`); the position map asks without it, for the page as it is.
  */
 export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions, save = true): SerializedLayout {
+    return withFootnoteLabels(parsed.doc, () => layoutOf(parsed, options, save));
+}
+
+/** `serializeLayout`, with the document's footnote labels set (`withFootnoteLabels`). */
+function layoutOf(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions, save: boolean): SerializedLayout {
     const { doc, eol, tail } = parsed;
     const serializer = blockSerializer(options);
     const blocks: BlockSpan[] = [];

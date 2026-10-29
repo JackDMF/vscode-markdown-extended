@@ -110,6 +110,9 @@ suite('Code block (e2e)', () => {
         await clickBefore(needle, index);
         await pressAlt('Enter');
         await page.waitForSelector(BAR, { visible: true, timeout: 2000 });
+        // Alt+Enter's first focus shows no hover (wave 4 #5b UX review 2): a hover is the pointer's, which the bar
+        // takes once its inert time is over (`placement.ts`).
+        await page.waitForSelector(`${BAR}:not([data-inert])`, { timeout: 2000 });
     };
 
     const clickVerb = async (verb: string) => {

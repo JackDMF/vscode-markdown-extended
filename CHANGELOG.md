@@ -1,5 +1,32 @@
 # Change Log
 
+## Unreleased
+
+- Footnotes are edited in place: references as numbers in the text, their text where it is written.
+- Backspace or Delete beside a footnote reference selects it; pressed again it deletes it, with its text if it was the last.
+- Cutting or deleting text with a reference keeps the footnote's text; pasting the reference connects it again.
+- In a footnote's text Shift+Enter breaks the line as the file does; Enter on an empty last line leaves it.
+- Sort footnotes puts footnote texts in number order (bar and command palette).
+- A footnote's bar: Go to footnote text or Back to reference, Label… (renames every reference), Delete footnote or reference.
+- Ctrl/Cmd+click on a footnote number goes to its text, each ↩ back to its reference; pointing at it shows the text.
+- Insert › Footnote takes its label from the selected word and prefills the text.
+- An inline footnote's text is edited with Edit text… on its bar; empty text or a stray `]` is refused there.
+- A `[^x]` written as text with no footnote of that label is dotted, says why on hover, and is saved as written (escaped only right before `(`, `[` or `{`).
+- A code block's `{…}` written right after its info string (```` ```js title={.a} ````) stays without a space when the block changes.
+- An `@` right after a letter or digit (`a@b.de`, `Text@`) is saved as written, not as `\@`; it opens no sidebar.
+- A list made in the visual editor (typing `- `, `1. ` or from the toolbar) is written tight, without blank lines between items.
+- A pasted HTML list whose items hold no paragraphs comes in tight as well.
+- Inside quotes, admonitions and containers, a heading, quote or list the file wrote straight under the block before it is written back so, without a new blank line.
+- A selection's formatting bubble stays up when the file changes above it, and a bubble hidden with Esc stays hidden.
+- A block's Attributes… field opens above the block (and above its lens row), so it no longer covers the next block's first line; below only where above has no room.
+- The completion list at the caret stands where the other floating bars do: under the toolbar, inside the editor, never over an open bar.
+- A refusal hint in a table stands above or below the table, not over the next row.
+- A footnote reference (`[^x]`) or inline footnote (`^[…]`) in a sidenote's or marginal note's text is a footnote in the preview and export, numbered where it is written and listed with the others; it was literal text, its definition left out.
+- A bar standing above the text it is about shows its tooltips above itself, so they no longer cover that line.
+- A bar for something inside a margin note stands under the note, out to the window's edge; it reaches into the text only where the text column is empty at that height, and shortens its verbs first.
+- A hint at the caret stacks with a bar that appears after it, instead of covering the bar or the line above.
+- Alt+Enter focuses a bar's first action without showing its tooltip over the text; arrow keys, Tab and the pointer still show it.
+
 ## v4.10.0 — Says Why, Keeps Its Place
 
 - A menu card's syntax line and reason keep the editor's font, whatever font a stylesheet gives the document.

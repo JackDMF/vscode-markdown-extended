@@ -351,6 +351,56 @@ suite('Editor placement (e2e)', () => {
         assert.ok(!overlap(bar, lens), 'not over the lens row');
     });
 
+    test('s6l (wave 3 follow-up): in a requirement heading mid-window, a link\'s bar keeps off its lens row, the heading\'s Attributes… field stands above both; a plain heading\'s field stands above it', async function () {
+        this.timeout(20000);
+        const filler = Array.from({ length: 10 }, (_, i) => `Paragraph ${i + 1}.`).join('\n\n');
+        const after = Array.from({ length: 12 }, (_, i) => `Paragraph ${i + 11}.`).join('\n\n');
+        await showDocument(`${filler}\n\n## FRS-RXE-041 See [the limits](https://example.com/l) of every floating layer\n\nThe paragraph under the title says what the requirement asks for.\n\n## A plain heading\n\nIts paragraph.\n\n${after}\n`, 'FRS-RXE-041');
+        const rows: LensRow[] = [{ blockIndex: 10, items: [{ id: '1.0', title: '$(check) 3 tests passing' }, { id: '1.1', title: 'Implemented' }] }];
+        await (editor as EditorPage).send({ type: 'lenses', version, blocks: 26, rows });
+        await page.waitForSelector('.mep-lens-row', { timeout: 2000 });
+        await page.evaluate(() => {
+            const h = (document.querySelector('.ProseMirror > h2') as HTMLElement).getBoundingClientRect();
+            window.scrollBy(0, h.top - window.innerHeight / 3);
+        });
+        await delay(100);
+        await clickBefore('limits', 2);
+        await waitBar();
+        const bar = await box(BAR);
+        const lens = await box('.mep-lens-row');
+        assert.ok(bar && lens);
+        assert.ok(!overlap(bar, lens), `the link's bar not over the lens row: ${JSON.stringify({ bar, lens })}`);
+        await shot(page, 'lens-row-inline-bar-1280.png');
+
+        const openAttributes = async () => {
+            await page.click('.mep-toolbar .mep-menu-face[data-menu="formatting"]');
+            await page.waitForSelector('.mep-menu[data-menu="formatting"]:not([hidden])', { timeout: 3000 });
+            await page.click('.mep-menu [data-action="block-attributes"]');
+            await page.waitForSelector(`${ROW_FIELD} .mep-inline-field`, { timeout: 2000 });
+            await delay(50);
+            return box(ROW_FIELD);
+        };
+        await clickBefore('FRS-RXE-041', 3);
+        const field = await openAttributes();
+        assert.ok(field);
+        assert.ok(!overlap(field, lens), `the heading's field not over its lens row: ${JSON.stringify({ field, lens })}`);
+        assert.ok(field.bottom <= lens.top + 1, `above the heading and its lens row: ${JSON.stringify({ field, lens })}`);
+        await shot(page, 'lens-row-heading-field-1280.png');
+        await page.keyboard.press('Escape');
+        await delay(100);
+
+        await clickBefore('plain heading', 2);
+        const plain = await openAttributes();
+        const heading = await page.evaluate(() => {
+            const r = (document.querySelectorAll('.ProseMirror > h2')[1] as HTMLElement).getBoundingClientRect();
+            return { left: r.left, top: r.top };
+        });
+        assert.ok(plain);
+        assert.ok(plain.bottom <= heading.top - GAP + 2, `a plain heading's field above it: ${JSON.stringify({ plain, heading })}`);
+        await shot(page, 'heading-field-above-1280.png');
+        await page.keyboard.press('Escape');
+    });
+
     test('s3a/s3b: a mouse selection in a note shows the bubble alone, below it; collapsed, the note\'s bar after a rest, below its line with text on both sides (#15 review 2), the bubble gone', async function () {
         this.timeout(15000);
         await s3a();
@@ -444,18 +494,18 @@ suite('Editor placement (e2e)', () => {
         assert.ok(bubble.top >= last.bottom + GAP - 1, `below the last line: ${JSON.stringify({ bubble, last })}`);
     });
 
-    test('s4: the row\'s Attributes… opens at its block\'s left edge, under the block; Insert → Link… at the caret, under its line', async function () {
+    test('s4: the row\'s Attributes… opens at its block\'s left edge, above the block; Insert → Link… at the caret, under its line', async function () {
         this.timeout(15000);
         await s4();
         const field = await box(ROW_FIELD);
-        // A block's attributes field stands where the block's own bar does, whichever route opened it (wave 2 · #13, the build critique).
+        // A block's attributes field stands above the block, whichever route opened it (Daniel, 2026-10-27: under it, it covered the next block's first line).
         const quote = await page.evaluate(() => {
             const r = (document.querySelector('.ProseMirror blockquote') as HTMLElement).getBoundingClientRect();
-            return { left: r.left, bottom: r.bottom };
+            return { left: r.left, top: r.top };
         });
         assert.ok(field);
         assert.ok(Math.abs(field.left - quote.left) <= 2, `at the block's left edge: ${JSON.stringify({ field, quote })}`);
-        assert.ok(Math.abs(field.top - (quote.bottom + GAP)) <= 2, `under the block: ${JSON.stringify({ field, quote })}`);
+        assert.ok(Math.abs(field.bottom - (quote.top - GAP)) <= 2, `above the block: ${JSON.stringify({ field, quote })}`);
         await page.keyboard.press('Escape');
         await delay(100);
 
@@ -537,7 +587,7 @@ suite('Editor placement (e2e)', () => {
         assert.ok(bar.top >= line.bottom - 1 && hint.bottom <= line.top + 1, `the bar under the line, the hint above it: ${JSON.stringify({ bar, hint, line })}`);
     });
 
-    test('s7b: with the table\'s bar below the table, the hint flips above the caret\'s line, and a keystroke takes it', async function () {
+    test('s7b: with the table\'s bar below the table, the hint flips above the table — over none of its rows — and a keystroke takes it', async function () {
         this.timeout(15000);
         await s7b();
         const lane = await laneEdge();
@@ -548,6 +598,9 @@ suite('Editor placement (e2e)', () => {
         assert.ok(bar.right <= lane - GAP + 1 && hint.right <= lane - GAP + 1, `short of the lane: ${JSON.stringify({ bar, hint, lane })}`);
         assert.ok(!overlap(bar, hint), `the hint keeps off the bar: ${JSON.stringify({ bar, hint })}`);
         assert.ok(hint.bottom <= line.top + 1, `the hint above the caret's line: ${JSON.stringify({ hint, line })}`);
+        // Wave 3 follow-up: above the caret's line it covered the header row; it stands above the table.
+        const table = await box('.ProseMirror table');
+        assert.ok(table && hint.bottom <= table.top + 1, `above the table, over none of its rows: ${JSON.stringify({ hint, table })}`);
         assert.strictEqual(await page.$eval('.mep-hint', el => el.hasAttribute('data-flipped')), true);
         await page.keyboard.type('x');
         await delay(100);
@@ -1097,6 +1150,98 @@ suite('Editor placement (e2e)', () => {
         await page.keyboard.press('ArrowRight');
         await page.keyboard.up('Shift');
         await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
+    });
+
+    /** A keyboard selection of 'beta' with its bubble up, the text below the host's first paragraph. */
+    const bubbleOnBeta = async () => {
+        await showDocument('Alpha beta gamma delta epsilon zeta.\n\nSecond paragraph.\n', 'Alpha');
+        await clickBefore('beta', 0);
+        await page.keyboard.down('Shift');
+        for (let i = 0; i < 4; i++) {
+            await page.keyboard.press('ArrowRight');
+        }
+        await page.keyboard.up('Shift');
+        await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
+    };
+    const resyncAbove = async () => {
+        await resendDocument('A paragraph the host put first.\n\nAlpha beta gamma delta epsilon zeta.\n\nSecond paragraph.\n');
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('the host put first'), { timeout: 3000 });
+        assert.strictEqual(await page.evaluate(() => document.getSelection()?.toString()), 'beta', 'the selection moved with its text');
+    };
+
+    test('r3-3 (wave 3 follow-up): a resync above the selection keeps its bubble up: it does not hide and wait for a new rest', async function () {
+        this.timeout(20000);
+        await bubbleOnBeta();
+        await page.evaluate(() => {
+            const w = window as unknown as { bubbleHid: boolean };
+            w.bubbleHid = false;
+            new MutationObserver(records => {
+                w.bubbleHid = w.bubbleHid || records.some(r => r.oldValue === null && (r.target as HTMLElement).hidden);
+            }).observe(document.querySelector('.mep-bubble') as Element, { attributes: true, attributeFilter: ['hidden'], attributeOldValue: true });
+        });
+        await resyncAbove();
+        await delay(REST_MS + 200);
+        assert.strictEqual(await page.evaluate(() => (window as unknown as { bubbleHid: boolean }).bubbleHid), false, 'the bubble never hid');
+        assert.strictEqual(await shown(BUBBLE), true, 'and is up');
+        const bubble = await box(BUBBLE);
+        const selection = await page.evaluate(() => {
+            const r = (document.getSelection() as Selection).getRangeAt(0).getBoundingClientRect();
+            return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+        });
+        assert.ok(bubble && bubble.top >= selection.bottom + GAP - 1, `below the moved selection: ${JSON.stringify({ bubble, selection })}`);
+    });
+
+    test('r3-3: Esc\'s dismissal of the bubble survives a resync that moves its selection', async function () {
+        this.timeout(20000);
+        await bubbleOnBeta();
+        await page.evaluate(() => (document.querySelector('.mep-bubble .mep-tool') as HTMLElement).focus());
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BUBBLE), false, 'hidden by Esc');
+        await resyncAbove();
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BUBBLE), false, 'still hidden');
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.up('Shift');
+        await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
+    });
+
+    test('r3-3: a resync that deletes the selected text ends the bubble\'s claim: the next bar takes the slot', async function () {
+        this.timeout(20000);
+        await bubbleOnBeta();
+        await resendDocument('Alpha gamma.\n\n| Kind | Where |\n| --- | --- |\n| first | second |\n');
+        await page.waitForFunction(() => document.querySelector('.ProseMirror table'), { timeout: 3000 });
+        assert.strictEqual(await shown(BUBBLE), false, 'no selection, no bubble');
+        await clickBefore('first', 2);
+        await waitBar();
+    });
+
+    test('r3-4 (wave 3 follow-up): a bar Esc dismissed is not drawn on the next refresh: no code actions asked for it', async function () {
+        this.timeout(20000);
+        const table = 'Alpha.\n\n| Kind | Where |\n| --- | --- |\n| first | second |\n\nAfter.\n';
+        await showDocument(table, 'second');
+        await clickBefore('first', 2);
+        await waitBar();
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BAR), false, 'hidden by Esc');
+        // No pointer's bar for the table either: the pointer away from it.
+        await page.mouse.move(1, 1);
+        const requests = async () => (await (editor as EditorPage).posted()).filter(m => m.type === 'actionsFor') as { requestId: number; blockIndex: number }[];
+        const asked = async () => (await requests()).length;
+        const before = await asked();
+        assert.ok(before > 0, 'the bar asked for the table\'s code actions as it showed');
+        // The host's answer: none. A question not answered yet is not asked again.
+        const last = (await requests())[before - 1];
+        await (editor as EditorPage).send({ type: 'actions', requestId: last.requestId, blockIndex: last.blockIndex, items: [] });
+        await delay(150);
+        // The host says every code action may be out of date: a bar that shows asks again.
+        await (editor as EditorPage).send({ type: 'invalidateActions' });
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BAR), false, 'still hidden');
+        assert.strictEqual(await asked(), before, 'nothing asked for a bar that would only be hidden');
+        await clickBefore('After', 1);
     });
 
     // -- shots ----------------------------------------------------------------

@@ -339,6 +339,21 @@ engine shows what the preview shows. An extension that reads `text` tokens on
 the editor's engine (Foam's core rule) does not see an embed there; the editor
 draws the atom instead.
 
+**A second difference: footnotes in place.** markdown-it-footnote moves every
+definition (`[^x]: …`) into a list after the document's blocks and drops the
+unused ones. The editor edits each where the file writes it, so its own parses
+— `parseDocument`, `blockLineRanges`, the render of a source snippet, the page's
+read-back — run with `FOOTNOTES_IN_PLACE` in the environment
+(`src/editor/footnoteEngine.ts`): `footnote_def` stamps its lines on the
+definition, which is then a top-level group like any block (orphans and
+repeated labels included), and `footnote_tail` appends nothing, copying each
+inline footnote's text onto its token instead. The flag is an environment key,
+not an engine option, so the same engine instance renders the preview's list
+for `rendersId` (a `#fn1` link). A part read back on its own is read with the
+labels the document defines (`withFootnoteLabels`, `inPlaceEnv`), so `[^x]` is
+the reference it is in the document. Numbers are no attribute: the page counts
+them as the engine does (`webview/footnotes.ts`), so renumbering is never an edit.
+
 A known interplay on the preview's engine: a rule of another extension that
 splits text tokens (Req Explorer's status badges, at an id it recognises) runs
 on the embed's joined text like on any other and can split it, and Foam's rule
@@ -368,7 +383,7 @@ block (`gap`). Every block is one of four kinds:
 | --- | --- | --- | --- |
 | `front_matter` | The YAML block at the top | `front_matter` (atom), drawn as the properties panel | Its `src`: the slice, or what the panel set it to (below, *Properties*) |
 | `editable` | The core: paragraph, heading, lists, blockquote, code, rule, container, admonition, pipe table — with the inline constructs and the attribute literals below | The matching node, with `src` and `gap` | Its `src` while untouched; serialized by rule once changed |
-| `raw` | Anything else — a table using markdown-it-multimd-table's extensions, HTML, the TOC, footnotes, definition and task lists, abbreviations, reference definitions, a setext heading, a note inside a note, an attribute literal the editor cannot write back where it stands, a container or admonition nested past one level, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
+| `raw` | Anything else — a table using markdown-it-multimd-table's extensions, HTML, the TOC, a footnote's definition inside another block (and an inline footnote holding one or written over two lines), definition and task lists, abbreviations, reference definitions, a setext heading, a note inside a note, an attribute literal the editor cannot write back where it stands, a container or admonition nested past one level, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
 | `injected` | Content the file does not hold at this place | `injected_block` (atom) | An expansion's directive line, or nothing |
 
 `parse.ts` rebuilds the text from the blocks and **throws** when it does not match,
@@ -999,7 +1014,7 @@ cells holding paragraphs. From the delimiter row's slice where only the source t
 (`|===|`), which the tokens do not show. And a table whose cells hold what a cell cannot
 hold here: a row of another width than the header (the plugin renders it ragged), a
 sidenote or marginal note (below), code holding a `|`, anything that already makes a
-paragraph raw (inline HTML, a footnote reference). A source block that is a table says so
+paragraph raw (inline HTML, an abbreviation). A source block that is a table says so
 in its bar — *Source · multimd table*, or *Source · table* for one of the last kind
 (`construct` on `raw_block`) — so the table with no Row and Column menus explains itself
 beside the one that has them. A table inside a container, a quote or a list leaves that
@@ -1278,7 +1293,8 @@ differently:
 | `decoration` | `span.req-ref` around a bare id | Not a node: the id stays editable text, carrying a `req_ref` mark that is never serialized |
 
 Token ranges nobody marked and no source line accounts for (the footnote list
-`markdown-it-footnote` appends) become `injected_block`s of kind `generated`. A
+`markdown-it-footnote` appends where a parse is not in place — none of the editor's
+own since wave 4 #5b) become `injected_block`s of kind `generated`. A
 requirement heading's `ID: ` prefix is lifted into `reqPrefix` and rendered
 non-editable; the `{#anchor}` suffix is kept verbatim in `attrsSuffix`. A heading is
 recognised as the artifact's by **either of two signals** in the token stream
@@ -1733,8 +1749,9 @@ The layers:
   placeholder). `block` sets the textblock type, or wraps, lifts or converts a list or
   quote. `insert-wrapper` inserts a container or an admonition, `attr-span` makes an
   attribute span (both above, "Attributes, containers and admonitions"), `insert-table` a
-  pipe table (above, "Tables"). `wrap-source` and `insert-source` are for what the core does
-  not edit — the footnote and the other block constructs (below).
+  pipe table (above, "Tables"), `footnote` a reference and its entry in place
+  (`insertFootnoteTransaction`). `insert-source` is for what the core does not edit —
+  the other block constructs (below).
 - **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
   active and disabled states per action — every one refused while a node view's control
   has the focus (`focusPlace.ts`), the reason (`controlLock`, by the control's `role`: a
@@ -1785,17 +1802,13 @@ the moment another rule in the cascade won. Tools are `role="button"` elements, 
 `editor.css` styles only their frame, and a sample's box (the height it must fit, its
 margins), never its look.
 
-**Source for what the core cannot edit.** `wrap-source` (the footnote) wraps the selection
-in its markers and replaces the top-level block by a `raw_block` whose `src` is the
-block serialized by rule with the markers in place. The serializer would escape them
-(`ESCAPE_EXTRA` exists to stop `==`, `++`, `$` … being read as syntax), so the block is
-serialized with private-use stand-ins of the markers' length (U+E002/U+E003 — not
-U+E000/U+E001, the wrapper's hold markers) that are replaced afterwards. The block keeps
-its `gap` and the transaction carries `PRESERVE_SOURCE_META`, so every other byte stays;
-the page then sends `edit` with `reparse`, and the host's parse comes back through the
-in-place re-sync, the block rendered as the preview renders it. The wrap is one history
-event and the re-sync is outside the history, so one undo returns the block exactly
-(the page test undoes across the re-sync). `insert-source` inserts a `raw_block` with a
+**Source for what the core cannot edit.** (The footnote's `wrap-source` went in wave 4
+#5b: footnotes are edited in place.) A note's **Edit source** (`inlineSourceTransaction`)
+replaces the top-level block by a `raw_block` whose `src` is the block serialized by rule
+with the literal in place, held by a private-use stand-in (U+E002, not U+E000/U+E001,
+the wrapper's hold markers) that is replaced afterwards, so it is not escaped; the block
+keeps its `gap`, the transaction carries `PRESERVE_SOURCE_META`, and the page sends
+`edit` with `reparse`. `insert-source` inserts a `raw_block` with a
 template at `insertionPoint`, asks the host to render it and opens its **Edit
 source** box (`editRawSourceAt` in `nodeViews.ts`).
 

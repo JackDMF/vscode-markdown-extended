@@ -3,6 +3,7 @@ import { Selection, TextSelection } from 'prosemirror-state';
 import { NOTE_SYNTAX, WIKI_EMBED_MARKERS, plainWikiEmbed } from '../syntax/markers';
 import { Alignment, ENTITY, Lines, NEWLINE, NOTE_ANCHORS, Normalized, UNMATCHABLE, Unit, align, normalize } from './alignment';
 import { AtomPlace, NotePart, SerializeOptions, SerializedLayout, serializeLayout, writtenAtom } from './serialize';
+import { footnoteSpelling } from './schema';
 
 /**
  * Where a place in the page stands in the document's text, and back.
@@ -207,6 +208,8 @@ function collectUnits(block: Node): Unit[] {
     const units: Unit[] = [];
     // An untouched block is its source, an embed in it spelled as read; a changed one is written by rule.
     const written = (block.attrs.src ?? null) === null;
+    // A footnote entry's `[^label]:` stands on its first textblock's line: no line break between them.
+    let onEntryLine = false;
     const anchor = (text: string) => {
         for (let k = 0; k < text.length; k++) {
             units.push({ pos: -1, code: text.charCodeAt(k) });
@@ -242,6 +245,14 @@ function collectUnits(block: Node): Unit[] {
             anchor(source.slice(1));
             return;
         }
+        if (node.type.name === 'footnote_ref') {
+            // As an emoji: the atom matches its spelling's first character, and the rest of it
+            // (`^label]`, `[…]`) anchors it and is where it runs to. Written as it is, in any place.
+            const source = footnoteSpelling(node);
+            units.push({ pos, code: source.charCodeAt(0), spelledTo: source.slice(1) });
+            anchor(source.slice(1));
+            return;
+        }
         if (node.isLeaf) {
             // A hard break is a line break in the source (`\` or two spaces before it).
             units.push({ pos, code: node.type.name === 'hard_break' ? NEWLINE : UNMATCHABLE });
@@ -251,8 +262,13 @@ function collectUnits(block: Node): Unit[] {
             visitTable(node, pos);
             return;
         }
-        if (node.isTextblock && units.length > 0) {
+        if (node.isTextblock && units.length > 0 && !onEntryLine) {
             anchor('\n');
+        }
+        onEntryLine = false;
+        if (node.type.name === 'footnote_entry') {
+            anchor(`[^${node.attrs.label as string}]:${node.attrs.space as string}`);
+            onEntryLine = true;
         }
         const note = NOTE_ANCHORS[node.type.name];
         if (note) {

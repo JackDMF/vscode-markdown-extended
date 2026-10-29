@@ -20,6 +20,7 @@ import { LinksAndImages } from './linksImages';
 import { fragmentHeading, fragmentLine, headingAnchors, resolveLinkTarget } from './links';
 import { minimalReplacement } from './minimalEdit';
 import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
+import { inPlaceEnv } from '../footnoteEngine';
 
 /** What a session needs from the extension, injected so a test can drive one without a webview. */
 export interface SessionHost {
@@ -100,6 +101,13 @@ export function revealInVisualEditor(uri: vscode.Uri, reveal: Reveal): void {
     } else {
         pendingReveals.set(uri.toString(), reveal);
     }
+}
+
+/** The palette's "Sort Footnotes" for the Visual Editor over `uri`: its page sorts them (`sortFootnotes`). Whether one is open. */
+export function sortFootnotesIn(uri: vscode.Uri): boolean {
+    const session = sessions.get(uri.toString());
+    session?.sortFootnotes();
+    return session !== undefined;
 }
 
 /**
@@ -226,6 +234,11 @@ export class VisualEditorSession implements vscode.Disposable {
      * the queue holds, once the page has a document — at once when it has,
      * else right after the first document is posted (`post`).
      */
+    /** Ask the page to sort its footnotes: behind whatever the queue holds, so it sorts the document it has. */
+    sortFootnotes(): void {
+        this.enqueue(() => this.postQuietly({ type: 'sortFootnotes' }));
+    }
+
     reveal(reveal: Reveal): void {
         this.pendingReveal = reveal;
         this.enqueue(async () => {
@@ -785,7 +798,8 @@ export class VisualEditorSession implements vscode.Disposable {
         let html: string;
         try {
             const md = await this.host.engine();
-            html = md.render(src, this.env());
+            // As the parse drew it: a definition where it is written, no list of footnotes after it.
+            html = md.render(src, inPlaceEnv(this.env()));
         } catch (error) {
             this.host.log(`[ERROR] Visual Editor: rendering a raw block failed: ${message(error)}`);
             html = `<pre>${escapeHtml(src)}</pre>`;

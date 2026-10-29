@@ -6,6 +6,7 @@ import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { closeEditorPage, EditorPage, EXTENSION_ID, openEditorPage, settle, showDiagnostics } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { GAP } from '../../../src/editor/webview/placement';
 
 const LINE_2 = 'The installer checks the prerequisites before it copies anything.';
 const SOURCE = [
@@ -136,6 +137,20 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         assert.deepStrictEqual(await rows(), ['FRS-RXE-057', 'FRS-RXE-058', 'FRS-API-001'], 'filtered by what the range holds: FRS-');
         assert.strictEqual(await page.$eval('.mep-caret-completions .mep-completion.mep-chosen .mep-completion-label', el => el.textContent), 'FRS-RXE-057', 'the first row chosen');
         assert.strictEqual(await page.$eval('.mep-caret-completions .mep-completions-keys', el => el.textContent), '↹ ↵ accept · Esc close');
+        // Placed as every layer is (`placeLayer`): under the caret's line, GAP below it, from where the items begin.
+        const placed = await page.evaluate(() => {
+            const list = (document.querySelector('.mep-caret-completions') as HTMLElement).getBoundingClientRect();
+            const sel = document.getSelection() as Selection;
+            const caret = sel.getRangeAt(0).getBoundingClientRect();
+            const text = sel.anchorNode as Text;
+            const r = document.createRange();
+            const at = (text.textContent ?? '').lastIndexOf(' F') + 1;
+            r.setStart(text, at);
+            r.setEnd(text, at + 1);
+            return { list: { left: list.left, top: list.top }, caretBottom: caret.bottom, start: r.getBoundingClientRect().left };
+        });
+        assert.ok(Math.abs(placed.list.top - (placed.caretBottom + GAP)) <= 1.5, `GAP under the caret's line: ${JSON.stringify(placed)}`);
+        assert.ok(Math.abs(placed.list.left - placed.start) <= 1, `from where the items begin: ${JSON.stringify(placed)}`);
 
         await page.keyboard.type('R');
         await page.waitForFunction(() => document.querySelectorAll('.mep-caret-completions .mep-completion').length === 2);

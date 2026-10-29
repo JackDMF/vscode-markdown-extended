@@ -248,7 +248,7 @@ const caretText = (page: puppeteer.Page) => page.evaluate(() => window.getSelect
 
 /**
  * Each part's field (#8 step 6): the current part's under its own line (an
- * item's above the list nested in it), the outer part's under its block,
+ * item's above the list nested in it), the outer part's above its block (under it where above has no room),
  * an inline part's at its run; an outer field far below the caret scrolls
  * into view and gives the scroll back on Esc; the menu's route opens the
  * same field at the same place.
@@ -308,7 +308,7 @@ suite('Editor breadcrumb: the parts\' fields (e2e)', () => {
         assert.ok(list.rect.top >= ul.bottom, `under the list: ${JSON.stringify({ field: list.rect, ul })}`);
     });
 
-    test('Quote › Bold: the Bold part\'s field at the run, below it with text on both sides as the bar (#15 review 2); the Quote part\'s under the quote', async function () {
+    test('Quote › Bold: the Bold part\'s field at the run, below it with text on both sides as the bar (#15 review 2); the Quote part\'s above the quote', async function () {
         this.timeout(20000);
         await b.show(FIELDS_DOC);
         await b.restAt('term', 2);
@@ -324,7 +324,8 @@ suite('Editor breadcrumb: the parts\' fields (e2e)', () => {
         const quote = await field();
         const box = await blockRect(page, 'quoted line', 'blockquote');
         assert.strictEqual(quote.heading, 'Quote · Attributes');
-        assert.ok(quote.rect.top >= box.bottom - 1, `under the quote: ${JSON.stringify({ field: quote.rect, box })}`);
+        // A block's field stands above the block (Daniel, 2026-10-27).
+        assert.ok(quote.rect.bottom <= box.top + 1, `above the quote: ${JSON.stringify({ field: quote.rect, box })}`);
     });
 
     test('a long list: the List\'s field scrolls into view with the list\'s last line, the caret stays; Esc gives the scroll back exactly', async function () {

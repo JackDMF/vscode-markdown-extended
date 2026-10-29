@@ -7,8 +7,8 @@ import { closeEditorPage, computedColour, delay, EditorPage, EXTENSION_ID, openE
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 import { installedWebviewDefaultStyles, WEBVIEW_DEFAULT_STYLES, WEBVIEW_DEFAULT_STYLES_ID, webviewPageFile } from './webviewDefaults';
 
-/** A link, a footnote reference and the footnote's back-link: all three are `<a>`, the reference inside `sup.footnote-ref`. */
-const LINKS = 'A [link](https://example.com) and a claim that needs a source.[^1]\n\n[^1]: The source.\n';
+/** A link: an `<a>`, as VS Code's webview defaults colour it. */
+const LINKS = 'A [link](https://example.com) and a claim that needs a source.\n';
 
 /** CSS with its whitespace collapsed, so a re-indented copy compares equal to its original. */
 const squeeze = (css: string) => css.replace(/\s+/g, ' ').trim();
@@ -16,9 +16,9 @@ const squeeze = (css: string) => css.replace(/\s+/g, ' ').trim();
 /**
  * The page harness gives the editor's page what VS Code gives every webview
  * before the page's own stylesheets (`webviewDefaults.ts`), so a test and its
- * screenshot see the colours VS Code shows: a link, a footnote reference `[1]`
- * and its back-link `↩` in the theme's `textLink-foreground`, not the
- * browser's own blue.
+ * screenshot see the colours VS Code shows: a link in the theme's
+ * `textLink-foreground`, not the browser's own blue. The editor draws a
+ * footnote's `[1]` and `↩` itself, coloured by its own stylesheet (wave 4 #5b).
  */
 suite('Editor webview defaults (e2e)', () => {
     let editor: EditorPage | undefined;
@@ -45,7 +45,7 @@ suite('Editor webview defaults (e2e)', () => {
         assert.strictEqual(squeeze(WEBVIEW_DEFAULT_STYLES), squeeze(installed));
     });
 
-    test('a link, a footnote reference and its back-link take the theme\'s link colour', async function () {
+    test('a link takes the theme\'s link colour', async function () {
         this.timeout(30000);
         if (!editor) {
             this.skip();
@@ -58,7 +58,7 @@ suite('Editor webview defaults (e2e)', () => {
         assert.deepStrictEqual(first, { tag: 'STYLE', id: WEBVIEW_DEFAULT_STYLES_ID });
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, LINKS, {})), version: 1, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
-        await page.waitForFunction(() => document.querySelector('.ProseMirror .footnote-backref') !== null);
+        await page.waitForFunction(() => document.querySelector('.ProseMirror a[href^="https:"]') !== null);
         // Every theme drawn before any is judged, so a failing run still leaves both screenshots.
         const seen: Record<string, unknown> = {};
         const expected: Record<string, unknown> = {};
@@ -71,10 +71,10 @@ suite('Editor webview defaults (e2e)', () => {
                     const element = document.querySelector(`.ProseMirror ${selector}`);
                     return element ? getComputedStyle(element).color : `no ${selector}`;
                 };
-                return { link: colour('a[href^="https:"]'), reference: colour('sup.footnote-ref > a'), backLink: colour('a.footnote-backref') };
+                return { link: colour('a[href^="https:"]') };
             });
             const link = computedColour(theme.variables['textLink-foreground']);
-            expected[theme.name] = { link, reference: link, backLink: link };
+            expected[theme.name] = { link };
         }
         assert.deepStrictEqual(seen, expected);
     });

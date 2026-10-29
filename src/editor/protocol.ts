@@ -185,6 +185,8 @@ export type HostMessage =
      * element with that id (a footnote's). The slug rule lives only on the host.
      */
     | { type: 'revealAnchor'; anchor: string; line: number | null }
+    /** The palette's "Sort Footnotes" for this page (wave 4 #5b): the footnotes' texts in number order, or a hint that they are. */
+    | { type: 'sortFootnotes' }
     /**
      * The answer to `pickInclude`: the line the person chose, exactly as the
      * extension offering it wrote it (`IncludeChoice.insert`, one line without

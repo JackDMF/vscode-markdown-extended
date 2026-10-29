@@ -471,3 +471,60 @@ suite('Note anchors: the reference text has an element of its own', () => {
             '<span class="sn-ref x" data-sn="1"><span class="sn-anchor"><b>r</b></span><span class="sidenote">n</span></span>');
     });
 });
+
+suite('Footnotes in a note: its parts are read with the document\'s footnotes', () => {
+    const md = preview();
+    /** Each footnote reference's `id/subId`, in document order (nested ones too); an inline footnote's `id/-`. */
+    const refs = (source: string): string[] => {
+        const found: string[] = [];
+        const walk = (tokens: MarkdownIt.Token[]) => tokens.forEach(token => {
+            if (token.type === 'footnote_ref') {
+                const { id, subId } = token.meta as { id: number; subId?: number };
+                found.push(`${id}/${subId ?? '-'}`);
+            }
+            walk(token.children ?? []);
+        });
+        walk(md.parse(source, {}));
+        return found;
+    };
+    const items = (html: string) => html.match(/class="footnote-item"/g)?.length ?? 0;
+
+    test('a reference in a sidenote\'s text is a footnote, listed once with the paragraph\'s reference to it', () => {
+        const source = 'x ++a|b[^j]++ y[^j]\n\n[^j]: J';
+        assert.deepStrictEqual(refs(source), ['0/0', '0/1']);
+        const html = md.render(source);
+        assert.strictEqual(items(html), 1, html);
+        assert.ok(html.includes('<span class="sidenote">b<sup class="footnote-ref"><a href="#fn1" id="fnref1">[1]</a></sup></span>'), html);
+        assert.ok(html.includes('y<sup class="footnote-ref"><a href="#fn1" id="fnref1:1">[1:1]</a></sup>'), html);
+        assert.ok(html.includes('<p>J <a href="#fnref1" class="footnote-backref">↩︎</a> <a href="#fnref1:1" class="footnote-backref">↩︎</a></p>'), html);
+    });
+
+    test('an inline footnote in a sidenote\'s text is listed', () => {
+        const html = md.render('x ++a|b^[n]++');
+        assert.strictEqual(items(html), 1, html);
+        assert.ok(html.includes('<p>n <a href="#fnref1" class="footnote-backref">↩︎</a></p>'), html);
+    });
+
+    test('a marginal note\'s text and a note\'s reference text count as well', () => {
+        const html = md.render('!!a|b[^j]!!\n\n[^j]: J');
+        assert.strictEqual(items(html), 1, html);
+        assert.ok(html.includes('<span class="mnote">b<sup class="footnote-ref"><a href="#fn1" id="fnref1">[1]</a></sup></span>'), html);
+        assert.deepStrictEqual(refs('++a[^j]|b++\n\n[^j]: J'), ['0/0']);
+    });
+
+    test('numbers follow the written order, through the note', () => {
+        assert.deepStrictEqual(refs('p[^a] ++x|y[^b] z^[i]++ q[^c] [^b]\n\n[^a]: A\n[^b]: B\n[^c]: C'), ['0/0', '1/0', '2/-', '3/0', '1/1']);
+        const html = md.render('p[^a] ++x|y[^b]++ q[^c]\n\n[^c]: C\n[^b]: B\n[^a]: A');
+        assert.deepStrictEqual([...html.matchAll(/<li id="fn\d+" class="footnote-item"><p>(\w)/g)].map(m => m[1]), ['A', 'B', 'C']);
+    });
+
+    test('a note read during a sidebar\'s look-ahead that finds no closer is counted once', () => {
+        assert.deepStrictEqual(refs('$a ++x|y[^j] z^[i]++ `$` w[^j]\n\n[^j]: J'), ['0/0', '1/-', '0/1']);
+        assert.strictEqual(items(md.render('$a ++x|y[^j] z^[i]++ `$` w[^j]\n\n[^j]: J')), 2);
+    });
+
+    test('a label with no definition stays text in a note as in a paragraph', () => {
+        assert.strictEqual(md.renderInline('++a|b[^none]++'),
+            '<span class="sn-ref" data-sn="1"><span class="sn-anchor">a</span><span class="sidenote">b[^none]</span></span>');
+    });
+});

@@ -457,11 +457,10 @@ export function insertionPoint(state: EditorState): number {
  * Not U+E000/U+E001: those are the wrapper's hold markers, which it strips.
  */
 const OPEN_STAND_IN = String.fromCharCode(0xe002);
-const CLOSE_STAND_IN = String.fromCharCode(0xe003);
 
 export const WRAP_LOCK = 'Put the caret in, or select text within, one paragraph, heading or list item (not code) to add this.';
 
-/** Whether a `wrap-source` action can act on this selection: text inside one textblock that is not code. */
+/** Whether an inline insertion (a footnote) can act on this selection: text inside one textblock that is not code. */
 export function canWrapSource(state: EditorState): boolean {
     const sel = state.selection;
     if (!(sel instanceof TextSelection)) {
@@ -469,18 +468,6 @@ export function canWrapSource(state: EditorState): boolean {
     }
     const parent = sel.$from.parent;
     return sel.$from.sameParent(sel.$to) && parent.isTextblock && !parent.type.spec.code && sel.$from.depth >= 1;
-}
-
-/** The marks the text at both ends of the selection shares: the markers go inside those, so they nest. */
-function sharedMarks(state: EditorState): readonly Mark[] {
-    const { $from, $to, empty } = state.selection;
-    const code = editorSchema.marks.code;
-    if (empty) {
-        return $from.marks().filter(m => m.type !== code);
-    }
-    const first = $from.nodeAfter?.marks ?? [];
-    const last = $to.nodeBefore?.marks ?? [];
-    return first.filter(m => m.type !== code && m.isInSet(last));
 }
 
 function count(haystack: string, needle: string): number {
@@ -505,75 +492,6 @@ function asSourceBlock(block: Node, runs: readonly (readonly [string, string])[]
         written = written.split(run).join(literal);
     }
     return nodes.raw_block.create({ src: sourceText(written, context.eol), gap, html: '' });
-}
-
-/**
- * The transaction a `wrap-source` action makes: the selection's text wrapped
- * in `open` … `close` as literal Markdown, and the top-level block holding it
- * replaced by a source block with that text.
- *
- * The block is serialized by rule, as any edited block is, with stand-ins where
- * the markers go; the stand-ins are then replaced by the markers, so they are
- * written unescaped. The source block keeps the block's `gap`, and the
- * transaction carries `PRESERVE_SOURCE_META`, so the blank lines around it stay
- * as they were. It is one history event: undo returns the block as it was.
- *
- * The page then sends the text with `reparse`, and the host posts its own
- * parse — the block rendered as the preview renders it (see `main.ts`).
- * Returns `null` where the action cannot act (`canWrapSource`), or where the
- * document already holds a stand-in character.
- */
-export function wrapSourceTransaction(state: EditorState, apply: Extract<ActionApply, { kind: 'wrap-source' }>, context: SourceContext): Transaction | null {
-    if (!canWrapSource(state)) {
-        return null;
-    }
-    const value = apply.close.includes(FOOTNOTE_LABEL) || apply.open.includes(FOOTNOTE_LABEL)
-        ? freeFootnoteLabel(context.documentText) : '';
-    const open = label(apply.open, value);
-    const close = label(apply.close, value);
-    const sel = state.selection;
-    const index = sel.$from.index(0);
-    const topPos = sel.$from.before(1);
-    const top = state.doc.child(index);
-
-    // A marker cannot close after a space (`==word ==` is no highlight), and a
-    // double click selects the word with the space after it: the markers go
-    // around the text without the spaces at its ends.
-    let { from, to } = sel;
-    if (!sel.empty) {
-        const selected = state.doc.textBetween(from, to, undefined, '￼');
-        const lead = selected.length - selected.trimStart().length;
-        const trail = selected.length - selected.trimEnd().length;
-        if (lead + trail < selected.length) {
-            from += lead;
-            to -= trail;
-        }
-    }
-
-    const openRun = OPEN_STAND_IN.repeat(open.length);
-    const closeRun = CLOSE_STAND_IN.repeat(close.length);
-    const marks = sharedMarks(state);
-    const scratch = state.tr;
-    if (from === to) {
-        scratch.insert(from, editorSchema.text(openRun + apply.placeholder + closeRun, marks));
-    } else {
-        if (closeRun) {
-            scratch.insert(to, editorSchema.text(closeRun, marks));
-        }
-        if (openRun) {
-            scratch.insert(from, editorSchema.text(openRun, marks));
-        }
-    }
-    const block = asSourceBlock(scratch.doc.child(index), [[openRun, open], [closeRun, close]], context, top.attrs.gap ?? null);
-    if (block === null) {
-        return null;
-    }
-    const tr = state.tr.replaceWith(topPos, topPos + top.nodeSize, block);
-    if (apply.definition !== undefined) {
-        tr.insert(topPos + block.nodeSize, nodes.raw_block.create({ src: sourceText(label(apply.definition, value), context.eol), gap: null, html: '' }));
-    }
-    tr.setSelection(NodeSelection.create(tr.doc, topPos));
-    return tr.setMeta(PRESERVE_SOURCE_META, true).scrollIntoView();
 }
 
 /**

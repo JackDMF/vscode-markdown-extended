@@ -49,7 +49,7 @@ import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLitera
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, NOTE_NAMES, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
-import { LiteralLoss, SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteLiteralHost, quoteTakesLiteral, serializeInline } from '../serialize';
+import { LiteralLoss, SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteLiteralHost, quoteTakesLiteral, serializeInline, withFootnoteLabels } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 import { SOURCE_VERB_META } from './sourceBlock';
 import { VERB, quotedVerb, wording } from '../verbs';
@@ -57,7 +57,7 @@ import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_LITERAL_REFU
 
 const nodes = editorSchema.nodes;
 
-export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'code_block' | 'block_attrs' | 'heading' | 'list_item' | 'raw_block' | 'injected_block' | 'front_matter';
+export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'footnote' | 'footnote_entry' | 'container' | 'admonition' | 'table' | 'code_block' | 'block_attrs' | 'heading' | 'list_item' | 'raw_block' | 'injected_block' | 'front_matter';
 
 /**
  * The objects that are a mark's run in its textblock rather than a node. A
@@ -84,7 +84,7 @@ export function isMarkObject(object: EditorObject): object is Extract<EditorObje
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
 
 /** The caret objects that are blocks: their bar sits at the block's right edge, as a block object's does. */
-const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'code_block', 'block_attrs', 'heading', 'list_item']);
+const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'code_block', 'block_attrs', 'heading', 'list_item', 'footnote_entry']);
 
 export function isBlockObject(object: EditorObject): boolean {
     return BLOCK_OBJECTS.has(object.kind);
@@ -134,6 +134,9 @@ const NODE_KINDS: Readonly<Record<string, NodeObjectKind>> = {
     inline_atom: 'badge',
     wiki_embed: 'wiki_embed',
     emoji: 'emoji',
+    // A footnote's reference (wave 4 #5b), selected as a whole; its entry, which a caret in its text names last.
+    footnote_ref: 'footnote',
+    footnote_entry: 'footnote_entry',
     container: 'container',
     admonition: 'admonition',
     table: 'table',
@@ -452,7 +455,16 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     if (from !== null && to !== null && from.noteBefore === to.noteBefore) {
         return objectOfNode(from.note, from.noteBefore);
     }
-    return codeBlockAt(state) ?? wrapperAt(state) ?? tableObjectAt(state) ?? nestedHeadingAt(state) ?? listItemAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
+    return codeBlockAt(state) ?? wrapperAt(state) ?? tableObjectAt(state) ?? nestedHeadingAt(state) ?? listItemAt(state) ?? blockAttrsAt(state) ?? headingAt(state) ?? footnoteEntryAt(state);
+}
+
+/** The footnote entry the selection is in, both its ends: the last object a caret in its text names, so a link, a note or a list item in it wins. */
+function footnoteEntryAt(state: EditorState): EditorObject | null {
+    const { $from, $to } = state.selection;
+    if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1) || $from.node(1).type !== nodes.footnote_entry) {
+        return null;
+    }
+    return objectOfNode($from.node(1), $from.before(1));
 }
 
 /**
@@ -873,12 +885,13 @@ function topBlockAt(doc: Node, pos: number): Node | null {
  */
 export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, changing?: string | null): Said | null {
     const block = topBlockAt(doc, pos);
-    const lost = block === null ? null : literalNotReadBack(block);
+    // Each block read with the footnote labels its document defines (`withFootnoteLabels`).
+    const lost = block === null ? null : withFootnoteLabels(doc, () => literalNotReadBack(block));
     if (lost === null) {
         return null;
     }
     const old = before === undefined ? null : topBlockAt(before, pos);
-    const existing = old === null ? null : literalNotReadBack(old);
+    const existing = old === null || before === undefined ? null : withFootnoteLabels(before, () => literalNotReadBack(old));
     if (existing === null && (lost.cause !== undefined || lost.literal === null)) {
         // A block read as another is the edit filter's to name, which every caller asks next (`noteRefusal`):
         // a note's or an atom's own check names it better, and speaks first there.
@@ -954,7 +967,7 @@ export function literalCellRefusal(ch: string): Said {
 }
 
 /** Whether `pos` in `doc` stands in a table cell. */
-function inTableCell(doc: Node, pos: number): boolean {
+export function inTableCell(doc: Node, pos: number): boolean {
     const $pos = doc.resolve(Math.min(pos, doc.content.size));
     for (let depth = $pos.depth; depth > 0; depth--) {
         if ($pos.node(depth).type.name === 'table_cell' || $pos.node(depth).type.name === 'table_header') {

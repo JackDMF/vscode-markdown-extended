@@ -8,15 +8,18 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { closeEditorPage, delay, editCommand, EditorPage, EXTENSION_ID, MOD, openEditorPage, settle, shot, SHOTS_DIR, UNDO } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
-/** A paragraph holding a footnote reference (a source block), words around it, and the footnote's text (another). */
-const FOOTNOTE = [
+/**
+ * A paragraph holding an abbreviation (a source block), words around it, and the abbreviation's definition
+ * (another, shown as source): the shapes footnotes had before the editor took them in (wave 4 #5b).
+ */
+const ABBREVIATED = [
     'Intro paragraph.',
     '',
-    'A sentence with a footnote.[^1]',
+    'A sentence with an abbreviation, HTML.',
     '',
     'Outro paragraph.',
     '',
-    '[^1]: The footnote body.',
+    '*[HTML]: HyperText Markup Language',
     '',
 ].join('\n');
 
@@ -38,9 +41,9 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
         await delay(100);
     };
 
-    /** Click the footnote paragraph's source block: it is selected as a node. */
-    const selectFootnoteBlock = async () => {
-        await showDocument(FOOTNOTE);
+    /** Click the abbreviation paragraph's source block: it is selected as a node. */
+    const selectSourceBlock = async () => {
+        await showDocument(ABBREVIATED);
         const box = await (await page.waitForSelector('.ProseMirror > .mep-raw-block .mep-atom-content'))?.boundingBox();
         assert.ok(box);
         await page.mouse.click(box.x + 20, box.y + box.height / 2);
@@ -52,14 +55,14 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
     const assertRefused = async (before: number, what: string, typed = '') => {
         await settle();
         const edits = await (editor as EditorPage).edits();
-        const changed = edits.slice(before).filter(e => e.text !== FOOTNOTE);
+        const changed = edits.slice(before).filter(e => e.text !== ABBREVIATED);
         assert.deepStrictEqual(changed.map(e => e.text), [], `${what}: the file is not changed`);
         assert.strictEqual(await page.$$eval('.ProseMirror > .mep-raw-block', els => els.length), 2, `${what}: both source blocks stand`);
         if (typed) {
             assert.ok(!(await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes(typed), `${what}: nothing typed stands in the page`);
         }
         const hint = await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden, tone: (el as HTMLElement).dataset.tone }));
-        assert.deepStrictEqual(hint, { text: 'This paragraph holds a footnote — change it with "Edit source"', shown: true, tone: 'refusal' }, `${what}: the refusal says why`);
+        assert.deepStrictEqual(hint, { text: 'This paragraph holds an abbreviation — change it with "Edit source"', shown: true, tone: 'refusal' }, `${what}: the refusal says why`);
     };
 
     /** The caret at the start or the end of the `n`th top-level paragraph (1-based), by a click there. */
@@ -101,7 +104,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
 
     test('a character typed over it is refused', async function () {
         this.timeout(10000);
-        await selectFootnoteBlock();
+        await selectSourceBlock();
         const before = (await (editor as EditorPage).edits()).length;
         await page.keyboard.type('x');
         await assertRefused(before, 'typed x');
@@ -110,7 +113,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
     for (const key of ['Backspace', 'Delete'] as const) {
         test(`${key} on it is refused`, async function () {
             this.timeout(10000);
-            await selectFootnoteBlock();
+            await selectSourceBlock();
             const before = (await (editor as EditorPage).edits()).length;
             await page.keyboard.press(key);
             await assertRefused(before, key);
@@ -119,7 +122,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
 
     test('a paste over it is refused', async function () {
         this.timeout(10000);
-        await selectFootnoteBlock();
+        await selectSourceBlock();
         const before = (await (editor as EditorPage).edits()).length;
         await page.evaluate(() => {
             const data = new DataTransfer();
@@ -133,7 +136,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
     for (const [modifier, key] of [['Control', 'd'], ['Control', 'h'], ['Alt', 'd']] as [puppeteer.KeyInput, puppeteer.KeyInput][]) {
         test(`${modifier}+${key.toUpperCase()} on it is refused`, async function () {
             this.timeout(10000);
-            await selectFootnoteBlock();
+            await selectSourceBlock();
             const before = (await (editor as EditorPage).edits()).length;
             await chord(modifier, key);
             await assertRefused(before, `${modifier}+${key}`);
@@ -142,7 +145,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
 
     test('text put in without a key (dictation, the emoji picker, a text replacement) is refused', async function () {
         this.timeout(10000);
-        await selectFootnoteBlock();
+        await selectSourceBlock();
         const before = (await (editor as EditorPage).edits()).length;
         await page.keyboard.sendCharacter('Ω');
         await assertRefused(before, 'sendCharacter', 'Ω');
@@ -150,8 +153,23 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
 
     test('an input method\'s composition over it is refused', async function () {
         this.timeout(10000);
-        await selectFootnoteBlock();
+        await selectSourceBlock();
         const before = (await (editor as EditorPage).edits()).length;
+        // The block's bar, shown while it is selected: watched for a moment's hide while the focus goes and comes back.
+        await page.evaluate(() => {
+            const seen: string[] = [];
+            (window as unknown as { barFlips: string[] }).barFlips = seen;
+            const watch = new MutationObserver(list => list.forEach(m => {
+                const el = m.target as HTMLElement;
+                // Shown, then hidden: what the person would see go.
+                if (m.attributeName === 'hidden' && m.oldValue === null && el.hidden) {
+                    seen.push(el.className);
+                }
+            }));
+            document.querySelectorAll('.mep-object-toolbar').forEach(bar => watch.observe(bar, { attributes: true, attributeOldValue: true, attributeFilter: ['hidden'] }));
+        });
+        const barShown = () => page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('.mep-object-toolbar')).some(b => !b.hidden && b.offsetHeight > 0));
+        const shownBefore = await barShown();
         const cdp = await page.createCDPSession();
         try {
             await cdp.send('Input.imeSetComposition', { text: 'か', selectionStart: 1, selectionEnd: 1 });
@@ -164,25 +182,28 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
         await delay(100);
         assert.ok(await page.evaluate(() => document.activeElement?.classList.contains('ProseMirror')), 'the editor has the focus back');
         assert.ok(await page.$('.ProseMirror > .mep-raw-block.ProseMirror-selectednode'), 'the block is still selected');
+        assert.ok(shownBefore && await barShown(), 'its bar shows before and after');
+        const flips = await page.evaluate(() => (window as unknown as { barFlips: string[] }).barFlips);
+        assert.deepStrictEqual(flips, [], `the bar never hid while the focus came back: ${JSON.stringify(flips)}`);
     });
 
     test('cut takes it, onto the clipboard, and undo brings it back', async function () {
         this.timeout(10000);
-        await selectFootnoteBlock();
+        await selectSourceBlock();
         await page.keyboard.down(MOD);
         await page.keyboard.press('x', editCommand('x'));
         await page.keyboard.up(MOD);
         await settle();
         assert.strictEqual(await sourceBlocks(), 1, 'the block is cut');
-        assert.ok(!(await (editor as EditorPage).edits()).pop()?.text.includes('A sentence with a footnote'), 'the file no longer holds it');
+        assert.ok(!(await (editor as EditorPage).edits()).pop()?.text.includes('A sentence with an abbreviation'), 'the file no longer holds it');
         await undo();
-        assert.strictEqual((await (editor as EditorPage).edits()).pop()?.text, FOOTNOTE, 'undo brings it back');
+        assert.strictEqual((await (editor as EditorPage).edits()).pop()?.text, ABBREVIATED, 'undo brings it back');
         assert.strictEqual(await sourceBlocks(), 2);
     });
 
     test('a text selection across it is replaced as usual, and says the block went, with the key that brings it back', async function () {
         this.timeout(10000);
-        await showDocument(FOOTNOTE);
+        await showDocument(ABBREVIATED);
         const intro = await (await page.$('.ProseMirror > p:nth-of-type(1)'))?.boundingBox();
         const outro = await (await page.$('.ProseMirror > p:nth-of-type(2)'))?.boundingBox();
         assert.ok(intro && outro);
@@ -197,14 +218,14 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
         const hint = await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden, tone: (el as HTMLElement).dataset.tone }));
         assert.deepStrictEqual(hint, { text: `Source block removed — ${UNDO}`, shown: true, tone: 'neutral' });
         await undo();
-        assert.strictEqual((await (editor as EditorPage).edits()).pop()?.text, FOOTNOTE, 'undo brings it back');
+        assert.strictEqual((await (editor as EditorPage).edits()).pop()?.text, ABBREVIATED, 'undo brings it back');
     });
 
     test('a paste of one source block over a selection holding another says the other went, and undo brings it back', async function () {
         this.timeout(10000);
         const two = [
-            'Para one.', '', 'Alpha holds one.[^1]', '', 'Para two here.', '', 'Beta holds two.[^2]', '', 'Para three here.', '',
-            '[^1]: n1', '[^2]: n2', '',
+            'Para one.', '', 'Alpha holds one, HTML.', '', 'Para two here.', '', 'Beta holds two, CSS.', '', 'Para three here.', '',
+            '*[HTML]: n1', '*[CSS]: n2', '',
         ].join('\n');
         await showDocument(two);
         const alpha = await (await page.$('.ProseMirror > .mep-raw-block .mep-atom-content'))?.boundingBox();
@@ -239,7 +260,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
 
     test('Backspace at the start of the paragraph after it selects it; a second Backspace is refused', async function () {
         this.timeout(10000);
-        await showDocument(FOOTNOTE);
+        await showDocument(ABBREVIATED);
         const before = (await (editor as EditorPage).edits()).length;
         await caretAt(2, 'start');
         await page.keyboard.press('Backspace');
@@ -252,7 +273,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
 
     test('Delete at the end of the paragraph before it selects it; a second Delete is refused', async function () {
         this.timeout(10000);
-        await showDocument(FOOTNOTE);
+        await showDocument(ABBREVIATED);
         const before = (await (editor as EditorPage).edits()).length;
         await caretAt(1, 'end');
         await page.keyboard.press('Delete');
@@ -265,7 +286,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
 
     test('Delete block in its bar still deletes it, and undo brings it back', async function () {
         this.timeout(10000);
-        await selectFootnoteBlock();
+        await selectSourceBlock();
         const verb = await page.waitForSelector(`${SELECTED_BLOCK_BAR} [data-verb="delete-block"]`, { visible: true, timeout: 3000 });
         const at = await verb?.boundingBox();
         assert.ok(at);
@@ -273,50 +294,48 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
         await settle();
         assert.strictEqual(await sourceBlocks(), 1);
         await undo();
-        assert.strictEqual((await (editor as EditorPage).edits()).pop()?.text, FOOTNOTE);
+        assert.strictEqual((await (editor as EditorPage).edits()).pop()?.text, ABBREVIATED);
     });
 
     test('Enter on it does what it did before the marker: a new paragraph after the block', async function () {
         this.timeout(10000);
-        await selectFootnoteBlock();
+        await selectSourceBlock();
         await page.keyboard.press('Enter');
         await page.keyboard.type('New');
         await settle();
         const last = (await (editor as EditorPage).edits()).pop();
-        assert.strictEqual(last?.text, FOOTNOTE.replace('[^1]\n\n', '[^1]\n\nNew\n\n'));
+        assert.strictEqual(last?.text, ABBREVIATED.replace('HTML.\n\n', 'HTML.\n\nNew\n\n'));
     });
 });
 
-/** Source blocks of each placement: a footnote paragraph (float), a definition list, one with a right sidebar (chip top-left above its first line), the footnotes' text (in its box). */
+/** Source blocks of each placement: an abbreviation's paragraph (float), a definition list, one with a right sidebar (chip top-left above its first line), the abbreviations' definitions (in their box). */
 const MARKED = [
     'Intro paragraph.',
     '',
-    'A sentence with a footnote.[^1] And enough words after it to run onto a second line where the window is narrow, so the wrap around the chip shows on the first one and not on the next. It says so twice over, at length, so that even a wide window gives it three lines to wrap.',
+    'A sentence with an abbreviation, HTML. And enough words after it to run onto a second line where the window is narrow, so the wrap around the chip shows on the first one and not on the next. It says so twice over, at length, so that even a wide window gives it three lines to wrap.',
     '',
     'Term',
     ': Its definition, a pass over every file that reports what it finds.',
     '',
-    'A note @10 min@ beside a footnote.[^2]',
+    'A note @10 min@ beside an abbreviation, CSS.',
     '',
     'Outro paragraph.',
     '',
-    '[^1]: The footnote body.',
-    '[^2]: The second body.',
+    '*[HTML]: HyperText Markup Language',
+    '*[CSS]: Cascading Style Sheets',
     '',
 ].join('\n');
 
-/** 16 paragraphs, each with a footnote reference, between plain ones: how a footnoted document looks with a chip on each. */
+/** 16 paragraphs, each with an abbreviation, between plain ones: how a document of source paragraphs looks with a chip on each. */
 function clutterDocument(): string {
-    const out: string[] = ['# A footnoted chapter', ''];
+    const out: string[] = ['# An abbreviated chapter', ''];
     for (let i = 1; i <= 16; i++) {
-        out.push(`Paragraph ${i} states a finding and cites where it comes from.[^n${i}] It goes on for a sentence or two, as prose does, so the lines wrap at the window's width.`, '');
+        out.push(`Paragraph ${i} states a finding and cites where it comes from, RFC ${i}. It goes on for a sentence or two, as prose does, so the lines wrap at the window's width.`, '');
         if (i % 4 === 0) {
             out.push(`A plain paragraph between them, number ${i / 4}, with no reference at all.`, '');
         }
     }
-    for (let i = 1; i <= 16; i++) {
-        out.push(`[^n${i}]: Source ${i}: the minutes of the review.`);
-    }
+    out.push('*[RFC]: Request for Comments: the minutes of the review.');
     return out.join('\n') + '\n';
 }
 
@@ -416,28 +435,27 @@ const SIDEBAR = [
     '',
     '$10:00$ A plain paragraph with its time in the left sidebar, and words enough to wrap at a narrow width.',
     '',
-    '$10:05$ A sentence with a footnote.[^1] And words enough after it to run onto a second line, so the chip and the sidebar share the first one.',
+    '$10:05$ A sentence with an abbreviation, HTML. And words enough after it to run onto a second line, so the chip and the sidebar share the first one.',
     '',
     'Outro paragraph.',
     '',
-    '[^1]: The footnote body.',
+    '*[HTML]: HyperText Markup Language',
     '',
 ].join('\n');
 
 /** A block whose rendering starts with a box of its own (a table): a float would narrow it or push it down. */
 const BOXED_FIRST = ['Before it.', '', '<table><tr><td>A cell</td><td>Another cell</td></tr></table>', '', 'After it.', ''].join('\n');
 
-/** A tall box of footnote text, between paragraphs: its chip stays in sight while its top is scrolled away. */
+/** A tall box of abbreviation definitions, between paragraphs: its chip stays in sight while its top is scrolled away. */
 function tallBoxDocument(): string {
-    const notes = Array.from({ length: 40 }, (_, i) => `[^t${i + 1}]: Footnote ${i + 1}, the minutes of the review.`);
-    return ['Words before.[^t1]', '', ...notes, '', 'Words after.', ''].join('\n');
+    const notes = Array.from({ length: 40 }, (_, i) => `*[T${i + 1}]: Term ${i + 1}, the minutes of the review.`);
+    return ['Words before, T1.', '', ...notes, '', 'Words after.', ''].join('\n');
 }
 
-/** A 60-item list with a footnote on each item: one tall, rendered source block, its top far above where a person reads. */
+/** A 60-item list with an abbreviation on each item: one tall, rendered source block, its top far above where a person reads. */
 function tallListDocument(): string {
-    const items = Array.from({ length: 60 }, (_, i) => `- Item ${i + 1} of the list, stating a finding.[^l${i + 1}]`);
-    const notes = Array.from({ length: 60 }, (_, i) => `[^l${i + 1}]: The minutes, item ${i + 1}.`);
-    return ['Words before.', '', ...items, '', 'Words after.', '', ...notes, ''].join('\n');
+    const items = Array.from({ length: 60 }, (_, i) => `- Item ${i + 1} of the list, stating a finding, RFC ${i + 1}.`);
+    return ['Words before.', '', ...items, '', 'Words after.', '', '*[RFC]: Request for Comments: the minutes.', ''].join('\n');
 }
 
 suite('Editor source block marker (e2e)', () => {
@@ -473,15 +491,15 @@ suite('Editor source block marker (e2e)', () => {
         await closeEditorPage(this, state.editor);
     });
 
-    test('every source block names itself: a group, "source block", and as its label only why — has a footnote, definition list, footnote text', async function () {
+    test('every source block names itself: a group, "source block", and as its label only why — has an abbreviation, definition list, abbreviation definition', async function () {
         this.timeout(10000);
         await show(MARKED);
         const names = await page().$$eval('.ProseMirror > .mep-raw-block', els => els.map(el => [el.getAttribute('role'), el.getAttribute('aria-roledescription'), el.getAttribute('aria-label')]));
         assert.deepStrictEqual(names, [
-            ['group', 'source block', 'Has a footnote'],
+            ['group', 'source block', 'Has an abbreviation'],
             ['group', 'source block', 'Definition list'],
-            ['group', 'source block', 'Has a footnote'],
-            ['group', 'source block', 'Footnote text'],
+            ['group', 'source block', 'Has an abbreviation'],
+            ['group', 'source block', 'Abbreviation definition'],
         ]);
     });
 
@@ -522,7 +540,7 @@ suite('Editor source block marker (e2e)', () => {
         await page().keyboard.up(MOD);
         await delay(150);
         const copied = await page().evaluate(() => (window as unknown as { copied?: { html: string; text: string } }).copied);
-        assert.ok(copied && copied.html.includes('A sentence with a footnote') && copied.html.includes('Term'), `the copy holds the source blocks: ${JSON.stringify(copied)}`);
+        assert.ok(copied && copied.html.includes('A sentence with an abbreviation') && copied.html.includes('Term'), `the copy holds the source blocks: ${JSON.stringify(copied)}`);
         assert.ok(!/source/.test(copied.text) && !/mep-raw-chip|mep-raw-rail|>source</.test(copied.html), `and no chip: ${JSON.stringify(copied)}`);
     });
 
@@ -710,23 +728,23 @@ suite('Editor source block marker (e2e)', () => {
         await page().mouse.move(5, 5);
     });
 
-    test('selected: the bar says "Source · has a footnote", a screen reader hears the reason and the key, nothing more is drawn', async function () {
+    test('selected: the bar says "Source · has an abbreviation", a screen reader hears the reason and the key, nothing more is drawn', async function () {
         this.timeout(10000);
         await show(MARKED);
         const box = await (await page().$(`${block(0)} .mep-atom-content`))?.boundingBox();
         assert.ok(box);
         await page().mouse.click(box.x + 20, box.y + 8);
         await page().waitForSelector(`${SELECTED_BLOCK_BAR} .mep-object-label`);
-        assert.strictEqual(await page().$eval(`${SELECTED_BLOCK_BAR} .mep-object-label`, el => el.textContent), 'Source · has a footnote');
+        assert.strictEqual(await page().$eval(`${SELECTED_BLOCK_BAR} .mep-object-label`, el => el.textContent), 'Source · has an abbreviation');
         // Said through the page's one status region (#10), drawn nowhere; the hint itself stays hidden.
         await delay(50);
         const said = await page().$eval('.mep-live', el => ({ text: el.textContent, role: el.getAttribute('role'), width: el.getBoundingClientRect().width }));
-        assert.deepStrictEqual(said, { text: 'Source block, has a footnote — Alt+Enter for actions', role: 'status', width: 1 });
+        assert.deepStrictEqual(said, { text: 'Source block, has an abbreviation — Alt+Enter for actions', role: 'status', width: 1 });
         assert.strictEqual(await page().$eval('.mep-hint', el => (el as HTMLElement).hidden), true, 'nothing drawn');
 
         const dl = await (await page().$(`${block(1)} .mep-atom-content`))?.boundingBox();
         assert.ok(dl);
-        // Low in the list: the footnote's bar stands below its block, over the list's top.
+        // Low in the list: the paragraph's bar stands below its block, over the list's top.
         await page().mouse.click(dl.x + 20, dl.y + dl.height - 6);
         await delay(150);
         assert.strictEqual(await page().$eval(`${SELECTED_BLOCK_BAR} .mep-object-label`, el => el.textContent), 'Source · definition list');
@@ -744,7 +762,7 @@ suite('Editor source block marker (e2e)', () => {
         await page().keyboard.press('Escape');
     });
 
-    test('shots: rest, hover and caret at 1280 and 520 in light, dark and high contrast; a footnoted chapter in light and dark', async function () {
+    test('shots: rest, hover and caret at 1280 and 520 in light, dark and high contrast; an abbreviated chapter in light and dark', async function () {
         if (!SHOTS_DIR) {
             return;
         }

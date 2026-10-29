@@ -57,15 +57,20 @@ import type { Completion } from '../completions';
 import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, languageOf, savedOpeningLine } from '../fences';
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
-import { HintTone, RefusalPlace, applyKey, dismissRefusal, showChangeHint, showHint, showRefusal, undoHint, undoKey } from './hint';
+import { HintTone, RefusalPlace, announceHint, applyKey, dismissRefusal, macKeys, showChangeHint, showHint, showRefusal, undoHint, undoKey } from './hint';
 import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, crumbName, crumbPartName, emojiWayBack, firstFocus, overflowOrder, quotedVerb, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
 import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
+import {
+    backToReferenceTransaction, deleteFootnoteEntryTransaction, deleteFootnoteRefTransaction, editInlineFootnote, entryAt, footnoteIndexOf, goToFootnoteTransaction,
+    dispatchWithHint, entryDeleteRefusal, labelRefusal, orphanChip, refAt, renameFootnoteTransaction, sortFootnotesTransaction, sortRefusal,
+} from './footnotes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
-import { clearPendingRange, showPendingRange } from './pendingRange';
+import { clearPendingRange, pendingRangeId, showPendingRange } from './pendingRange';
 import { FocusPlace, focusPlace } from './focusPlace';
+import { refocusingAfterComposition } from './sourceBlock';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
@@ -91,7 +96,7 @@ import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
 import { Said, Tip, plainTip, said, saidText, tipText, value } from '../tips';
 import { Tooltips } from './tooltip';
-import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, caretRect, placeMenu, rangeAnchor, revealField } from './placement';
+import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, blockFieldAnchor, caretRect, floatedAround, placeMenu, rangeAnchor, revealField } from './placement';
 
 /**
  * The opening line the save writes for a code block (`savedOpeningLine`), once
@@ -209,11 +214,13 @@ export interface Verb {
     target?: { from: number; to: number };
     /**
      * The block its field edits, when the field stands at that block and not at the bar's object (#8): a
-     * breadcrumb part's List under the list, an admonition's heading under the heading (`blockAnchor`).
+     * breadcrumb part's List above the list, an admonition's heading above the heading (`blockFieldAnchor`).
      */
     anchorBlock?: AttributesTarget;
     /** On a two-part bar, it acts on the outer part (an admonition's Type▾): never the first focus (`firstFocus`, #8). */
     outer?: true;
+    /** One of a reversible jump pair (a footnote's Go to footnote text / Back to reference): it may take the first focus (`firstFocus`, #5b). */
+    jump?: true;
     /** What a table's set-verb acts on, tinted while it is active (`ObjectBar.activeAxis`): Row the caret's row, Column and Align its column. */
     axis?: 'row' | 'column';
 }
@@ -228,7 +235,11 @@ function drawVerbLabel(el: HTMLElement, verb: Verb, text: string): void {
 
 /** A verb as the bars' model reads it (`verbs.ts`): whether it opens in place is read from which of its ways it has. */
 function slotted(verb: Verb): Slotted {
-    return { slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box), ...(verb.outer ? { outer: true as const } : {}) };
+    return {
+        slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box),
+        ...(verb.outer ? { outer: true as const } : {}),
+        ...(verb.jump ? { jump: true as const } : {}),
+    };
 }
 
 /** One entry of a set-verb's menu. */
@@ -273,8 +284,15 @@ interface Presentation {
     label: string;
     /** The title's short form, drawn before the title truncates (`ObjectBar.fit`): an admonition's type alone, `Warning`. */
     short?: string;
+    /**
+     * A last step after `short`, the code part and what follows it gone with it: a footnote's number alone ("1").
+     * A title with it steps "Footnote 1 · liebst" → "Footnote 1" → "1" → hidden, never cut (UX review 2).
+     */
+    tiny?: string;
     /** Written after the label in the editor's code font: an atom's spelling (`Emoji :)`). */
     code?: string;
+    /** Written after `code`, in the label's font: what a footnote's title says of it (` · 2 references`). */
+    after?: string;
     title: string;
     verbs: Verb[];
     /** The breadcrumb in the title's place (#8): the outer part, then the current one — the bar's object. */
@@ -623,7 +641,9 @@ class ObjectBar {
     private more: HTMLButtonElement | null = null;
     private moved: { verb: Verb; el: HTMLButtonElement }[] = [];
     /** The title, and its short form, as the presentation gave them. */
-    private title = { label: '', short: undefined as string | undefined };
+    private title = { label: '', short: undefined as string | undefined, tiny: undefined as string | undefined };
+    /** The title's nodes as `render` drew them (its code part, what follows it): a title with a `tiny` step puts them back on each fit. */
+    private titleNodes: globalThis.Node[] = [];
     /**
      * An open menu: its panel, the button it hangs from — the verb's, or "…" for a verb moved into it — its
      * entries, and where it comes from: the set-verb whose menu it is (none for "…"'s own list), and
@@ -741,7 +761,8 @@ class ObjectBar {
      */
     focusFirst(): void {
         const first = this.buttons[firstFocus(this.buttons.map(b => slotted(b.verb)))];
-        (first?.el ?? this.el).focus({ preventScroll: true });
+        // No hover on this automatic focus (UX review 2): an arrow key, Tab or the pointer shows it.
+        this.tips.focusQuietly(first?.el ?? this.el);
     }
 
     /**
@@ -785,6 +806,9 @@ class ObjectBar {
             }
         }
         label.hidden = false;
+        if (this.title.tiny !== undefined) {
+            label.replaceChildren(...this.titleNodes);
+        }
         this.setTitle(label, this.title.label);
         for (const b of this.buttons) {
             this.showVerb(b);
@@ -808,10 +832,18 @@ class ObjectBar {
             }
             // The title's short form, before it truncates.
             if (cut() && this.title.short !== undefined) {
-                this.setTitle(label, this.title.short);
+                if (this.title.tiny !== undefined) {
+                    // A title with steps (a footnote's: "Footnote 1 · liebst" → "Footnote 1" → "1") is never cut mid-word.
+                    label.replaceChildren(this.title.short);
+                } else {
+                    this.setTitle(label, this.title.short);
+                }
             }
-            // Still too wide, and the title cut below a stub that could say anything: it goes.
-            label.hidden = cut() && label.offsetWidth < TITLE_STUB;
+            if (cut() && this.title.tiny !== undefined) {
+                label.replaceChildren(this.title.tiny);
+            }
+            // Still too wide, and the title cut below a stub that could say anything — or a stepped title cut at all: it goes.
+            label.hidden = cut() && (this.title.tiny !== undefined || label.offsetWidth < TITLE_STUB);
         }
         // The title hidden and the verbs still past the room: they move into "…".
         const more = this.more;
@@ -1062,7 +1094,7 @@ class ObjectBar {
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
-        this.title = { label: presentation.label, short: presentation.short };
+        this.title = { label: presentation.label, short: presentation.short, tiny: presentation.tiny };
         this.moved = [];
         this.outerMoved = false;
         this.el.dataset.name = presentation.label;
@@ -1072,6 +1104,10 @@ class ObjectBar {
             code.textContent = presentation.code;
             label.append(' ', code);
         }
+        if (presentation.after !== undefined) {
+            label.append(presentation.after);
+        }
+        this.titleNodes = Array.from(label.childNodes);
         // What the object is, on a rest: the title is a label, not a control — no focus, no press.
         this.tips.attach(label, () => (presentation.title === '' ? null : plainTip(presentation.title)));
         this.fitted = '';
@@ -1080,7 +1116,7 @@ class ObjectBar {
         if (presentation.crumbs === undefined) {
             this.parts = [];
         }
-        this.name = presentation.name ?? barName(presentation.label, presentation.code);
+        this.name = presentation.name ?? `${barName(presentation.label, presentation.code)}${presentation.after ?? ''}`;
         const parts = this.parts.filter(p => p.view.verb !== null && !p.view.verb.refusal).length;
         this.el.setAttribute('aria-label', barDescription(this.name, parts + presentation.verbs.filter(v => !v.refusal).length));
         this.buttons = presentation.verbs.map(verb => {
@@ -1615,7 +1651,12 @@ class ObjectToolbarView implements PluginView {
         // Focus moving in or out of the editor and the bars shows or hides the selection's bar.
         const later = () => setTimeout(() => this.refresh(), 0);
         this.listen(document, 'focusin', later);
-        this.listen(document, 'focusout', later);
+        // A refused composition takes the focus for a moment and gives it back (`refocusingAfterComposition`): the bar stays.
+        this.listen(document, 'focusout', () => setTimeout(() => {
+            if (!refocusingAfterComposition(this.view)) {
+                this.refresh();
+            }
+        }, 0));
         // Capturing, so it is known before the key's own command changes the text (`update`).
         // A key whose release the text never sees (the focus moved to a bar) is over at its keyup anywhere.
         // A character made with Alt (Option, AltGr: `{ } [ ] @ \ ~`) is typing; a modifier, a shortcut or an Alt command is not (`typesText`).
@@ -1670,9 +1711,12 @@ class ObjectToolbarView implements PluginView {
             fieldDropped: () => {
                 this.fieldGone();
                 this.unreveal = null;
+                // Dropped in the view's update, where nothing may be dispatched: cleared after it — only
+                // this field's range, not one a field that took the slot meanwhile drew (the row's Link…).
+                const dropped = pendingRangeId(this.view.state);
                 setTimeout(() => {
                     if (!this.destroyed) {
-                        clearPendingRange(this.view);
+                        clearPendingRange(this.view, dropped);
                     }
                 }, 0);
             },
@@ -1720,8 +1764,8 @@ class ObjectToolbarView implements PluginView {
                 }
                 const size = view.state.doc.content.size;
                 if (block !== undefined) {
-                    // Under the block the field edits, as its own bar would stand (#8): the list under the list, the heading under it.
-                    return blockAnchor(view, block);
+                    // At the block the field edits (#8): above it, its lens row with it (`blockFieldAnchor`).
+                    return blockFieldAnchor(view, block);
                 }
                 if (target !== undefined) {
                     return rangeAnchor(view, Math.min(target.from, size), Math.min(target.to, size));
@@ -1731,6 +1775,7 @@ class ObjectToolbarView implements PluginView {
             valid: () => bar.editing,
             hidden: () => this.barHidden(bar, 'displaced'),
             fit: (room, fresh) => bar.fitField(room, fresh),
+            prefer: block === undefined ? undefined : () => 'above',
         }, { force: true });
     }
 
@@ -2030,16 +2075,20 @@ class ObjectToolbarView implements PluginView {
         } else if (isBlockObject(object) || sameObject(object, this.matured)) {
             this.cancelPending();
             this.matured = isBlockObject(object) ? null : object;
-            const presentation = this.present(object);
             this.forced = sameObject(object, this.forced) ? this.forced : null;
+            // The refusals that need no presentation first: it asks the host for lenses and code actions.
+            // One thing at a time: a non-empty selection has the bubble, not the caret's bar.
+            const refused = (!force && (this.slot.holds('bubble') || selectionWantsBubble(this.view)))
+                // Esc dismissed it, a row menu is open, a field holds the slot.
+                || (!this.selectionBar.editing && !this.slot.wouldGrant({ kind: 'bar', key: barKey('bar', object), el: this.selectionBar.el }, { force }));
+            const presentation = refused ? null : this.present(object);
             // Alt+Enter draws what a rest does not: the element's Attributes of Bold…, a breadcrumb of two bare parts (F6).
-            const keyed = this.forced !== null && (presentation.verbs.some(v => v.id === 'inline-attributes') || presentation.restless === true);
-            this.forced = keyed ? this.forced : null;
-            if (barless(object, presentation) && !keyed) {
-                // A heading's verbs are other extensions' lenses and actions; with none, no bar.
+            const keyed = presentation !== null && this.forced !== null && (presentation.verbs.some(v => v.id === 'inline-attributes') || presentation.restless === true);
+            this.forced = keyed || presentation === null ? this.forced : null;
+            if (presentation === null) {
                 this.hideBar(this.selectionBar);
-            } else if (!force && (this.slot.holds('bubble') || selectionWantsBubble(this.view))) {
-                // One thing at a time: a non-empty selection has the bubble, not the caret's bar.
+            } else if (barless(object, presentation) && !keyed) {
+                // A heading's verbs are other extensions' lenses and actions; with none, no bar.
                 this.hideBar(this.selectionBar);
             } else {
                 this.selectionBar.show(object, presentation);
@@ -2081,6 +2130,8 @@ class ObjectToolbarView implements PluginView {
             key: barKey(kind, object),
             el: bar.el,
             anchor: () => (bar.object === null ? null : anchorOf(this.view, this.partAnchor(bar) ?? bar.object)),
+            // An object in a note's body or a sidebar floated into the margin: its bar stands there, at it (#15).
+            inMargin: () => bar.object !== null && floatedAround(this.view, (this.partAnchor(bar) ?? bar.object).from) !== null,
             valid: () => bar.object !== null,
             hidden: reason => this.barHidden(bar, reason),
             fit: (room, fresh) => {
@@ -2245,7 +2296,6 @@ class ObjectToolbarView implements PluginView {
             || focusPlace(this.view).kind === 'control'
             ? null
             : this.present(object);
-        const current = this.slot.current;
         // A dismissed pointer's bar is not coming: no cue promises it.
         const dismissed = object !== null && this.slot.dismissedOf('hover@').includes(barKey('hover', object));
         // Typing hid the caret's bar and its rest is to bring it back: the pointer's bar waits too, at the cue.
@@ -2259,7 +2309,8 @@ class ObjectToolbarView implements PluginView {
         } else if (typingHold) {
             this.cue(this.hovered);
             this.hideBar(this.hoverBar);
-        } else if (current !== null && current.el !== this.hoverBar.el) {
+        } else if (!this.hoverBar.editing && !this.slot.wouldGrant({ kind: 'hover', key: barKey('hover', object), el: this.hoverBar.el })) {
+            // Another layer holds the slot, or a row menu is open: the cue, and no bar drawn only to be hidden.
             this.cue(this.hovered);
             this.hoverBar.hide();
         } else {
@@ -3074,6 +3125,9 @@ class ObjectToolbarView implements PluginView {
                     }),
                 };
             }
+            case 'footnote':
+            case 'footnote_entry':
+                return this.footnotePresentation(object);
             case 'badge': {
                 const mark = object.node.attrs.mark as { rule?: unknown } | null;
                 return {
@@ -3474,6 +3528,194 @@ class ObjectToolbarView implements PluginView {
             }
             return tr !== null;
         }, hint);
+    }
+
+    /**
+     * A footnote's bar (wave 4 #5b): a reference's — Go to footnote text ·
+     * Label… · Delete footnote, its last reference, else Delete reference — an
+     * inline footnote's, and an entry's — Back to reference · Label… · Sort
+     * footnotes, while they are out of order · Delete footnote. The title
+     * says the number and, in the code font, the label; the hints name the
+     * label, which stays while numbers change.
+     */
+    private footnotePresentation(object: EditorObject): Presentation {
+        const view = this.view;
+        const node = (object as Extract<EditorObject, { node: unknown }>).node;
+        const index = footnoteIndexOf(view.state);
+        const label = node.attrs.label as string | null;
+        const said = (done: { tr: Transaction; hint: Said } | null) => {
+            if (done !== null) {
+                dispatchWithHint(view, done.tr, done.hint);
+            }
+            return done !== null;
+        };
+        const labelVerb = (heading: string, mayJoin: boolean): Verb => {
+            const step: FieldStep = {
+                value: label ?? '',
+                label: 'Label',
+                heading: fieldHeading(heading, 'Label'),
+                keys: '↵ set · Esc cancel',
+                followed: [object],
+                commit: typed => {
+                    const now = currentObject(view.state, object);
+                    if (now === null || typed === label) {
+                        this.act(object, () => false);
+                        return;
+                    }
+                    const refusal = labelRefusal(view.state, typed, label, mayJoin, now.from);
+                    if (refusal !== null) {
+                        return refusedStep(step, typed, refusal);
+                    }
+                    const done = renameFootnoteTransaction(view.state, now.from, typed);
+                    const unwritable = done === null ? null : noteRefusal(done.tr);
+                    if (unwritable !== null) {
+                        return refusedStep(step, typed, unwritable);
+                    }
+                    this.act(object, current => said(renameFootnoteTransaction(view.state, current.from, typed)));
+                },
+            };
+            // The label in the code font, as the bar's title draws it.
+            const tip: Tip = { parts: ['Renames ', { code: label ?? '' }, ' in every reference and in its text (↵ set · Esc cancel)'] };
+            return { id: 'footnote-label', label: 'Label…', title: tipText(tip), tip, slot: 'edit', field: step };
+        };
+        if (object.kind === 'footnote') {
+            const ref = refAt(index, object.from);
+            if (label === null) {
+                const number = ref?.number ?? null;
+                const heading = number === null ? 'Inline footnote' : `Inline footnote ${number}`;
+                const source = node.attrs.source as string;
+                const step: FieldStep = {
+                    value: source,
+                    label: 'Text',
+                    heading,
+                    keys: '↵ set · Esc cancel',
+                    followed: [object],
+                    commit: typed => {
+                        const now = currentObject(view.state, object);
+                        if (now === null || typed === source) {
+                            this.act(object, () => false);
+                            return;
+                        }
+                        const edit = editInlineFootnote(view.state, now.from, typed);
+                        if (edit !== null && 'refusal' in edit) {
+                            return refusedStep(step, typed, edit.refusal);
+                        }
+                        this.act(object, current => {
+                            const again = editInlineFootnote(view.state, current.from, typed);
+                            if (again === null || !('tr' in again)) {
+                                return false;
+                            }
+                            view.dispatch(again.tr);
+                            return true;
+                        });
+                    },
+                };
+                return {
+                    label: heading,
+                    short: 'Inline footnote',
+                    title: `An inline footnote: ^[${source}]`,
+                    verbs: [
+                        { id: 'edit-inline-footnote', label: 'Edit text…', short: 'Edit…', title: 'Its text, as Markdown between ^[ and ] (Enter to set, Esc to cancel).', slot: 'edit', field: step },
+                        { id: 'delete-footnote', label: 'Delete footnote', short: 'Delete', title: `Deletes the footnote and its text — ${undoKey()}`, slot: 'destroy', run: () => this.act(object, current => said(deleteFootnoteRefTransaction(view.state, current.from))) },
+                    ],
+                };
+            }
+            if (ref === undefined || ref.number === null) {
+                return {
+                    label: 'No footnote ·',
+                    code: label,
+                    title: `No footnote ${label} — the preview shows it as text. Label… gives it one that is there.`,
+                    verbs: [
+                        labelVerb('Footnote', true),
+                        { id: 'delete-reference', label: 'Delete reference', short: 'Delete', title: `Deletes the reference — ${undoKey()}`, slot: 'destroy', run: () => this.act(object, current => said(deleteFootnoteRefTransaction(view.state, current.from))) },
+                    ],
+                };
+            }
+            // A source block's references count too (review 1 M2): with one left, the text stays.
+            const others = index.refs.filter(r => r.label === label).length - 1;
+            const last = others === 0;
+            const goTip: Tip = { parts: [`Moves the caret to the footnote's text — ↩ or ${quotedVerb('Back to reference')} returns (`, `${macKeys() ? 'Cmd' : 'Ctrl'}+click on `, { code: `[${ref.number}]` }, ' does the same)'] };
+            return {
+                label: `Footnote ${ref.number} ·`,
+                short: `Footnote ${ref.number}`,
+                tiny: String(ref.number),
+                code: label,
+                title: `Footnote ${ref.number}, written [^${label}]: its text stands where the file has it.`,
+                verbs: [
+                    {
+                        id: 'go-to-footnote', label: 'Go to footnote text', short: 'Go to text', slot: 'open', jump: true,
+                        title: tipText(goTip),
+                        tip: goTip,
+                        run: () => this.act(object, current => {
+                            const done = goToFootnoteTransaction(view.state, current.from);
+                            if (done !== null) {
+                                view.dispatch(done.tr);
+                                announceHint(view, done.number === null ? 'Footnote text' : `Footnote ${done.number} text`);
+                            }
+                            return done !== null;
+                        }),
+                    },
+                    labelVerb(`Footnote ${ref.number}`, false),
+                    last
+                        ? { id: 'delete-footnote', label: 'Delete footnote', short: 'Delete', title: `Deletes the reference and its text — ${undoKey()}`, slot: 'destroy', run: () => this.act(object, current => said(deleteFootnoteRefTransaction(view.state, current.from))) }
+                        : { id: 'delete-reference', label: 'Delete reference', short: 'Delete', title: `Footnote text stays — ${others} more reference${others === 1 ? '' : 's'}`, slot: 'destroy', run: () => this.act(object, current => said(deleteFootnoteRefTransaction(view.state, current.from))) },
+                ],
+            };
+        }
+        const entry = entryAt(index, object.from);
+        const number = entry?.number ?? null;
+        const count = entry?.refCount ?? 0;
+        const chip = entry === undefined || number !== null ? null : orphanChip(entry);
+        const verbs: Verb[] = [
+            {
+                id: 'back-to-reference', label: 'Back to reference', short: 'Back', slot: 'open', jump: true,
+                title: 'Returns to the reference you came from, else the first',
+                refusal: number === null
+                    ? entry !== undefined && entry.duplicateOf !== null
+                        ? `No reference leads here — they go to footnote ${entry.duplicateOf}, which has the same label`
+                        : 'No reference to go back to — this footnote is not referenced'
+                    : null,
+                run: () => this.act(object, current => {
+                    const done = backToReferenceTransaction(view.state, current.from);
+                    if (done !== null) {
+                        view.dispatch(done.tr);
+                        announceHint(view, done.number === null ? 'Reference' : `Reference ${done.number}`);
+                    }
+                    return done !== null;
+                }),
+            },
+            labelVerb(number === null ? 'Footnote' : `Footnote ${number}`, false),
+        ];
+        if (index.outOfOrder) {
+            verbs.push({
+                id: 'sort-footnotes', label: 'Sort footnotes', short: 'Sort', slot: 'type',
+                title: `Puts the footnote texts in number order, unreferenced ones last — ${undoKey()}`,
+                refusal: sortRefusal(view.state),
+                run: () => this.act(object, () => {
+                    const tr = sortFootnotesTransaction(view.state);
+                    if (tr !== null) {
+                        dispatchWithHint(view, tr, `Footnotes sorted — ${undoKey()}`);
+                    }
+                    return tr !== null;
+                }),
+            });
+        }
+        const refs = number === null ? 0 : count;
+        verbs.push({
+            id: 'delete-footnote', label: 'Delete footnote', short: 'Delete', slot: 'destroy',
+            title: refs === 0 ? `Deletes its text — ${undoKey()}` : `Deletes its text and ${refs === 1 ? 'its reference' : `${refs} references`} — ${undoKey()}`,
+            refusal: entryDeleteRefusal(view.state, object.from),
+            run: () => this.act(object, current => said(deleteFootnoteEntryTransaction(view.state, current.from))),
+        });
+        return {
+            label: number === null ? 'Footnote ·' : `Footnote ${number} ·`,
+            short: number === null ? 'Footnote' : `Footnote ${number}`,
+            tiny: number === null ? undefined : String(number),
+            code: label ?? '',
+            after: chip !== null ? ` · ${chip.text}` : count > 1 ? ` · ${count} references` : undefined,
+            title: chip !== null ? chip.title : `The text of footnote ${number as number}, where the file writes it.`,
+            verbs,
+        };
     }
 
     private remove(object: EditorObject, hint: string): void {

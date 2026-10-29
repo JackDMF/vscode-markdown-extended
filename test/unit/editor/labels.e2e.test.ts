@@ -321,10 +321,15 @@ suite('Editor labels, menus and states (e2e)', () => {
             assert.deepStrictEqual({ ...title, colour: undefined }, { size: '11px', colour: undefined, cursor: 'default', next: 'mep-object-separator', focusable: -1 });
             assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.verb), 'edit-link');
             assert.strictEqual((await style(`${BAR} [data-verb="edit-link"]`, 'outline-offset'))['outline-offset'], '1px');
-            // Alt+Enter's focus is the keyboard's: the verb's hover shows at once, ring or no `:focus-visible`.
             const tip = () => page.$eval('.mep-tooltip', el => ({
                 shown: !(el as HTMLElement).hidden, text: el.textContent ?? '', fits: el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= window.innerWidth,
             }));
+            // Alt+Enter's first focus is automatic: no hover over the text beside the bar (wave 4 #5b UX review 2) — its
+            // name and description say it. An arrow key's focus is the keyboard's: the hover shows at once.
+            assert.strictEqual((await tip()).shown, false, 'no hover on Alt+Enter\'s first focus');
+            await page.keyboard.press('ArrowRight');
+            await page.keyboard.press('ArrowLeft');
+            await delay(80);
             const edit = await tip();
             assert.ok(edit.shown && edit.text.startsWith('Link the text to another address'), JSON.stringify(edit));
             // The bar's longest tip, Attributes…: wrapped inside its box, inside the window.

@@ -36,8 +36,9 @@ import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
-import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
+import { LayerClaim, LayerSlot, Rect, REST_MS, blockFieldAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
 import { dismissRefusal, showHint, showRefusal } from '../hint';
+import { dispatchWithHint, insertFootnoteTransaction } from '../footnotes';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
 import { chevronNode, lensLabelNodes } from '../lenses';
@@ -66,7 +67,7 @@ import { macKeys } from '../hint';
 import { Tooltips, describeAs, partNode } from '../tooltip';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertPropertiesTransaction, insertSourceTransaction, insertWrapperTransaction, isCurrent,
-    markActive, markRefusal, toggleMarkup, wrapSourceTransaction,
+    markActive, markRefusal, toggleMarkup,
 } from './commands';
 
 /** What the toolbar needs from the page. */
@@ -368,7 +369,7 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
             const active = reason === null && isCurrent(currentBlock(state), apply.node, apply.level);
             return { enabled: reason === null && (active || blockCommand(apply.node, apply.level)(state)), active, reason };
         }
-        case 'wrap-source': {
+        case 'footnote': {
             const enabled = canWrapSource(state);
             return { enabled, active: false, reason: enabled ? null : WRAP_LOCK };
         }
@@ -507,6 +508,25 @@ function triggerOf(menu: Menu): HTMLElement | undefined {
     return menu.parent ? menu.opener : menu.face;
 }
 
+/**
+ * A "…" — the row's or the bubble's, one thing in both (overflow review 2):
+ * its menu and face, the divider in its menu, each control that may leave
+ * where it stands and its entry in the menu, and what has left, in the order
+ * it left (`fitWithMore`).
+ */
+class MoreContainer<Id extends string> {
+    readonly entries = new Map<Id, HTMLElement>();
+    moved: readonly Id[] = [];
+
+    constructor(readonly menu: Menu, readonly face: HTMLElement, readonly divider: HTMLElement, readonly controls: ReadonlyMap<Id, HTMLElement>) {}
+
+    /** `id`'s control where it stands, its entry hidden — or (`inMore`) the other way round. */
+    place(id: Id, inMore: boolean): void {
+        (this.controls.get(id) as HTMLElement).hidden = inMore;
+        (this.entries.get(id) as HTMLElement).hidden = !inMore;
+    }
+}
+
 class ToolbarView implements PluginView {
     private readonly mount: HTMLElement;
     private readonly row: HTMLElement;
@@ -540,26 +560,18 @@ class ToolbarView implements PluginView {
     private pointerHeld = false;
     /** Watches the row and its status for a size that changes what fits in it (`layoutRow`). */
     private rowSize: ResizeObserver | undefined;
-    /** "…": the menu that holds what does not fit in the row (`layoutRow`), its face, and the group the face stands in. */
-    private more!: Menu;
-    private moreFace!: HTMLElement;
+    /** The row's and the count's widths as `rowSize` last reported them; measured while it has not (`rowLayoutKey`). */
+    private reportedWidths = new Map<Element, number>();
+    /** The row's "…" (`layoutRow`): what does not fit in the row — its divider between the moved marks and the moved menus — and the group its face stands in. */
+    private rowMore!: MoreContainer<RowControl>;
     private moreGroup!: HTMLElement;
-    /** In "…", between the moved marks and the moved menus. */
-    private moreDivider!: HTMLElement;
-    /** Each control that may leave the row: its element in the row, and its entry in "…". */
+    /** Each control that may leave the row: its element in the row. */
     private readonly rowControls = new Map<RowControl, HTMLElement>();
-    private readonly overflowEntries = new Map<RowControl, HTMLElement>();
     /** The row's menus by id; all but Block type may move into "…". */
     private readonly rowMenus = new Map<ToolbarMenu, Menu>();
-    /** What is in "…" now, in the order it left the row (`ROW_OVERFLOW`). */
-    private moved: readonly RowControl[] = [];
-    /** The bubble's "…" (`fitBubble`): its menu, its face, each control's button in the bubble and its entry in "…", what moved, and the room it was fitted to. */
-    private bubbleMore!: Menu;
-    private bubbleMoreFace!: HTMLElement;
-    private bubbleDivider!: HTMLElement;
+    /** The bubble's "…" (`fitBubble`), each control's button in the bubble, and the room it was fitted to. */
+    private bubbleMore!: MoreContainer<string>;
     private readonly bubbleControls = new Map<string, HTMLElement>();
-    private readonly bubbleEntries = new Map<string, HTMLElement>();
-    private bubbleMoved: readonly string[] = [];
     private bubbleFitted = '';
     /** Export's label: `layoutRow` names the running format in it, as the row's room allows. */
     private exportLabel!: HTMLElement;
@@ -615,7 +627,7 @@ class ToolbarView implements PluginView {
         this.listen(view.dom, 'focusout', e => this.focusLeft(e as FocusEvent));
         this.listen(this.bubble, 'focusout', e => this.focusLeft(e as FocusEvent));
         // The bubble's "…" menu hangs in the layer: the focus leaving it for the page's outside drops the bubble as leaving the bubble does.
-        this.listen(this.bubbleMore.panel, 'focusout', e => this.focusLeft(e as FocusEvent));
+        this.listen(this.bubbleMore.menu.panel, 'focusout', e => this.focusLeft(e as FocusEvent));
         // A source box or a property's field taking the focus, or giving it
         // back, changes no state: the row is read again once the focus has
         // moved (`focusPlace.ts`) — once per move: a move fires a focusout and a focusin.
@@ -693,9 +705,15 @@ class ToolbarView implements PluginView {
         // Export: laid out again when either changes (`layoutRow`), and when a
         // font has loaded, which changes every control's width.
         if (typeof ResizeObserver !== 'undefined') {
-            this.rowSize = new ResizeObserver(() => this.layoutRow());
+            this.rowSize = new ResizeObserver(entries => {
+                for (const entry of entries) {
+                    this.reportedWidths.set(entry.target, entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width);
+                }
+                this.layoutRow();
+            });
             this.rowSize.observe(this.row);
             this.rowSize.observe(this.row.querySelector('.mep-row-status') as Element);
+            this.rowSize.observe(this.row.querySelector('.mep-row-said') as Element);
         }
         if (typeof document.fonts !== 'undefined') {
             this.listen(document.fonts, 'loadingdone', () => {
@@ -713,11 +731,42 @@ class ToolbarView implements PluginView {
      * gone, the field closes at the next `update`, nothing written.
      */
     applied(transactions: readonly Transaction[], doc: EditorState['doc']): void {
-        const open = this.fieldBar;
-        if (open === null || !transactions.some(tr => tr.docChanged)) {
+        if (!transactions.some(tr => tr.docChanged)) {
             return;
         }
-        this.fieldTargetGone = followAll(open.followed as Followed[], transactions, doc).size > 0;
+        this.followBubble(transactions);
+        const open = this.fieldBar;
+        if (open !== null) {
+            this.fieldTargetGone = followAll(open.followed as Followed[], transactions, doc).size > 0;
+        }
+    }
+
+    /**
+     * A change of the document moved the selection the bubble is about (a host
+     * resync above it): its key follows — the wait, the claim and an Esc
+     * dismissal with it — so the bubble neither blinks nor comes back. A
+     * selection the change emptied has no bubble: its key ends.
+     */
+    private followBubble(transactions: readonly Transaction[]): void {
+        if (this.bubbleParked !== null) {
+            const parked = mappedSelectionKey(this.bubbleParked, transactions);
+            if (parked === null) {
+                this.slot.caretLeft(this.bubbleParked);
+            } else {
+                this.slot.rekeyAll(new Map([[this.bubbleParked, parked]]));
+            }
+            this.bubbleParked = parked;
+        }
+        if (this.bubbleKey !== null) {
+            const key = mappedSelectionKey(this.bubbleKey, transactions);
+            if (key === null) {
+                // Its claim and dismissal end with it, under the key they were made with.
+                this.dropBubble();
+            } else {
+                this.slot.rekeyAll(new Map([[this.bubbleKey, key]]));
+                this.bubbleKey = key;
+            }
+        }
     }
 
     update(view: EditorView): void {
@@ -786,7 +835,7 @@ class ToolbarView implements PluginView {
                 const enabled = [...menu.tools, ...menu.children.flatMap(c => c.tools)].some(t => stateOf(t.action).enabled);
                 setState(menu.opener, enabled, false);
             }
-            if (menu === this.more || menu === this.bubbleMore) {
+            if (menu === this.rowMore.menu || menu === this.bubbleMore.menu) {
                 continue;
             }
             if (menu.face && menu.scope === 'document') {
@@ -841,11 +890,11 @@ class ToolbarView implements PluginView {
         if (key === this.layoutKey) {
             return false;
         }
-        const before = this.moved.join(',');
+        const before = this.rowMore.moved.join(',');
         // The focus on the row's control or on "…" across the fit: a control that leaves goes to "…", "…" itself is measured in and out,
         // and where "…" is hidden after (nothing moved), a control of the row that is shown (`holdFocus`).
         const active = document.activeElement as HTMLElement | null;
-        const keepMore = holdFocus(this.rowControls.values(), this.moreFace);
+        const keepMore = holdFocus(this.rowControls.values(), this.rowMore.face);
         // The focus in an open menu: the fit shows every control, and hides the entries of "…" for it, which drops the focus out of the menu.
         const inMenus = active === null ? [] : this.menus.filter(m => !m.panel.hidden && m.panel.contains(active));
         const role = this.lockRole;
@@ -929,10 +978,10 @@ class ToolbarView implements PluginView {
                 this.exportLabel.textContent = exportBusyLabel(running, 'short');
             }
         }
-        this.moved = moved;
+        this.rowMore.moved = moved;
         const { marks, menus } = moreOrder(moved);
-        this.moreDivider.hidden = marks.length === 0 || menus.length === 0;
-        this.more.children = menus.map(id => this.rowMenus.get(id) as Menu);
+        this.rowMore.divider.hidden = marks.length === 0 || menus.length === 0;
+        this.rowMore.menu.children = menus.map(id => this.rowMenus.get(id) as Menu);
         this.layoutKey = this.rowLayoutKey();
         keepMore();
         if (active !== null && inMenus.length > 0 && active.isConnected && document.activeElement !== active && active.closest('[hidden]') === null) {
@@ -962,7 +1011,7 @@ class ToolbarView implements PluginView {
                 return false;
             }
             const rowMenu = this.rowMenus.get(menu.id as ToolbarMenu) === menu;
-            return menu === this.more || (rowMenu && (was.includes(menu.id) || now.includes(menu.id as RowControl)));
+            return menu === this.rowMore.menu || (rowMenu && (was.includes(menu.id) || now.includes(menu.id as RowControl)));
         });
         for (const menu of closing) {
             this.closeMenu(menu);
@@ -974,7 +1023,7 @@ class ToolbarView implements PluginView {
         if (held.some(menu => menu.panel.hidden)) {
             const visible = (el: HTMLElement | undefined) => (el !== undefined && el.isConnected && el.closest('[hidden]') === null ? el : undefined);
             const face = closing.map(menu => menu.face).find(visible);
-            (visible(face) ?? visible(this.moreFace))?.focus({ preventScroll: true });
+            (visible(face) ?? visible(this.rowMore.face))?.focus({ preventScroll: true });
         }
     }
 
@@ -996,19 +1045,22 @@ class ToolbarView implements PluginView {
         }
     }
 
-    /** What the row's layout depends on, besides the controls themselves: its width, the count, the block type's label, the lock, the running export. */
+    /**
+     * What the row's layout depends on, besides the controls themselves: its width, the count, the block type's label, the lock, the running export.
+     * The widths as `rowSize` reported them, so a transaction forces no layout; measured only before its first report.
+     */
     private rowLayoutKey(): string {
         const said = this.row.querySelector<HTMLElement>('.mep-row-said');
+        const rowWidth = this.reportedWidths.get(this.row) ?? this.row.clientWidth;
+        const saidWidth = said === null ? 0 : this.reportedWidths.get(said) ?? said.offsetWidth;
         const blockType = this.rowMenus.get('block-type')?.face?.textContent ?? '';
-        return [this.row.clientWidth, said?.offsetWidth ?? 0, blockType, this.lockRole ?? '', this.host.exporting() ?? ''].join('|');
+        return [rowWidth, saidWidth, blockType, this.lockRole ?? '', this.host.exporting() ?? ''].join('|');
     }
 
     /** `control` back in the row, its entry in "…" hidden; a menu is top-level again. */
     private showInRow(control: RowControl): void {
-        const el = this.rowControls.get(control) as HTMLElement;
-        el.hidden = false;
-        (el.parentElement as HTMLElement).hidden = false;
-        (this.overflowEntries.get(control) as HTMLElement).hidden = true;
+        this.rowMore.place(control, false);
+        (this.rowControls.get(control)?.parentElement as HTMLElement).hidden = false;
         const menu = this.rowMenus.get(control as ToolbarMenu);
         if (menu) {
             menu.parent = undefined;
@@ -1017,14 +1069,12 @@ class ToolbarView implements PluginView {
 
     /** `control` out of the row and into "…"; a group whose controls all left goes with its divider. */
     private moveToMore(control: RowControl): void {
-        const el = this.rowControls.get(control) as HTMLElement;
-        el.hidden = true;
-        const group = el.parentElement as HTMLElement;
+        this.rowMore.place(control, true);
+        const group = this.rowControls.get(control)?.parentElement as HTMLElement;
         group.hidden = Array.from(group.children).every(c => (c as HTMLElement).hidden);
-        (this.overflowEntries.get(control) as HTMLElement).hidden = false;
         const menu = this.rowMenus.get(control as ToolbarMenu);
         if (menu) {
-            menu.parent = this.more;
+            menu.parent = this.rowMore.menu;
         }
     }
 
@@ -1034,15 +1084,12 @@ class ToolbarView implements PluginView {
      * marks, then menus — the ones on said so.
      */
     private updateMore(lock: string | null): void {
-        const { marks, menus } = moreOrder(this.moved);
+        const { marks, menus } = moreOrder(this.rowMore.moved);
         const on = marks.filter(id => this.rowControls.get(id)?.classList.contains('mep-active'));
         const name = (id: RowControl) => (this.rowMenus.has(id as ToolbarMenu) ? MENU_LABELS[id as ToolbarMenu] : TOOLBAR_ACTIONS.find(a => a.id === id)?.label ?? id);
-        setState(this.moreFace, lock === null, false);
-        this.moreFace.classList.toggle('mep-has-on', on.length > 0);
-        this.moreFace.setAttribute('aria-label', moreName('row', [...marks, ...menus].map(name), on.map(name)));
-        this.tipOfControl.set(this.moreFace, plainTip('More', lock));
-        this.tips.refresh(this.moreFace);
-        if (lock !== null && !this.more.panel.hidden) {
+        setState(this.rowMore.face, lock === null, false);
+        this.nameMore(this.rowMore.face, [...marks, ...menus].map(name), on.map(name), lock);
+        if (lock !== null && !this.rowMore.menu.panel.hidden) {
             this.closeAll();
         }
     }
@@ -1223,19 +1270,18 @@ class ToolbarView implements PluginView {
         const more = this.newMenu('bubble-more', 'More', 'selection');
         more.alignEnd = true;
         more.ofLayer = true;
-        this.bubbleMore = more;
-        this.bubbleDivider = separator();
-        this.bubbleDivider.hidden = true;
-        for (const action of TOOLBAR_ACTIONS.filter(inBubble)) {
-            if (!isRowMark(action.id) && !this.bubbleDivider.isConnected) {
-                more.panel.append(this.bubbleDivider);
-            }
-            this.bubbleEntries.set(action.id, this.moreMark(more, action));
-        }
         const face = moreControl('row');
         face.hidden = false;
         this.wireFace(more, face);
-        this.bubbleMoreFace = face;
+        const divider = separator();
+        divider.hidden = true;
+        this.bubbleMore = new MoreContainer(more, face, divider, this.bubbleControls);
+        for (const action of TOOLBAR_ACTIONS.filter(inBubble)) {
+            if (!isRowMark(action.id) && !divider.isConnected) {
+                more.panel.append(divider);
+            }
+            this.bubbleMore.entries.set(action.id, this.moreMark(more, action));
+        }
     }
 
     /**
@@ -1274,43 +1320,43 @@ class ToolbarView implements PluginView {
         const left = bubble.style.left;
         bubble.style.left = '0px';
         bubble.style.maxWidth = `${Math.floor(room)}px`;
-        const show = (id: string) => {
-            (this.bubbleControls.get(id) as HTMLElement).hidden = false;
-            (this.bubbleEntries.get(id) as HTMLElement).hidden = true;
-        };
-        const hide = (id: string) => {
-            (this.bubbleControls.get(id) as HTMLElement).hidden = true;
-            (this.bubbleEntries.get(id) as HTMLElement).hidden = false;
-        };
+        const more = this.bubbleMore;
+        const show = (id: string) => more.place(id, false);
+        const hide = (id: string) => more.place(id, true);
         // "…" is taken out of the bubble and put back by the measurement, and an element that is hidden or removed gives its focus up
         // at once — which the bubble takes for the focus having left it. The bubble holds it meanwhile, and the control has it again
         // after; one the fit hid hands it to "…", which holds it now (else the first control still shown).
-        const keepMore = holdFocus(this.bubbleControls.values(), this.bubbleMoreFace, bubble);
+        const keepMore = holdFocus(this.bubbleControls.values(), this.bubbleMore.face, bubble);
         const moved = fitWithMore(BUBBLE_OVERFLOW, () => overflows(bubble), show, hide, shown => {
             if (shown) {
-                bubble.append(this.bubbleMoreFace);
+                bubble.append(this.bubbleMore.face);
             } else {
-                this.bubbleMoreFace.remove();
+                this.bubbleMore.face.remove();
             }
         });
         keepMore();
         bubble.style.left = left;
-        this.bubbleMoved = moved;
-        this.bubbleDivider.hidden = !(moved.some(isRowMark) && moved.some(id => !isRowMark(id)));
-        if (moved.length === 0 && !this.bubbleMore.panel.hidden) {
-            this.closeMenu(this.bubbleMore);
+        this.bubbleMore.moved = moved;
+        this.bubbleMore.divider.hidden = !(moved.some(isRowMark) && moved.some(id => !isRowMark(id)));
+        if (moved.length === 0 && !this.bubbleMore.menu.panel.hidden) {
+            this.closeMenu(this.bubbleMore.menu);
         }
         this.updateBubbleMore();
     }
 
     /** The bubble's "…": a dot when a control in it is on, its name what it holds in its menu's order, the ones on said so. */
     private updateBubbleMore(): void {
-        const order = TOOLBAR_ACTIONS.filter(inBubble).filter(a => this.bubbleMoved.includes(a.id));
+        const order = TOOLBAR_ACTIONS.filter(inBubble).filter(a => this.bubbleMore.moved.includes(a.id));
         const on = order.filter(a => this.bubbleControls.get(a.id)?.classList.contains('mep-active'));
-        this.bubbleMoreFace.classList.toggle('mep-has-on', on.length > 0);
-        this.bubbleMoreFace.setAttribute('aria-label', moreName('row', order.map(a => a.label), on.map(a => a.label)));
-        this.tipOfControl.set(this.bubbleMoreFace, plainTip('More'));
-        this.tips.refresh(this.bubbleMoreFace);
+        this.nameMore(this.bubbleMore.face, order.map(a => a.label), on.map(a => a.label), null);
+    }
+
+    /** A "…" face — the row's or the bubble's: a dot when a control in it is on, named for what it holds, the ones on said so. */
+    private nameMore(face: HTMLElement, names: readonly string[], on: readonly string[], lock: string | null): void {
+        face.classList.toggle('mep-has-on', on.length > 0);
+        face.setAttribute('aria-label', moreName('row', names, on));
+        this.tipOfControl.set(face, plainTip('More', lock));
+        this.tips.refresh(face);
     }
 
     /** A mark's button: its glyph is the element the mark renders as, held to the button's size. */
@@ -1358,25 +1404,24 @@ class ToolbarView implements PluginView {
     private buildMore(): HTMLElement {
         const more = this.newMenu('more', 'More', 'selection');
         more.alignEnd = true;
-        this.more = more;
-        for (const action of TOOLBAR_ACTIONS.filter(inRow)) {
-            this.overflowEntries.set(action.id, this.moreMark(more, action));
-        }
-        this.moreDivider = separator();
-        this.moreDivider.hidden = true;
-        more.panel.append(this.moreDivider);
-        // In row order, whatever order they leave in.
-        for (const id of moreOrder(ROW_OVERFLOW).menus) {
-            const item = this.hostEntry(more, this.rowMenus.get(id) as Menu);
-            item.hidden = true;
-            this.overflowEntries.set(id, item);
-            more.panel.append(item);
-        }
         const face = moreControl('row');
         // Shown and hidden with its group.
         face.hidden = false;
         this.wireFace(more, face);
-        this.moreFace = face;
+        const divider = separator();
+        divider.hidden = true;
+        this.rowMore = new MoreContainer(more, face, divider, this.rowControls);
+        for (const action of TOOLBAR_ACTIONS.filter(inRow)) {
+            this.rowMore.entries.set(action.id, this.moreMark(more, action));
+        }
+        more.panel.append(divider);
+        // In row order, whatever order they leave in.
+        for (const id of moreOrder(ROW_OVERFLOW).menus) {
+            const item = this.hostEntry(more, this.rowMenus.get(id) as Menu);
+            item.hidden = true;
+            this.rowMore.entries.set(id, item);
+            more.panel.append(item);
+        }
         const group = div('mep-row-group mep-row-more');
         group.hidden = true;
         group.append(face);
@@ -1791,7 +1836,7 @@ class ToolbarView implements PluginView {
             this.refuseAt(menu.face);
             return;
         }
-        if (menu.parent === this.more && menu.opener && isDisabled(menu.opener)) {
+        if (menu.parent === this.rowMore.menu && menu.opener && isDisabled(menu.opener)) {
             // A menu moved into "…" is refused by its entry as it was by its face, saying why at the entry.
             this.refuseAt(menu.opener);
             return;
@@ -2019,20 +2064,12 @@ class ToolbarView implements PluginView {
                 blockCommand(apply.node, apply.level)(view.state, view.dispatch);
                 view.focus();
                 return;
-            case 'wrap-source': {
-                const tr = wrapSourceTransaction(view.state, apply, this.host.sourceContext());
-                if (!tr) {
-                    return;
+            case 'footnote': {
+                const done = insertFootnoteTransaction(view.state);
+                if (done !== null) {
+                    dispatchWithHint(view, done.tr, done.hint);
                 }
-                view.dispatch(tr);
-                // The block is source now; the host parses it and sends it back
-                // rendered as the preview renders it.
-                this.host.flushReparse();
-                if (apply.definition !== undefined && tr.selection instanceof NodeSelection) {
-                    editRawSourceAt(view, tr.selection.to);
-                } else {
-                    view.focus();
-                }
+                view.focus();
                 return;
             }
             case 'insert-source': {
@@ -2147,10 +2184,10 @@ class ToolbarView implements PluginView {
             showHint(this.view, target.refusal, 'refusal');
             return;
         }
-        // At the block's left edge, where its own bar stands (`blockAnchor`, the bar's own rule, read for the block as it is now) — not at the caret, which a menu leaves wherever it was.
+        // At the block's left edge, above the block (`blockFieldAnchor`, read for the block as it is now) — not at the caret, which a menu leaves wherever it was.
         // A copy, followed while the field is open (#8 F7): the commit writes to it and the field stands at it, a resync above or not.
         const block = { ...target };
-        this.openFieldBar('block-attributes', block.name, 'block-attributes', attributesStep(this.view, block), undefined, () => blockAnchor(this.view, block), part === 'outer');
+        this.openFieldBar('block-attributes', block.name, 'block-attributes', attributesStep(this.view, block), undefined, () => blockFieldAnchor(this.view, block), part === 'outer');
     }
 
     /**
@@ -2369,6 +2406,8 @@ class ToolbarView implements PluginView {
                 }
             },
             fit: (room, fresh) => (this.fieldBar?.bar === bar ? this.fieldBar.row.fit(room, fresh) : undefined),
+            // A block's field (Attributes…): above the block, as from its bar.
+            prefer: anchorAt ? () => 'above' : undefined,
         }, { force: true });
         if (!granted) {
             this.closeFieldBar();
@@ -2395,7 +2434,7 @@ class ToolbarView implements PluginView {
 
     private focusLeft(e: FocusEvent): void {
         const to = e.relatedTarget as Element | null;
-        if (to && (this.bubble.contains(to) || this.bubbleMore.panel.contains(to) || placeOfElement(this.view, to).kind === 'text')) {
+        if (to && (this.bubble.contains(to) || this.bubbleMore.menu.panel.contains(to) || placeOfElement(this.view, to).kind === 'text')) {
             return;
         }
         // The focus left, the selection did not: an Esc dismissal of this selection's bubble stays.
@@ -2409,7 +2448,7 @@ class ToolbarView implements PluginView {
     bubbleWanted(): boolean {
         const sel = this.view.state.selection;
         // The bubble's "…" menu hangs in the layer, outside the bubble: the focus in it is the bubble's.
-        const focused = focusPlace(this.view).kind === 'text' || this.bubble.contains(document.activeElement) || this.bubbleMore.panel.contains(document.activeElement);
+        const focused = focusPlace(this.view).kind === 'text' || this.bubble.contains(document.activeElement) || this.bubbleMore.menu.panel.contains(document.activeElement);
         return focused && sel instanceof TextSelection && !sel.empty
             && sel.$from.parent.inlineContent && sel.$to.parent.inlineContent && !sel.$from.parent.type.spec.code;
     }
@@ -2490,7 +2529,7 @@ class ToolbarView implements PluginView {
         this.bubbleKey = key;
         this.bubble.hidden = false;
         const view = this.view;
-        const granted = this.slot.request({
+        const claim: LayerClaim = {
             kind: 'bubble',
             key,
             el: this.bubble,
@@ -2501,11 +2540,12 @@ class ToolbarView implements PluginView {
             // In a note's body (sidenote, marginal note) set into the margin: above the selected line, never over the
             // note's text below it (#15 review 2). A sidebar keeps the normal rule — beside, off the text (review 3).
             prefer: () => (floatedAround(view, view.state.selection.from)?.closest('.sidenote, .mnote') ? 'above' : undefined),
-            valid: () => this.bubbleWanted() && this.selectionKey() === key,
+            // Its key, as a change of the document moved it (`followBubble`).
+            valid: () => this.bubbleWanted() && this.selectionKey() === claim.key,
             hidden: () => this.hideBubble(),
             fit: (room, fresh) => this.fitBubble(room, fresh),
-        });
-        if (!granted) {
+        };
+        if (!this.slot.request(claim)) {
             this.hideBubble();
         }
     }
@@ -2531,10 +2571,29 @@ class ToolbarView implements PluginView {
     }
 
     private hideBubble(): void {
-        this.closeMenu(this.bubbleMore);
+        this.closeMenu(this.bubbleMore.menu);
         this.bubble.hidden = true;
         this.tips.hide(this.bubble);
     }
+}
+
+/**
+ * The key of the selection `key` names (`sel@from-to`) after `transactions`,
+ * mapped as the selection itself is (`Selection.map`); `null` where they
+ * emptied it.
+ */
+export function mappedSelectionKey(key: string, transactions: readonly Transaction[]): string | null {
+    const m = /^sel@(\d+)-(\d+)$/.exec(key);
+    if (m === null) {
+        return null;
+    }
+    let from = Number(m[1]);
+    let to = Number(m[2]);
+    for (const tr of transactions) {
+        from = tr.mapping.map(from);
+        to = tr.mapping.map(to);
+    }
+    return from < to ? `sel@${from}-${to}` : null;
 }
 
 const toolbarViews = new WeakMap<EditorView, ToolbarView>();

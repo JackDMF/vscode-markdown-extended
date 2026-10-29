@@ -27,7 +27,7 @@
  */
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { PROBING_CLASS, contentIn, firstLineTop, marginContentLeft, rowCeiling, textLines } from './clearance';
+import { PROBING_CLASS, contentIn, contentRight, firstLineTop, lineAt, marginContentLeft, rowCeiling, textLines } from './clearance';
 import { focusPlace } from './focusPlace';
 import { rightLaneEdge } from './lane';
 import { AttributesTarget, EditorObject, currentTarget, isBlockObject, isBlockPlaced, isMarkObject, objectOfNode } from './objects';
@@ -410,6 +410,24 @@ export function blockAnchor(view: EditorView, target: AttributesTarget): Rect | 
 }
 
 /**
+ * Where a block's attributes field stands: above the block (Daniel,
+ * 2026-10-27 — below, it covered the next block's first line; a heading's top
+ * margin takes most of it above) — and above its lens row, which is the
+ * block's own; below where above has no room (`placeStacked`, `prefer`).
+ * The block's anchor (`blockAnchor`) with its top raised over that row.
+ */
+export function blockFieldAnchor(view: EditorView, target: AttributesTarget): Rect | null {
+    const anchor = blockAnchor(view, target);
+    const current = currentTarget(view.state, target);
+    const dom = current === null ? null : view.nodeDOM(current.pos);
+    const row = dom instanceof Element && dom.parentElement === view.dom ? dom.previousElementSibling : null;
+    if (anchor === null || row === null || !row.classList.contains('mep-lens-row')) {
+        return anchor;
+    }
+    return { ...anchor, top: Math.min(anchor.top, row.getBoundingClientRect().top) };
+}
+
+/**
  * The window scrolled for a field of `height` about to open under `block`
  * (#8: an outer part's — the List's under a list far below the caret): when
  * the field would stand past the window's bottom, or the block's last line
@@ -466,19 +484,70 @@ export function anchorOf(view: EditorView, object: EditorObject): Rect | null {
         }
         if (!isMarkObject(object)) {
             const dom = view.nodeDOM(object.from);
-            if (dom instanceof Element) {
-                // An inline element's own line boxes: a note's body floated into
-                // the margin is not one of them, so the layer keeps to the reference's lines.
-                const rects = Array.from(dom.getClientRects()).filter(r => r.width > 0 || r.height > 0);
-                if (rects.length > 0) {
-                    const own = { left: rects[0].left, top: rects[0].top, right: Math.max(...rects.map(r => r.right)), bottom: rects[rects.length - 1].bottom };
-                    return floatedAnchor(view, object.from, dom, own) ?? own;
-                }
+            const own = dom instanceof Element ? boxOf(dom) : null;
+            if (own !== null) {
+                return floatedAnchor(view, object.from, dom as Element, own) ?? own;
             }
         }
         const start = view.coordsAtPos(object.from, 1);
         const end = view.coordsAtPos(object.to, -1);
         return { left: start.left, top: Math.min(start.top, end.top), right: Math.max(start.right, end.right), bottom: Math.max(start.bottom, end.bottom) };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * An inline element's box from its own line boxes — the first's start and
+ * top, the last's bottom — or `null` where it has none: a note's body
+ * floated into the margin is not one of them, so a layer keeps to the
+ * reference's lines. One drawn raised or lowered on a single line keeps to
+ * that line (`onItsLine`).
+ */
+function boxOf(dom: Element): Rect | null {
+    const rects = Array.from(dom.getClientRects()).filter(r => r.width > 0 || r.height > 0);
+    if (rects.length === 0) {
+        return null;
+    }
+    const own = { left: rects[0].left, top: rects[0].top, right: Math.max(...rects.map(r => r.right)), bottom: rects[rects.length - 1].bottom };
+    return rects.length === 1 ? onItsLine(dom, own) : own;
+}
+
+/**
+ * `own`, the box of `dom` — an element raised or lowered out of its line (a
+ * footnote's `[n]`: `vertical-align: super`, `line-height: 0`, a small box
+ * high inside the line) — grown to the top and bottom of the line of text it
+ * stands in, so a layer at it keeps off that line's letters, not only off
+ * the raised box (#9 "never over the caret's line"; wave 4 #5b review). An
+ * element on the baseline (an emoji, an image, a note's reference) keeps
+ * its own box; so does one beside no text.
+ */
+function onItsLine(dom: Element, own: Rect): Rect {
+    if (getComputedStyle(dom).verticalAlign === 'baseline') {
+        return own;
+    }
+    // The block its line belongs to: the first ancestor that is no inline box, or a note's body floated into a margin.
+    let block = dom.parentElement;
+    while (block !== null) {
+        const style = getComputedStyle(block);
+        if (!style.display.startsWith('inline') || style.float !== 'none') {
+            break;
+        }
+        block = block.parentElement;
+    }
+    const line = block === null ? null : lineAt(block, (own.top + own.bottom) / 2);
+    return line === null ? own : { ...own, top: Math.min(own.top, line.top), bottom: Math.max(own.bottom, line.bottom) };
+}
+
+/**
+ * The box of the inline node at `pos` as a layer stands at it (`boxOf`: a
+ * raised `[n]` in its line's height), or `null` where it is not drawn: what
+ * the hint at a selected inline node and the card at a reference anchor to.
+ */
+export function inlineBox(view: EditorView, pos: number): Rect | null {
+    try {
+        const dom = view.nodeDOM(pos);
+        return dom instanceof Element ? boxOf(dom) : null;
     } catch {
         return null;
     }
@@ -692,13 +761,20 @@ export function placeCard(card: HTMLElement, menuPanel: HTMLElement, entry: HTML
 /**
  * A tooltip (`position: fixed`) under its control, or beside it; in the
  * viewport frame and over every layer (it stands above them all), so it keeps
- * off none. Where nothing qualifies, kept inside the window.
+ * off none. A control of a layer that stands above what it is about
+ * (`above`, the layer: `data-flipped`) has it above that layer, at the
+ * control's left — under it, it would cover the line the layer keeps off
+ * (#9; wave 4 #5b review) — and below only where above has no room. Where
+ * nothing qualifies, kept inside the window.
  */
-export function placeTip(tip: HTMLElement, owner: HTMLElement, place: 'below' | 'beside'): Placement {
+export function placeTip(tip: HTMLElement, owner: HTMLElement, place: 'below' | 'beside', above?: Element): Placement {
     const frame = VIEWPORT();
     const size = { width: tip.offsetWidth, height: tip.offsetHeight };
     const r = rectOf(owner.getBoundingClientRect());
-    let p = place === 'beside' ? placeBeside(size, r, r.top, frame) : placeStacked(size, r, frame);
+    const layer = above === undefined ? null : above.getBoundingClientRect();
+    let p = place === 'beside'
+        ? placeBeside(size, r, r.top, frame)
+        : layer !== null ? placeStacked(size, { ...r, top: layer.top, bottom: layer.bottom }, frame, { prefer: 'above' }) : placeStacked(size, r, frame);
     if (p.side === 'none') {
         p = {
             x: Math.max(0, Math.min(r.right + GAP, frame.layerEdge - size.width)),
@@ -732,6 +808,14 @@ export interface LayerClaim {
     fit?(room: number, fresh: boolean): void;
     /** The side taken wherever it qualifies, asked as it is placed (the policy's `prefer`): the bubble's in a note's body set out of its line. */
     prefer?(): 'above' | undefined;
+    /**
+     * Whether what the layer is about stands in a note's body or a sidebar
+     * floated into the margin (a footnote reference in a margin note): the
+     * layer stands at it there, out to the editor's edge less the gutter, and
+     * reaches into the column only where the column has no text at its
+     * height (Daniel, #15 "bars may cover any empty margin"; wave 4 #5b review).
+     */
+    inMargin?(): boolean;
 }
 
 /** What the occupant was last placed from, in viewport coordinates: a re-place with the same inputs (anchor, size, frame, the other layers) does nothing. */
@@ -745,6 +829,8 @@ interface Placed {
     avoid: Rect[];
     /** The layer edge margin content kept it to (`marginLimit`), or `null`: the editor's edge less the gutter. */
     limited: number | null;
+    /** How far into the column a layer at the margin was let reach (`columnReach`), or `null`: as far as its anchor. */
+    reach: number | null;
 }
 
 /** Where an element was last written, in its own space: what `moved` compares. */
@@ -755,8 +841,33 @@ interface Written {
 
 const slots = new WeakMap<EditorView, LayerSlot>();
 
+/** Who hears that a layer of a view's slot appeared or moved (`onLayerPlaced`). */
+const placedWatchers = new WeakMap<EditorView, Set<(layer: Rect) => void>>();
+
+/**
+ * Call `listener` with the layer's rect (viewport coordinates) whenever a
+ * layer of `view`'s slot appears or moves: the hint, which is no layer, keeps
+ * off the layers (#9 wave 2, "a hint avoids open layers") — also off one that
+ * came after it (the bar at the caret's rest, `REST_MS` after a verb's hint).
+ * Returns the unsubscribe.
+ */
+export function onLayerPlaced(view: EditorView, listener: (layer: Rect) => void): () => void {
+    let set = placedWatchers.get(view);
+    if (set === undefined) {
+        set = new Set();
+        placedWatchers.set(view, set);
+    }
+    set.add(listener);
+    return () => set.delete(listener);
+}
+
 function sameRect(a: Rect, b: Rect): boolean {
     return Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5 && Math.abs(a.right - b.right) < 0.5 && Math.abs(a.bottom - b.bottom) < 0.5;
+}
+
+/** Whether `a` and `b` are the same size: one is the other moved. */
+function sameSize(a: Rect, b: Rect): boolean {
+    return Math.abs((a.right - a.left) - (b.right - b.left)) < 0.5 && Math.abs((a.bottom - a.top) - (b.bottom - b.top)) < 0.5;
 }
 
 function sameFrame(a: Frame, b: Frame): boolean {
@@ -833,23 +944,11 @@ export class LayerSlot {
      * asking again is placed again where its anchor, size or frame changed.
      */
     request(claim: LayerClaim, opts: { force?: boolean } = {}): boolean {
-        if (this.destroyed) {
+        if (!this.wouldGrant(claim, opts)) {
             return false;
         }
         const current = this.occupant;
         const same = current !== null && current.key === claim.key && current.el === claim.el;
-        if (!same) {
-            if (claim.kind === 'hover' && current !== null && current.kind !== 'hover') {
-                return false;
-            }
-            if ((this.dismissed.has(claim.key) || this.suppressed) && !opts.force) {
-                return false;
-            }
-            // A field holds what its person typed: only a field, or a forced claim (Alt+Enter), takes its place.
-            if (current !== null && current.kind === 'field' && claim.kind !== 'field' && !opts.force) {
-                return false;
-            }
-        }
         this.dismissed.delete(claim.key);
         if (!same && current !== null && current.el !== claim.el) {
             this.occupant = null;
@@ -870,6 +969,29 @@ export class LayerSlot {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Whether `request` would take `claim` — its anchor aside: what an owner
+     * asks before it draws a layer (the bar's verbs ask the host for lenses
+     * and code actions) that would only be hidden again.
+     */
+    wouldGrant(claim: Pick<LayerClaim, 'kind' | 'key' | 'el'>, opts: { force?: boolean } = {}): boolean {
+        if (this.destroyed) {
+            return false;
+        }
+        const current = this.occupant;
+        if (current !== null && current.key === claim.key && current.el === claim.el) {
+            return true;
+        }
+        if (claim.kind === 'hover' && current !== null && current.kind !== 'hover') {
+            return false;
+        }
+        if ((this.dismissed.has(claim.key) || this.suppressed) && !opts.force) {
+            return false;
+        }
+        // A field holds what its person typed: only a field, or a forced claim (Alt+Enter), takes its place.
+        return current === null || current.kind !== 'field' || claim.kind === 'field' || opts.force === true;
     }
 
     /** The owner let go of `key` (it hid the layer itself). */
@@ -920,12 +1042,22 @@ export class LayerSlot {
      * What the dismissals were about has moved (a change of the document shifted
      * it): each key in `moves` follows to its new key, or ends where it maps to
      * `null`. All at once, so keys shifting onto one another do not collide.
+     * The occupant's key follows as well; one mapped to `null` is left to its
+     * owner's `valid`.
      */
     rekeyAll(moves: ReadonlyMap<string, string | null>): void {
         const next = rekeyed(this.dismissed, moves);
         this.dismissed.clear();
         for (const key of next) {
             this.dismissed.add(key);
+        }
+        // The occupant follows too: it is the same layer, about the same thing, and is not asked for again.
+        const to = this.occupant !== null ? moves.get(this.occupant.key) : undefined;
+        if (this.occupant !== null && to !== undefined && to !== null) {
+            this.occupant.key = to;
+            if (this.placed !== null) {
+                this.placed.key = to;
+            }
         }
     }
 
@@ -1084,7 +1216,8 @@ export class LayerSlot {
         // nothing is measured twice where nothing changed.
         const again = !appeared && !fresh && prev !== null && prev.key === claim.key;
         const firstEdge = again && prev.limited !== null ? prev.limited : wide.layerEdge;
-        fit({ ...frame, layerEdge: firstEdge }, fresh);
+        const firstReach = again && prev.reach !== null ? prev.reach : null;
+        fit({ ...frame, layerEdge: firstEdge, columnLeft: firstReach ?? frame.columnLeft }, fresh);
         const width = claim.el.offsetWidth;
         const height = claim.el.offsetHeight;
         const avoid = openLayers(this.mount, claim.el);
@@ -1093,10 +1226,37 @@ export class LayerSlot {
             && prev.avoid.length === avoid.length && prev.avoid.every((r, i) => sameRect(r, avoid[i]))) {
             return;
         }
-        if (firstEdge !== wide.layerEdge) {
+        const margin = claim.inMargin?.() === true;
+        const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, avoid, prefer: claim.prefer?.(), atAnchor: claim.kind === 'bubble' || margin };
+        if (again && prev.limited !== null && this.written?.el === claim.el && sameSize(prev.anchor, anchor)
+            && Math.abs(prev.width - width) < 0.5 && Math.abs(prev.height - height) < 0.5 && sameFrame(prev.frame, frame)) {
+            // A scroll: the layer kept short of margin content last time, its anchor only moved. Placed in that
+            // short frame as it is fitted now; kept where the same content limits it to the same edge on the
+            // same side — else fitted wide and placed again below.
+            const short: Frame = { ...frame, layerEdge: prev.limited };
+            const p = placeLayer(claim.el, anchor, { ...opts, frame: short });
+            // Probed out to the wide edge: the short layer's own band ends a gap before what kept it short.
+            const limited = p.side === this.written.at.side ? this.marginLimit(p, claim.el, anchor, frame, wide, wide.layerEdge) : null;
+            if (limited !== null && Math.abs(limited - prev.limited) < 0.5) {
+                this.write(claim, p, anchor, frame, avoid, prev.limited, prev.reach, appeared);
+                return;
+            }
+        }
+        if (margin && again && firstReach !== null && this.written?.el === claim.el && sameSize(prev.anchor, anchor)
+            && Math.abs(prev.width - width) < 0.5 && Math.abs(prev.height - height) < 0.5 && sameFrame(prev.frame, frame)) {
+            // A scroll: the layer at the margin was let into the column as far as last time, its anchor only moved.
+            // Placed so as it is fitted now; kept where the column's text at its height ends where it did.
+            const narrow: Frame = { ...wide, layerEdge: firstEdge, columnLeft: firstReach };
+            const p = placeLayer(claim.el, anchor, { ...opts, frame: narrow });
+            const reach = this.columnReach(p, claim.el, frame, true);
+            if (reach !== null && Math.abs(reach - firstReach) < 0.5) {
+                this.write(claim, p, anchor, frame, avoid, prev.limited, firstReach, appeared);
+                return;
+            }
+        }
+        if (firstEdge !== wide.layerEdge || firstReach !== null) {
             fit(wide, false);
         }
-        const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, avoid, prefer: claim.prefer?.(), atAnchor: claim.kind === 'bubble' };
         let p = placeLayer(claim.el, anchor, { ...opts, frame: wide });
         let limited = this.marginLimit(p, claim.el, anchor, frame, wide);
         if (limited !== null && opts.atAnchor && frame.columnRight !== undefined && anchor.left >= frame.columnRight && p.side === 'above') {
@@ -1112,18 +1272,64 @@ export class LayerSlot {
             fit(short, false);
             p = placeLayer(claim.el, anchor, { ...opts, frame: short });
         }
+        // At the margin and reaching into the column where it has text at the layer's height: kept right of
+        // that text, fitted to the room left — its verbs drop their nouns first (`ObjectBar.fit`).
+        const reach = margin ? this.columnReach(p, claim.el, frame) : null;
+        if (reach !== null) {
+            const narrow: Frame = { ...wide, layerEdge: limited ?? wide.layerEdge, columnLeft: reach };
+            fit(narrow, false);
+            p = placeLayer(claim.el, anchor, { ...opts, frame: narrow });
+        }
+        this.write(claim, p, anchor, frame, avoid, limited, reach, appeared);
+    }
+
+    /**
+     * How far a layer placed at `p` from an anchor at the margin may reach into
+     * the text column: a gap right of the column's text at its height (its
+     * band, grown by `GAP`, across the column: `contentRight`), or `null` where
+     * it does not reach into the column, or meets no text there. `always`: the
+     * edge even where the layer stands right of it already (a scroll's check).
+     */
+    private columnReach(p: Placement, el: HTMLElement, frame: Frame, always = false): number | null {
+        const column = frame.columnRight;
+        if (column === undefined || (!always && p.x >= column)) {
+            return null;
+        }
+        const band = { left: frame.columnLeft, right: column, top: p.y - GAP, bottom: p.y + el.offsetHeight + GAP };
+        this.mount.classList.add(PROBING_CLASS);
+        let right: number | null;
+        try {
+            right = contentRight(this.view, band);
+        } finally {
+            this.mount.classList.remove(PROBING_CLASS);
+        }
+        const reach = right === null ? null : right + GAP;
+        return reach !== null && (always || reach > p.x) ? reach : null;
+    }
+
+    /** The occupant placed at `p`: what it was placed from kept (`Placed`), the pointer refused where it moved. */
+    private write(claim: LayerClaim, p: Placement, anchor: Rect, frame: Frame, avoid: Rect[], limited: number | null, reach: number | null, appeared: boolean): void {
         // Compared where it is written: a layer that scrolls with the text has not moved.
         const base = this.mount.getBoundingClientRect();
         const at: Placement = { x: p.x - base.left, y: p.y - base.top, side: p.side };
         const before = this.written?.el === claim.el ? this.written.at : null;
         this.written = { el: claim.el, at };
-        this.placed = { key: claim.key, anchor, width: claim.el.offsetWidth, height: claim.el.offsetHeight, frame, avoid, limited };
+        this.placed = { key: claim.key, anchor, width: claim.el.offsetWidth, height: claim.el.offsetHeight, frame, avoid, limited, reach };
+        // Standing above what it is about: a tooltip of its controls goes above it too, off its anchor (`tooltip.ts`).
+        claim.el.toggleAttribute('data-flipped', p.y + claim.el.offsetHeight <= anchor.top + 0.5);
+        const shifted = appeared || moved(before, at);
         if (claim.kind === 'field') {
             // A field was asked for and has the focus: nothing under the pointer is meant for the text, and its
             // set-verb menu opens inside it — no inert time (a bar the field replaced gives up what it had).
             this.disarm(claim.el);
-        } else if (appeared || moved(before, at)) {
+        } else if (shifted) {
             this.arm(claim.el);
+        }
+        if (shifted) {
+            const layer = rectOf(claim.el.getBoundingClientRect());
+            for (const listener of Array.from(placedWatchers.get(this.view) ?? [])) {
+                listener(layer);
+            }
         }
     }
 
@@ -1134,13 +1340,13 @@ export class LayerSlot {
      * its subject at `anchor` passed over) less `GAP`, never left of the
      * column's right edge.
      */
-    private marginLimit(p: Placement, el: HTMLElement, anchor: Rect, frame: Frame, wide: Frame): number | null {
+    private marginLimit(p: Placement, el: HTMLElement, anchor: Rect, frame: Frame, wide: Frame, reach = p.x + el.offsetWidth): number | null {
         const column = frame.columnRight ?? frame.layerEdge;
         if (p.x + el.offsetWidth <= column + 0.5) {
             return null;
         }
-        // The band the layer takes past the column, grown by `GAP`.
-        const band = { left: Math.max(column, p.x - GAP), right: Math.min(wide.layerEdge, p.x + el.offsetWidth) + GAP, top: p.y - GAP, bottom: p.y + el.offsetHeight + GAP };
+        // The band the layer takes past the column (or out to `reach`), grown by `GAP`.
+        const band = { left: Math.max(column, p.x - GAP), right: Math.min(wide.layerEdge, reach) + GAP, top: p.y - GAP, bottom: p.y + el.offsetHeight + GAP };
         this.mount.classList.add(PROBING_CLASS);
         let left: number | null;
         try {

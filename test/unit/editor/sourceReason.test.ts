@@ -20,8 +20,6 @@ suite('Editor source block reason', () => {
         assert.deepStrictEqual(raw, [
             ['[[toc]]', 'table of contents'],
             ['Setext heading', 'setext heading'],
-            ['A sentence with a footnote.[^first]', 'has a footnote'],
-            ['[^first]: The footnote body.', 'footnote text'],
             ['Term', 'definition list'],
             ['- [ ] An open task', 'task list'],
             ['Press <kbd>Ctrl</kbd> or [[Ctrl+S]], ==mark== this, H~2~O and x^2^, :smile:, ~~gone~~.', 'has inline HTML'],
@@ -71,8 +69,14 @@ suite('Editor source block reason', () => {
     });
 
     for (const [reason, src, words] of [
-        ['inline footnote_ref', 'x[^1]\n', 'has a footnote'],
-        ['footnote_ref inside another note', '', 'has a footnote'],
+        // What still keeps a footnote source (wave 4 #5b): a reference where no atom stands, a definition inside a block.
+        ['footnote_ref inside sup/sub', '', 'has a footnote'],
+        ['footnote_ref in an admonition title', '', 'has a footnote'],
+        ['nested footnote_reference_open', '', 'has footnote text'],
+        ['footnote inside an inline footnote', '', 'has a footnote in a footnote'],
+        ['multi-line inline footnote', '', 'has a footnote over two lines'],
+        ['inline footnote in a note', '', 'has a footnote in a note'],
+        ['footnote_ref in a table cell: its | is a cell boundary', '', 'has a footnote in a table'],
         ['dl_open', '', 'definition list'],
         ['nested dl_open', '', 'has a definition list'],
         ['html_block', '', 'HTML'],
@@ -97,7 +101,7 @@ suite('Editor source block reason', () => {
         const editorCss = fs.readFileSync(path.join(styles, 'editor.css'), 'utf8');
         assert.ok(editorCss.includes('.ProseMirror .mep-raw-chip::before { content: "source" / ""; }'), 'editor.css draws it, inside the editor');
         // What the preview and an export render: the host's HTML, which knows no source block.
-        const html = hostEngine().render('A sentence with a footnote.[^1]\n\n[^1]: The body.\n');
+        const html = hostEngine().render('Term\n: A definition, of HTML.\n\n*[HTML]: HyperText Markup Language\n');
         assert.ok(!/mep-|>source</.test(html), html);
         // Only the editor's page links editor.css; the exporters and the preview never do.
         const linking = grepSources(path.join(repoRoot, 'src'), /editor\.css['"]/);

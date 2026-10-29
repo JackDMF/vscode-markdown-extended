@@ -17,9 +17,14 @@ import { MODIFIER_KEYS } from '../keys';
 import { PositionMap, SourceRange, holdsText } from '../positions';
 import type { CodeActionItem, DiagnosticEntry, HostMessage, WebviewMessage } from '../protocol';
 import { completionOpen } from './completion';
+import { footnoteCardSection } from './footnotes';
 import { SEVERITY_ICON, diagnosticsAt, diagnosticsPlacedOn } from './diagnostics';
 import { CardAnchor, LanguageCard, hoverSection } from './languageCard';
 import { lensLabel, lensLabelNodes } from './lenses';
+import { inlineBox } from './placement';
+
+/** How far below a literal the card looks for a chip it names, to stand under it (`keepingOffChips`): about a card's height. */
+const CHIP_REACH = 160;
 
 /** How long the pointer rests before the card is asked for. */
 export const HOVER_DELAY_MS = 500;
@@ -114,6 +119,8 @@ interface Shown {
     hoverRequest: number | null;
     hoverHtml: string;
     anchor: CardAnchor;
+    /** The page's own first section: the footnote the pointer rests on (`footnoteCardSection`), or `null`. */
+    footnote: HTMLElement | null;
 }
 
 class PointerCard implements PluginView {
@@ -314,7 +321,9 @@ class PointerCard implements PluginView {
             return;
         }
         const diagnostics = (probe.onText || probe.whole) ? diagnosticsAt(this.view.state, probe.pos) : [];
-        if (diagnostics.length === 0 && !probe.onText) {
+        // A footnote's reference shows its text: the page knows it, no host round trip.
+        const footnote = footnoteCardSection(this.view, probe.pos, hoverSection);
+        if (diagnostics.length === 0 && !probe.onText && footnote === null) {
             return;
         }
         const inline = diagnostics.find(d => this.view.state.doc.resolve(d.from).parent.inlineContent);
@@ -329,7 +338,8 @@ class PointerCard implements PluginView {
             fixRequests: new Map(),
             hoverRequest: null,
             hoverHtml: '',
-            anchor: inline ? this.anchorAt(inline.from, pointer) : probe.onText ? this.anchorAt(probe.pos, pointer) : pointer,
+            anchor: this.keepingOffChips(footnote, inline ? this.anchorAt(inline.from, pointer) : (footnote !== null ? this.atomAnchor(probe.pos) : null) ?? (probe.onText ? this.anchorAt(probe.pos, pointer) : pointer)),
+            footnote,
         };
         this.hide();
         this.shown = next;
@@ -366,6 +376,32 @@ class PointerCard implements PluginView {
         this.draw();
     }
 
+    /**
+     * `anchor`, kept off the page's chips where the card names one ("give a
+     * footnote marked not referenced …", UX review 2): a chip in the room
+     * below the anchor (`CHIP_REACH`) is taken into it, so the card stands
+     * under the chip, which stays in sight; above it the card keeps off all.
+     */
+    private keepingOffChips(footnote: HTMLElement | null, anchor: CardAnchor): CardAnchor {
+        if (footnote === null || footnote.querySelector('.mep-card-chip') === null) {
+            return anchor;
+        }
+        const chips = Array.from(this.view.dom.querySelectorAll('.mep-fn-chip')).map(el => el.getBoundingClientRect()).filter(r => r.width > 0);
+        const below = chips.filter(r => r.top >= anchor.bottom && r.top < anchor.bottom + CHIP_REACH);
+        return {
+            ...anchor,
+            bottom: Math.max(anchor.bottom, ...below.map(r => r.bottom)),
+            keepOff: chips.map(r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })),
+        };
+    }
+
+    /** A reference's anchor (`inlineBox`): the line its raised `[n]` stands in, so the card keeps off that line; `null` for no inline atom at `pos` (a `[^x]` written as text). */
+    private atomAnchor(pos: number): CardAnchor | null {
+        const node = this.view.state.doc.nodeAt(pos);
+        const box = node !== null && node.isInline && node.isAtom ? inlineBox(this.view, pos) : null;
+        return box === null ? null : { left: box.left, top: box.top, bottom: box.bottom };
+    }
+
     private anchorAt(pos: number, fallback: CardAnchor): CardAnchor {
         try {
             const c = this.view.coordsAtPos(pos);
@@ -380,7 +416,7 @@ class PointerCard implements PluginView {
         if (!shown) {
             return;
         }
-        const sections = shown.diagnostics.map((d, i) => diagnosticSection(d.entry, shown.fixes.get(i)));
+        const sections = [...(shown.footnote === null ? [] : [shown.footnote]), ...shown.diagnostics.map((d, i) => diagnosticSection(d.entry, shown.fixes.get(i)))];
         if (shown.hoverHtml.trim() !== '') {
             sections.push(hoverSection(shown.hoverHtml));
         }

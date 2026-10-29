@@ -22,6 +22,7 @@ import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/edit
 import { createEditorEngine } from '../../../src/editor/engine';
 import { blockLineRanges, parseDocument } from '../../../src/editor/parse';
 import { plugins } from '../../../src/plugin/plugins';
+import { entriesDocument } from './footnoteSample';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { ActiveVisualEditor, ActiveVisualEditorTracker, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
 
@@ -570,6 +571,20 @@ suite('Editor host: code lenses', () => {
 
 suite('Editor host: lens placement', () => {
     const ranges: ([number, number] | null)[] = [[0, 3], [4, 5], null, [6, 9], [11, 12]];
+
+    test('the lines of each block are the lines the parse gave it: footnote definitions where they are written, one block each', () => {
+        const md = createEditorEngine({ linkify: true, typographer: false, plugins });
+        const text = entriesDocument();
+        const lines = text.split('\n');
+        const children: { src: unknown }[] = [];
+        parseDocument(md, text).doc.forEach(child => children.push({ src: child.attrs.src }));
+        const ranges = blockLineRanges(md, text);
+        assert.strictEqual(ranges.length, children.length);
+        ranges.forEach((range, i) => {
+            assert.ok(range !== null, `block ${i} stands for lines`);
+            assert.strictEqual(`${lines.slice(range[0], range[1]).join('\n')}\n`, children[i].src, `block ${i}`);
+        });
+    });
 
     test('a line maps to the block covering it, a gap line to the next block, the tail to the last', () => {
         assert.strictEqual(blockIndexForLine(ranges, 0), 0);

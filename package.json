@@ -235,6 +235,11 @@
         "command": "markdownExtended.openVisualEditor",
         "title": "%markdownExtended.openVisualEditor%",
         "category": "Markdown"
+      },
+      {
+        "command": "markdownExtended.sortFootnotes",
+        "title": "%markdownExtended.sortFootnotes%",
+        "category": "Markdown"
       }
     ],
     "customEditors": [
@@ -257,6 +262,10 @@
         {
           "command": "markdownExtended.openVisualEditor",
           "when": "!isWeb"
+        },
+        {
+          "command": "markdownExtended.sortFootnotes",
+          "when": "activeCustomEditorId == markdownExtended.visualEditor"
         }
       ],
       "editor/context": [

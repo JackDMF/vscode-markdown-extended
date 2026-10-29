@@ -1,4 +1,7 @@
 import * as assert from 'assert';
+import { EditorState } from 'prosemirror-state';
+import { editorSchema } from '../../../src/editor/schema';
+import { mappedSelectionKey } from '../../../src/editor/webview/toolbar/toolbar';
 import { Frame, GAP, HideReason, LayerClaim, LayerSlot, Rect, moved, placeAtControl, placeAtEntry, placeBeside, placeMenuAt, placeStacked, probeBand, rekeyed } from '../../../src/editor/webview/placement';
 
 /**
@@ -232,6 +235,10 @@ suite('Editor placement: the slot\'s state', () => {
         request(claim: LayerClaim, opts?: { force?: boolean }): boolean;
         onFreed(listener: () => void): () => void;
         dismiss(key: string): void;
+        rekeyAll(moves: ReadonlyMap<string, string | null>): void;
+        wouldGrant(claim: Pick<LayerClaim, 'kind' | 'key' | 'el'>, opts?: { force?: boolean }): boolean;
+        suppress(on: boolean): void;
+        dismissedOf(prefix: string): string[];
     }
     const bare = (): Bare => {
         const slot = Object.create(LayerSlot.prototype) as Bare;
@@ -265,6 +272,34 @@ suite('Editor placement: the slot\'s state', () => {
         assert.deepStrictEqual(log, ['field@3-3:displaced'], 'Alt+Enter takes it');
     });
 
+    test('wave 3 follow-up: a change of the document moves the occupant\'s key with the dismissals; one mapped to nothing is left to its owner', () => {
+        const slot = bare();
+        slot.occupant = claim('bubble', 'sel@3-5', false);
+        slot.dismiss('sel@9-12');
+        slot.rekeyAll(new Map([['sel@3-5', 'sel@20-22'], ['sel@9-12', 'sel@26-29']]));
+        assert.strictEqual(slot.occupant?.key, 'sel@20-22', 'the bubble is about the moved selection');
+        assert.deepStrictEqual(slot.dismissedOf('sel@'), ['sel@26-29']);
+        slot.rekeyAll(new Map([['sel@20-22', null]]));
+        assert.strictEqual(slot.occupant?.key, 'sel@20-22', 'its owner\'s valid() ends it');
+    });
+
+    test('wave 3 follow-up: wouldGrant answers as request does, before anything is drawn', () => {
+        const slot = bare();
+        assert.strictEqual(slot.wouldGrant(claim('bar', 'bar@link@3')), true, 'an empty slot');
+        slot.dismiss('bar@link@3');
+        assert.strictEqual(slot.wouldGrant(claim('bar', 'bar@link@3')), false, 'dismissed');
+        assert.strictEqual(slot.wouldGrant(claim('bar', 'bar@link@3'), { force: true }), true, 'Alt+Enter');
+        const field = claim('field', 'field@3-3', false);
+        slot.occupant = field;
+        assert.strictEqual(slot.wouldGrant(claim('bar', 'bar@table@9')), false, 'a field holds the slot');
+        assert.strictEqual(slot.wouldGrant(claim('hover', 'hover@table@9')), false);
+        assert.strictEqual(slot.wouldGrant(claim('field', 'field@5-5')), true, 'a field takes a field\'s place');
+        assert.strictEqual(slot.wouldGrant(field), true, 'the occupant asking again');
+        slot.occupant = null;
+        slot.suppress(true);
+        assert.strictEqual(slot.wouldGrant(claim('bubble', 'sel@1-4')), false, 'a row menu is open');
+    });
+
     test('r2-8: a claim whose anchor is gone on an empty slot announces nothing; one that displaced an occupant does', async () => {
         const slot = bare();
         let heard = 0;
@@ -278,5 +313,19 @@ suite('Editor placement: the slot\'s state', () => {
         assert.strictEqual(slot.request(claim('bubble', 'sel@1-4')), false);
         await later();
         assert.strictEqual(heard, 1, 'the bar was displaced and the slot is free again');
+    });
+});
+
+suite('Editor placement: the bubble\'s key through a change', () => {
+    const doc = editorSchema.node('doc', null, [editorSchema.node('paragraph', null, [editorSchema.text('Alpha beta gamma.')])]);
+    const state = EditorState.create({ doc });
+
+    test('an insertion before the selection moves its key; one inside widens it; deleting it ends it', () => {
+        const before = state.tr.insertText('Hey ', 1);
+        assert.strictEqual(mappedSelectionKey('sel@7-11', [before]), 'sel@11-15');
+        const inside = state.tr.insertText('x', 9);
+        assert.strictEqual(mappedSelectionKey('sel@7-11', [inside]), 'sel@7-12');
+        const gone = state.tr.delete(5, 13);
+        assert.strictEqual(mappedSelectionKey('sel@7-11', [gone]), null);
     });
 });
