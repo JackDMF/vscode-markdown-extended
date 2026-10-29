@@ -484,14 +484,9 @@ export function anchorOf(view: EditorView, object: EditorObject): Rect | null {
         }
         if (!isMarkObject(object)) {
             const dom = view.nodeDOM(object.from);
-            if (dom instanceof Element) {
-                // An inline element's own line boxes: a note's body floated into
-                // the margin is not one of them, so the layer keeps to the reference's lines.
-                const rects = Array.from(dom.getClientRects()).filter(r => r.width > 0 || r.height > 0);
-                if (rects.length > 0) {
-                    const own = { left: rects[0].left, top: rects[0].top, right: Math.max(...rects.map(r => r.right)), bottom: rects[rects.length - 1].bottom };
-                    return floatedAnchor(view, object.from, dom, own) ?? own;
-                }
+            const own = dom instanceof Element ? boxOf(dom) : null;
+            if (own !== null) {
+                return floatedAnchor(view, object.from, dom as Element, own) ?? own;
             }
         }
         const start = view.coordsAtPos(object.from, 1);
@@ -500,6 +495,20 @@ export function anchorOf(view: EditorView, object: EditorObject): Rect | null {
     } catch {
         return null;
     }
+}
+
+/**
+ * An inline element's box from its own line boxes — the first's start and
+ * top, the last's bottom — or `null` where it has none: a note's body
+ * floated into the margin is not one of them, so a layer keeps to the
+ * reference's lines.
+ */
+function boxOf(dom: Element): Rect | null {
+    const rects = Array.from(dom.getClientRects()).filter(r => r.width > 0 || r.height > 0);
+    if (rects.length === 0) {
+        return null;
+    }
+    return { left: rects[0].left, top: rects[0].top, right: Math.max(...rects.map(r => r.right)), bottom: rects[rects.length - 1].bottom };
 }
 
 /**
