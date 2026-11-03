@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { commandLinkAllowed, hoverParts, parseCommandLink, renderHoverParts } from '../../../src/editor/host/hover';
-import { offsetIn, snippetText } from '../../../src/editor/host/completion';
+import { acceptOnEnterOf, offsetIn, snippetText } from '../../../src/editor/host/completion';
 import { SessionWebview, VisualEditorSession } from '../../../src/editor/host/session';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 
@@ -91,6 +91,10 @@ suite('Editor language features: snippets and trusted command links', () => {
         assert.ok(out.includes('Looks like a fix'), 'the text stays');
         assert.ok(out.includes('<span class="c">t</span>'), out);
         assert.ok(out.includes('<img src="https://example.com/x.png" alt="pic">'), 'an image, as VS Code\'s hover allows one');
+    });
+
+    test('acceptSuggestionOnEnter is read as VS Code reads it: the old booleans too, anything else its default', () => {
+        assert.deepStrictEqual(['on', 'smart', 'off', true, false, undefined, 'never', 3].map(acceptOnEnterOf), ['on', 'smart', 'off', 'on', 'off', 'on', 'on', 'on']);
     });
 
     test('an offset is read as VS Code breaks lines; a character past a line\'s end is its end', () => {
@@ -243,13 +247,31 @@ suite('Editor host: completion, diagnostics and hover', () => {
         assert.deepStrictEqual(answer.items, [
             {
                 label: 'FRS-RXE-058', detail: 'Composed deliverable', kind: 'reference', insertText: 'FRS-RXE-058',
-                range: { start: { line: 2, character: 4 }, end: { line: 2, character: 8 } }, sortText: 'a',
+                range: { start: { line: 2, character: 4 }, end: { line: 2, character: 8 } }, sortText: 'a', snippetOrEdits: true,
             },
             {
                 label: 'FRS-RXE-057', detail: 'Generated requirement summary', kind: 'reference', insertText: 'FRS-RXE-057',
                 range: { start: { line: 2, character: 4 }, end: { line: 2, character: 8 } }, sortText: 'b',
             },
-        ], 'by sortText; the inserting range; a snippet as the text it inserts');
+        ], 'by sortText; the inserting range; a snippet as the text it inserts, said to be one');
+    });
+
+    test('Enter\'s setting for Markdown follows each document, and is posted again when it changes', async function () {
+        this.timeout(15000);
+        const after = webview.posted.findIndex(m => m.type === 'document');
+        const first = webview.posted.slice(after).find(m => m.type === 'completionSettings');
+        assert.deepStrictEqual(first, { type: 'completionSettings', acceptSuggestionOnEnter: 'on' }, 'VS Code\'s default, after the document');
+        const markdown = () => vscode.workspace.getConfiguration('editor', { languageId: 'markdown' });
+        const before = webview.posted.length;
+        await markdown().update('acceptSuggestionOnEnter', 'off', vscode.ConfigurationTarget.Global, true);
+        try {
+            const off = await until(() => webview.posted.slice(before).find(m => m.type === 'completionSettings'), 5000);
+            assert.deepStrictEqual(off, { type: 'completionSettings', acceptSuggestionOnEnter: 'off' }, 'the [markdown] override');
+        } finally {
+            await markdown().update('acceptSuggestionOnEnter', undefined, vscode.ConfigurationTarget.Global, true);
+        }
+        const back = await until(() => webview.posted.slice(before).filter(m => m.type === 'completionSettings')[1], 5000);
+        assert.deepStrictEqual(back, { type: 'completionSettings', acceptSuggestionOnEnter: 'on' });
     });
 
     test('a question from a page on another version is answered with nothing, and VS Code is not asked', async function () {

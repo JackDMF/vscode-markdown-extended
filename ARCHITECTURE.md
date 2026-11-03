@@ -1342,7 +1342,8 @@ text the other — never a diff:
 | host → page | `imagesResolved { requestId, sources }` | For each asked `src` that names a file, the webview uri to load it from; a `src` left out is shown as written (below) |
 | host → page | `reportCaret` | Report the caret again, the same one included: the host forgot it and no document is on its way (below, *Source positions*) |
 | host → page | `map { id, toSource?, toPage? }` | Map these page positions to source positions and these source positions to page positions, with the page's own document (below) |
-| host → page | `completions { requestId, version, items, incomplete }` | The completions at the caret, `{ label, detail?, kind?, insertText, range?, sortText?, filterText? }` each, VS Code's order, capped; empty when stale (below, *Completion, diagnostics and hover*) |
+| host → page | `completions { requestId, version, items, incomplete }` | The completions at the caret, `{ label, detail?, kind?, insertText, range?, sortText?, filterText?, snippetOrEdits? }` each, VS Code's order, capped; empty when stale (below, *Completion, diagnostics and hover*) |
+| host → page | `completionSettings { acceptSuggestionOnEnter }` | VS Code's `editor.acceptSuggestionOnEnter` for Markdown (`on`, `smart`, `off`): after every `document` and when it changes |
 | host → page | `completionApplied { requestId, version, caret }` | After the document the applied completion produced: where the caret goes in it, `null` when nothing was applied |
 | host → page | `diagnostics { version, items }` | Every diagnostic VS Code holds for the document, `{ range, severity, message, code?, source? }` each, in the text the host holds for the page |
 | host → page | `quickFixes { requestId, items }` | The quick fixes for a diagnostic's range, `CodeActionItem`s run with `runAction` |
@@ -2398,10 +2399,11 @@ none: `complete { requestId, baseVersion, position, triggerCharacter? }`, the po
 provider with the trigger in its context; those that do not trigger on it answer nothing —
 and answers `completions { requestId, version, items, incomplete }`, the items in VS Code's
 order for an empty word (`sortText`, else the label), capped at 100, each
-`{ label, detail?, kind?, insertText, range?, sortText?, filterText? }`: the `inserting`
-range (VS Code's default insert mode; an item without a range takes the word before the
-position), a snippet as the text it inserts (`snippetText`: stops empty, placeholders their
-defaults, a choice its first option). An empty answer closes the list. The list stands under
+`{ label, detail?, kind?, insertText, range?, sortText?, filterText?, snippetOrEdits? }`: the
+`inserting` range (VS Code's default insert mode; an item without a range takes the word before
+the position), a snippet as the text it inserts (`snippetText`: stops empty, placeholders their
+defaults, a choice its first option), `snippetOrEdits` for a snippet or an item with additional
+edits (what `smart` below reads). An empty answer closes the list. The list stands under
 the caret, left-aligned with the items' range start (`anchor`, mapped through every
 transaction in plugin state), and filters as the person types: the text between the anchor
 and the caret, by prefix of `filterText`, else the label, ignoring case (`filterCompletions`);
@@ -2411,6 +2413,20 @@ it scrolls, the first chosen, one dim line of keys (`↹ ↵ accept · Esc close
 `listKeyAction`'s, taken by a plugin placed before the editor's keymaps. The footer does not
 name the provider: `executeCompletionItemProvider` hands items without the extension they
 came from.
+
+**Enter follows `editor.acceptSuggestionOnEnter`** for Markdown, as the text editor's list
+does: the host reads it with `getConfiguration('editor', { uri, languageId: 'markdown' })`
+(the `[markdown]` override first, the old booleans as `on`/`off`) and posts
+`completionSettings` after every `document` and on `onDidChangeConfiguration`; the page starts
+from VS Code's default, `on`. `Tab` always accepts. With `off`, `Enter` closes the list and goes
+on to the editor's keymaps (a new line; `listKeyAction`'s `dismiss`), and the footer reads
+`↹ accept · Esc close`. With `smart` (`enterAccepts`), VS Code's rule as its bundle has it
+(`SuggestController`, the `suggestionMakesTextEdit` context key): `Enter` accepts unless the
+list opened by itself, the chosen item is no snippet and has no additional edits, and what was
+typed since the items' range began is exactly its insertion — accepting would change nothing.
+A list asked for with `Ctrl+Space` is VS Code's explicitly triggered one, whose `Enter` `smart`
+leaves alone; a list asked again because a provider said it was incomplete keeps how it was
+asked for.
 
 **Accepting applies the provider's edit to the source, not to the page.** The page posts
 `applyCompletion { requestId, index, baseVersion, position }` (after its pending edit) and

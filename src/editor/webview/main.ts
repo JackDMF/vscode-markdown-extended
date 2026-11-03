@@ -18,7 +18,7 @@ import { EditorState, NodeSelection, Selection, TextSelection, Transaction } fro
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap, selectionOf } from '../positions';
-import type { CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import type { AcceptOnEnter, CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
@@ -854,6 +854,9 @@ const sourceContext = () => ({
     documentText: view ? serialize(view.state.doc) : '',
 });
 
+/** VS Code's `editor.acceptSuggestionOnEnter` for Markdown, as the host last posted it (`completionSettings`); its default until then. */
+let acceptOnEnter: AcceptOnEnter = 'on';
+
 /**
  * What completion and the pointer's card need from the page: the version of
  * the document shown, the pending edit sent first — every question they ask is
@@ -864,6 +867,7 @@ const languagePort = {
     flush: () => flush(),
     map: () => (view && current ? pageMap(view.state.doc) : undefined),
     post,
+    acceptOnEnter: () => acceptOnEnter,
 };
 
 /**
@@ -1199,6 +1203,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             if (view) {
                 completionMessage(view, msg);
             }
+            break;
+        case 'completionSettings':
+            acceptOnEnter = msg.acceptSuggestionOnEnter;
             break;
         case 'diagnostics':
             showDiagnostics(msg.version, msg.items);

@@ -12,6 +12,12 @@
  * while it is open, letters filter it (`filterText`, else the label, by prefix)
  * and ask again when a provider said its list is incomplete.
  *
+ * **Which keys accept.** `Tab` always; `Enter` as VS Code's
+ * `editor.acceptSuggestionOnEnter` for Markdown says, which the host posts
+ * (`completionSettings`): `on` accepts, `off` closes the list and leaves the
+ * key to the text (a new line), `smart` accepts only where accepting changes
+ * the text (`enterAccepts`).
+ *
  * **What accepting does.** Nothing on the page: the item's edit is the
  * provider's, applied by the host to the source (`applyCompletion`), and the
  * block comes back as any writer's change does, the caret where the host says
@@ -22,7 +28,7 @@ import { EditorState, Plugin, PluginKey, PluginView, TextSelection } from 'prose
 import { EditorView } from 'prosemirror-view';
 import { WORD_CHARACTER } from '../../syntax/markers';
 import { PositionMap, caretOf } from '../positions';
-import type { CompletionEntry, HostMessage, WebviewMessage } from '../protocol';
+import type { AcceptOnEnter, CompletionEntry, HostMessage, WebviewMessage } from '../protocol';
 import { CompletionListView } from './completionList';
 import { showHint } from './hint';
 import { placeLayer } from './placement';
@@ -35,6 +41,14 @@ const COMPLETION_TIMEOUT_MS = 2000;
 
 /** The list's footer: its keys, as the field's list says its own (`COMPLETION_KEYS`). */
 export const CARET_COMPLETION_KEYS = '↹ ↵ accept · Esc close';
+
+/** The footer where Enter does not accept (`acceptSuggestionOnEnter: off`): Tab alone. */
+export const CARET_COMPLETION_KEYS_TAB = '↹ accept · Esc close';
+
+/** The footer for the setting: `↵` named only where Enter may accept. */
+export function caretCompletionKeys(acceptOnEnter: AcceptOnEnter): string {
+    return acceptOnEnter === 'off' ? CARET_COMPLETION_KEYS_TAB : CARET_COMPLETION_KEYS;
+}
 
 /** Whether `ch` is part of a word — a letter, a digit, `_` — and so filters an open list rather than asking. */
 export function isWordCharacter(ch: string): boolean {
@@ -59,15 +73,35 @@ export function filterCompletions(items: readonly CompletionEntry[], query: stri
         .filter(({ entry }) => (entry.filterText ?? entry.label).toLowerCase().startsWith(q));
 }
 
-/** What a key does to an open list of `count` rows with row `chosen` chosen. */
-export type ListKeyAction = { kind: 'move'; chosen: number } | { kind: 'accept'; chosen: number } | { kind: 'close' } | null;
+/**
+ * What a key does to an open list of `count` rows with row `chosen` chosen.
+ * `dismiss` closes the list and leaves the key to the text.
+ */
+export type ListKeyAction = { kind: 'move'; chosen: number } | { kind: 'accept'; chosen: number } | { kind: 'close' } | { kind: 'dismiss' } | null;
 
 /**
- * The list's keys: `↓`/`↑` move (wrapping), `Tab` and `Enter` accept the
- * chosen row, `Esc` closes; any other key — and any with `Ctrl`, `Alt` or
+ * Whether `Enter` accepts `entry`, as VS Code's text editor decides it
+ * (`acceptSuggestionOnEnter`): always with `on`, never with `off`; with
+ * `smart` only where accepting changes the text — a list asked for with
+ * `Ctrl+Space`, a snippet or an item with additional edits always does,
+ * otherwise only an item whose insertion differs from what was typed since
+ * its range began (`typed`). `Ctrl+Space` stands for VS Code's explicitly
+ * triggered list, whose Enter `smart` leaves alone.
+ */
+export function enterAccepts(acceptOnEnter: AcceptOnEnter, entry: CompletionEntry | undefined, typed: string, manual: boolean): boolean {
+    if (acceptOnEnter !== 'smart') {
+        return acceptOnEnter === 'on';
+    }
+    return manual || entry === undefined || entry.snippetOrEdits === true || typed !== entry.insertText;
+}
+
+/**
+ * The list's keys: `↓`/`↑` move (wrapping), `Tab` accepts the chosen row,
+ * `Enter` too unless `enterAccepts` is false — it then closes the list and is
+ * the text's — `Esc` closes; any other key — and any with `Ctrl`, `Alt` or
  * `Cmd` — is the text's.
  */
-export function listKeyAction(key: string, count: number, chosen: number, modifiers: { shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean } = {}): ListKeyAction {
+export function listKeyAction(key: string, count: number, chosen: number, modifiers: { shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean } = {}, enterAcceptsRow = true): ListKeyAction {
     if (count <= 0 || modifiers.ctrl || modifiers.alt || modifiers.meta) {
         return null;
     }
@@ -79,7 +113,7 @@ export function listKeyAction(key: string, count: number, chosen: number, modifi
         case 'Tab':
             return modifiers.shift ? null : { kind: 'accept', chosen: Math.max(0, chosen) };
         case 'Enter':
-            return { kind: 'accept', chosen: Math.max(0, chosen) };
+            return enterAcceptsRow ? { kind: 'accept', chosen: Math.max(0, chosen) } : { kind: 'dismiss' };
         case 'Escape':
             return { kind: 'close' };
         default:
@@ -96,6 +130,8 @@ export interface CompletionPort {
     /** The position map of the document shown now. */
     map(): PositionMap | undefined;
     post(message: WebviewMessage): void;
+    /** VS Code's `editor.acceptSuggestionOnEnter` for Markdown, as the host last posted it. */
+    acceptOnEnter(): AcceptOnEnter;
 }
 
 /** Where the open list's items begin, mapped through every transaction: what was typed since is the query. */
@@ -106,6 +142,8 @@ interface Open {
     items: readonly CompletionEntry[];
     incomplete: boolean;
     shown: ListedCompletion[];
+    /** Asked for with `Ctrl+Space`, not by a character typed: VS Code's explicitly triggered list. */
+    manual: boolean;
 }
 
 let listSeq = 0;
@@ -113,14 +151,14 @@ let listSeq = 0;
 class CaretCompletion implements PluginView {
     private list: CompletionListView | null = null;
     private open: Open | null = null;
-    private inFlight: { requestId: number; timer: ReturnType<typeof setTimeout> } | null = null;
+    private inFlight: { requestId: number; timer: ReturnType<typeof setTimeout>; manual: boolean } | null = null;
     /** A question asked while another was in flight: asked when that one is answered, whose answer is then dropped. */
-    private queued: { trigger?: string } | null = null;
+    private queued: { trigger?: string; manual: boolean } | null = null;
     private timer: ReturnType<typeof setTimeout> | undefined;
     private awaitingApply: number | null = null;
     private seq = 0;
     private readonly mount: HTMLElement;
-    private readonly onBeforeInput = (e: Event) => this.typed(e as InputEvent);
+    private readonly onBeforeInput = (e: Event) => this.input(e as InputEvent);
     private readonly onFocusOut = (e: FocusEvent) => {
         if (!this.list || !(e.relatedTarget instanceof globalThis.Node) || !this.list.el.contains(e.relatedTarget)) {
             this.close();
@@ -164,14 +202,21 @@ class CaretCompletion implements PluginView {
             e.preventDefault();
             e.stopPropagation();
             clearTimeout(this.timer);
-            this.ask(undefined);
+            this.ask(undefined, true);
             return true;
         }
         if (!this.open || !this.list || e.isComposing) {
             return false;
         }
-        const action = listKeyAction(e.key, this.open.shown.length, this.list.chosen, { shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey });
+        const row = this.open.shown[Math.max(0, this.list.chosen)];
+        const enter = e.key !== 'Enter' || enterAccepts(this.port.acceptOnEnter(), row?.entry, this.typed() ?? '', this.open.manual);
+        const action = listKeyAction(e.key, this.open.shown.length, this.list.chosen, { shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey }, enter);
         if (action === null) {
+            return false;
+        }
+        if (action.kind === 'dismiss') {
+            // The key goes on to the editor's keymaps: Enter makes its new line.
+            this.close();
             return false;
         }
         e.preventDefault();
@@ -191,12 +236,13 @@ class CaretCompletion implements PluginView {
         if (!this.inFlight || msg.requestId !== this.inFlight.requestId) {
             return;
         }
+        const { manual } = this.inFlight;
         clearTimeout(this.inFlight.timer);
         this.inFlight = null;
         if (this.queued) {
-            const { trigger } = this.queued;
+            const queued = this.queued;
             this.queued = null;
-            this.ask(trigger);
+            this.ask(queued.trigger, queued.manual);
             return;
         }
         if (msg.version !== this.port.version() || msg.items.length === 0) {
@@ -216,7 +262,7 @@ class CaretCompletion implements PluginView {
         if (start && !start.approximate && start.pos <= selection.head && start.pos >= selection.$head.start()) {
             anchor = start.pos;
         }
-        this.open = { requestId: msg.requestId, items: msg.items, incomplete: msg.incomplete, shown: [] };
+        this.open = { requestId: msg.requestId, items: msg.items, incomplete: msg.incomplete, shown: [], manual };
         // The update this dispatch makes draws the list (`refilter`).
         this.view.dispatch(state.tr.setMeta(anchorKey, anchor).setMeta('addToHistory', false));
     }
@@ -258,34 +304,46 @@ class CaretCompletion implements PluginView {
     }
 
     /** A character typed (any path, a note's own input handler included): a non-word one asks, a letter filters. */
-    private typed(e: InputEvent): void {
+    private input(e: InputEvent): void {
         if (e.inputType !== 'insertText' || typeof e.data !== 'string' || e.data === '') {
             return;
         }
         const ch = [...e.data].pop() as string;
         if (!isWordCharacter(ch)) {
-            this.schedule(ch);
+            this.schedule(ch, false);
         } else if (this.open?.incomplete) {
-            this.schedule(undefined);
+            // Asked again for the same list: as it was asked for.
+            this.schedule(undefined, this.open.manual);
         }
     }
 
-    private schedule(trigger: string | undefined): void {
+    private schedule(trigger: string | undefined, manual: boolean): void {
         clearTimeout(this.timer);
         this.timer = setTimeout(() => {
             this.timer = undefined;
-            this.ask(trigger);
+            this.ask(trigger, manual);
         }, COMPLETION_ASK_DELAY_MS);
     }
 
+    /** What was typed since the open list's anchor, up to the caret; `null` without one. */
+    private typed(): string | null {
+        const state = this.view.state;
+        const anchor = anchorKey.getState(state);
+        const selection = state.selection;
+        if (anchor == null || !(selection instanceof TextSelection) || !selection.empty || anchor > selection.head || anchor < selection.$head.start()) {
+            return null;
+        }
+        return state.doc.textBetween(anchor, selection.head, '', '￼');
+    }
+
     /** Ask the host at the caret, after the pending edit, so the position is in the text it holds. */
-    private ask(trigger: string | undefined): void {
+    private ask(trigger: string | undefined, manual: boolean): void {
         const version = this.port.version();
         if (version === undefined) {
             return;
         }
         if (this.inFlight) {
-            this.queued = { trigger };
+            this.queued = { trigger, manual };
             return;
         }
         const selection = this.view.state.selection;
@@ -305,7 +363,7 @@ class CaretCompletion implements PluginView {
                 this.queued = null;
             }
         }, COMPLETION_TIMEOUT_MS);
-        this.inFlight = { requestId, timer };
+        this.inFlight = { requestId, timer, manual };
         this.port.post({ type: 'complete', requestId, baseVersion: version, position: caret, ...(trigger !== undefined ? { triggerCharacter: trigger } : {}) });
     }
 
@@ -350,7 +408,7 @@ class CaretCompletion implements PluginView {
             return;
         }
         if (!this.list) {
-            this.list = new CompletionListView(`mep-caret-completions-${++listSeq}`, 'Completions', CARET_COMPLETION_KEYS, i => this.accept(this.open?.shown[i]));
+            this.list = new CompletionListView(`mep-caret-completions-${++listSeq}`, 'Completions', caretCompletionKeys(this.port.acceptOnEnter()), i => this.accept(this.open?.shown[i]));
             this.list.el.classList.add('mep-caret-completions');
             this.mount.append(this.list.el);
         }

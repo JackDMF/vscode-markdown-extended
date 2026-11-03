@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- In the Visual Editor's completion list, Enter follows VS Code's `editor.acceptSuggestionOnEnter` for Markdown: with `off` it closes the list and starts a new line (Tab accepts), with `smart` it accepts only where that changes the text; the list's footer names Enter only where it accepts.
+
 ## v4.12.0 — Other Extensions Write Where You Work
 
 - Other extensions can insert Markdown blocks into the Visual Editor after the caret's block, undoable with Ctrl+Z (Cmd+Z) and without losing what you were typing (`visualEditor.insertBlock`).

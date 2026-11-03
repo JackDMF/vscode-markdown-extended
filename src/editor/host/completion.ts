@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { SourcePosition, toSourceRange, validPosition } from '../positions';
-import type { CompletionEntry } from '../protocol';
+import type { AcceptOnEnter, CompletionEntry } from '../protocol';
 import { message } from './errors';
 import type { LanguageHost } from './language';
 
@@ -214,7 +214,29 @@ export function completionEntry(item: vscode.CompletionItem, range: vscode.Range
     if (item.filterText !== undefined) {
         entry.filterText = item.filterText;
     }
+    if (item.insertText instanceof vscode.SnippetString || (item.additionalTextEdits?.length ?? 0) > 0) {
+        entry.snippetOrEdits = true;
+    }
     return entry;
+}
+
+/**
+ * `editor.acceptSuggestionOnEnter` as VS Code reads it: `on`, `smart` or
+ * `off`, the old booleans as `on` and `off`, anything else the default `on`.
+ */
+export function acceptOnEnterOf(value: unknown): AcceptOnEnter {
+    if (value === true) {
+        return 'on';
+    }
+    if (value === false) {
+        return 'off';
+    }
+    return value === 'smart' || value === 'off' ? value : 'on';
+}
+
+/** `editor.acceptSuggestionOnEnter` for Markdown in the document's folder: its `[markdown]` override, else the general one. */
+export function acceptOnEnterFor(uri: vscode.Uri): AcceptOnEnter {
+    return acceptOnEnterOf(vscode.workspace.getConfiguration('editor', { uri, languageId: 'markdown' }).get('acceptSuggestionOnEnter'));
 }
 
 /** The value an item inserts, as written — for finding the same item in a second answer. */

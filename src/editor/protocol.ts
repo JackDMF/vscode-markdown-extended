@@ -106,7 +106,16 @@ export interface CompletionEntry {
     range?: SourceRange;
     sortText?: string;
     filterText?: string;
+    /**
+     * A snippet, or additional edits beside the insertion: accepting it
+     * changes the text even where what was typed equals `insertText`, so
+     * `acceptSuggestionOnEnter: smart` lets Enter accept it (`enterAccepts`).
+     */
+    snippetOrEdits?: true;
 }
+
+/** VS Code's `editor.acceptSuggestionOnEnter`, for Markdown: whether Enter accepts in the caret's list as well as Tab. */
+export type AcceptOnEnter = 'on' | 'smart' | 'off';
 
 /** How bad a diagnostic is, as the page draws it: VS Code's four `DiagnosticSeverity` values. */
 export type DiagnosticSeverityName = 'error' | 'warning' | 'info' | 'hint';
@@ -258,6 +267,14 @@ export type HostMessage =
      * document's or the document changed while the providers computed.
      */
     | { type: 'completions'; requestId: number; version: number; items: CompletionEntry[]; incomplete: boolean }
+    /**
+     * VS Code's settings for the caret's list, read for Markdown
+     * (`[markdown]` overrides, the document's folder): whether Enter accepts
+     * (`editor.acceptSuggestionOnEnter`). Posted after every `document` and
+     * when the setting changes; until the first, the page takes VS Code's
+     * default (`on`).
+     */
+    | { type: 'completionSettings'; acceptSuggestionOnEnter: AcceptOnEnter }
     /**
      * The answer to `applyCompletion`, after the document it produced was
      * posted: where the caret goes in that document's text (the end of the
