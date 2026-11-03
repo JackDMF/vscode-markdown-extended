@@ -15,8 +15,9 @@ import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
 import { tipText } from '../../../src/editor/tips';
 import {
     ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, TABLE_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
-    insertSourceTransaction, insertWrapperTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup,
+    blockSource, insertBlockTransaction, insertSourceTransaction, insertWrapperTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup,
 } from '../../../src/editor/webview/toolbar/commands';
+import { undo } from 'prosemirror-history';
 import { ADMONITION_FAMILIES, ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { HOVER_SECTION_CLASS } from '../../../src/editor/webview/languageCard';
 import { NESTED_LIST_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
@@ -595,6 +596,71 @@ suite('Editor toolbar: where a block is inserted, and why the block type is lock
         const table = stateOf('| a | b |\n| - | - |\n| cell | 2 |\n');
         assert.strictEqual(table.doc.firstChild?.type.name, 'table');
         assert.strictEqual(blockLockReason(table.apply(table.tr.setSelection(TextSelection.create(table.doc, posOf(table.doc, 'cell'))))), TABLE_LOCK, 'a cell is no block to retype');
+    });
+});
+
+suite('Editor: a block another extension inserts (insertBlock)', () => {
+    const QUOTE = '> ## Römer 12:2 {.nwtsty}\n> Text';
+    const caretAt = (state: EditorState, needle: string) => state.apply(state.tr.setSelection(TextSelection.create(state.doc, posOf(state.doc, needle))));
+
+    test('it goes after the block the caret is in, a blank line before it, the caret right after it', () => {
+        const state = caretAt(stateOf(SOURCE), 'beta');
+        const inserted = insertBlockTransaction(state, QUOTE, '\n');
+        assert.ok(inserted);
+        const next = state.apply(inserted.tr);
+        assert.strictEqual(next.doc.child(2), next.doc.nodeAt(inserted.pos), 'right after the paragraph');
+        assert.strictEqual(next.doc.child(2).attrs.src, `${QUOTE}\n`);
+        assert.strictEqual(inserted.end, inserted.pos + next.doc.child(2).nodeSize);
+        assert.strictEqual(text(next), SOURCE.replace('gamma.\n', `gamma.\n\n${QUOTE}\n`));
+        assert.ok(next.selection instanceof TextSelection && next.selection.empty);
+        assert.strictEqual(next.selection.from, inserted.end + 1, 'at the start of the paragraph after it');
+    });
+
+    test('its line breaks are the document\'s, inside and at its end, whatever it was given', () => {
+        for (const given of ['A\nB', 'A\r\nB\r\n', 'A\rB\n\n\n']) {
+            assert.strictEqual(blockSource(given, '\r\n'), 'A\r\nB\r\n', JSON.stringify(given));
+            assert.strictEqual(blockSource(given, '\n'), 'A\nB\n', JSON.stringify(given));
+        }
+        const state = caretAt(stateOf(SOURCE), 'beta');
+        const inserted = insertBlockTransaction(state, 'One\nTwo\n', '\r\n');
+        assert.strictEqual(state.apply((inserted as { tr: Transaction }).tr).doc.child(2).attrs.src, 'One\r\nTwo\r\n');
+    });
+
+    test('nothing goes before the first block or the front matter; an empty document takes it at its start', () => {
+        let state = stateOf(SOURCE);
+        state = state.apply(state.tr.setSelection(new GapCursor(state.doc.resolve(0))));
+        const atStart = insertBlockTransaction(state, QUOTE, '\n');
+        assert.strictEqual(atStart?.pos, state.doc.child(0).nodeSize, 'after the first block');
+
+        const fm = stateOf(`---\ntitle: x\n---\n\n${SOURCE}`);
+        const inFm = insertBlockTransaction(fm.apply(fm.tr.setSelection(NodeSelection.create(fm.doc, 0))), QUOTE, '\n');
+        assert.strictEqual(inFm?.pos, fm.doc.child(0).nodeSize, 'after the front matter');
+
+        const empty = stateOf('');
+        const into = insertBlockTransaction(empty, QUOTE, '\n');
+        assert.ok(into);
+        assert.strictEqual(text(empty.apply(into.tr)), `${QUOTE}\n`);
+    });
+
+    test('Markdown of whitespace only is nothing to insert', () => {
+        assert.strictEqual(insertBlockTransaction(stateOf(SOURCE), ' \n\t\r\n', '\n'), null);
+    });
+
+    test('it is a history step of its own: one undo takes it out and leaves what was typed before', () => {
+        let state = caretAt(stateOf(SOURCE), 'beta');
+        state = state.apply(state.tr.insertText('XY'));
+        const typed = text(state);
+        const inserted = insertBlockTransaction(state, QUOTE, '\n');
+        assert.ok(inserted);
+        state = state.apply(inserted.tr);
+        assert.ok(undo(state, tr => {
+            state = state.apply(tr);
+        }));
+        assert.strictEqual(text(state), typed, 'the typing stays');
+        assert.ok(undo(state, tr => {
+            state = state.apply(tr);
+        }));
+        assert.strictEqual(text(state), SOURCE);
     });
 });
 

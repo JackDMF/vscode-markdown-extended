@@ -6,7 +6,8 @@ import { lift, setBlockType, toggleMark, wrapIn } from 'prosemirror-commands';
 import { Mark, MarkType, Node, NodeType, ResolvedPos } from 'prosemirror-model';
 import { liftListItem, wrapInList } from 'prosemirror-schema-list';
 import { GapCursor } from 'prosemirror-gapcursor';
-import { AllSelection, Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
+import { closeHistory } from 'prosemirror-history';
+import { AllSelection, Command, EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { isInTable } from 'prosemirror-tables';
 import { parseAttrsLiteral } from '../../attrs';
 import { DEFAULT_FENCE } from '../../fences';
@@ -590,6 +591,40 @@ export function insertLineTransaction(state: EditorState, line: string, eol: '\n
     const tr = state.tr.insert(pos, nodes.raw_block.create({ src: singleLine(line) + eol, gap: null, html: '' }));
     tr.setSelection(NodeSelection.create(tr.doc, pos));
     return { tr: tr.scrollIntoView(), pos };
+}
+
+/**
+ * Blocks another extension handed as Markdown, as a source block's `src`: the
+ * line breaks at its end dropped, every one inside — `\n`, `\r\n` or `\r` —
+ * written as the document's `eol`, and the last line terminated with it.
+ */
+export function blockSource(markdown: string, eol: '\n' | '\r\n'): string {
+    return markdown.replace(/(?:\r\n|\r|\n)+$/, '').split(/\r\n|\r|\n/).join(eol) + eol;
+}
+
+/**
+ * The transaction `insertBlock` makes for another extension (`visualEditor.insertBlock`,
+ * ARCHITECTURE.md, "Inserting blocks for another extension"): a new source block
+ * holding `markdown` exactly as given (`blockSource`), after the block the
+ * selection ends in (`insertionPoint`) — where the Insert menu puts any block —
+ * a blank line before it, the caret right after it. The sister of
+ * `insertLineTransaction` for any number of lines. It is a step of the history
+ * of its own, never merged with typing just before it (`closeHistory`), so
+ * Ctrl+Z takes out the block and nothing else. The page then sends the text
+ * with `reparse`, and the host's parser, with every markdown-it plugin, turns
+ * the source block into whatever the text is. `end` is the position right
+ * after the inserted block; `null` for Markdown that is only whitespace.
+ */
+export function insertBlockTransaction(state: EditorState, markdown: string, eol: '\n' | '\r\n'): { tr: Transaction; pos: number; end: number } | null {
+    if (markdown.trim() === '') {
+        return null;
+    }
+    const pos = insertionPoint(state);
+    const block = nodes.raw_block.create({ src: blockSource(markdown, eol), gap: null, html: '' });
+    const tr = state.tr.insert(pos, block);
+    const end = pos + block.nodeSize;
+    tr.setSelection(Selection.near(tr.doc.resolve(end), 1));
+    return { tr: closeHistory(tr).scrollIntoView(), pos, end };
 }
 
 /**
