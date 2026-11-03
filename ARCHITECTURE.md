@@ -3364,7 +3364,8 @@ asks to.
    *Deployment branches and tags*: **Selected branches and tags** → add a **tag**
    rule `v*` **and a branch rule `master`** (a manual "Run workflow" runs on the
    branch `master`, not on the tag; without the branch rule the publish job is
-   rejected) → *Required reviewers*: `JackDMF` → Save.
+   rejected) → *Required reviewers*: `JackDMF` (leave *Prevent self-review* off — otherwise the one
+   reviewer cannot approve the runs he starts) → Save.
 2. *Rules* → *Rulesets* → **New tag ruleset** → target pattern `v*` → enforcement
    Active → restrict creations, updates and deletions (bypass: role **Repository admin** — the personal account is the admin), so that
    only you can create a tag that starts a release. Create it **after** moving the
@@ -3397,7 +3398,7 @@ In this order:
    locally so that `release.mjs` uses vsce 4.1.0 instead of the global 3.9.2.
 3. Move the tag **before** the tag ruleset is active (or with bypass):
    ```bash
-   git tag -f v4.12.0 <merge-commit>
+   git tag -f -a v4.12.0 -m "v4.12.0" <merge-commit>
    git push --force origin refs/tags/v4.12.0
    ```
    The tag push starts the run.
@@ -3408,7 +3409,8 @@ In this order:
    npx vsce ls --no-dependencies | sort > /tmp/lokal.txt
    unzip -Z1 markdown-extended-pro-4.12.0.vsix | grep '^extension/' \
      | sed 's|^extension/||' | sort > /tmp/artefakt.txt
-   diff /tmp/lokal.txt /tmp/artefakt.txt   # ignores [Content_Types].xml, extension.vsixmanifest
+   diff /tmp/lokal.txt /tmp/artefakt.txt   # ignores [Content_Types].xml, extension.vsixmanifest;
+   # expected: README.md/CHANGELOG.md appear as readme.md/changelog.md in the VSIX (vsce renames them)
    ```
 5. Approve in the run: "Review deployments" → `marketplace` → Approve.
 
