@@ -3366,8 +3366,9 @@ asks to.
    branch `master`, not on the tag; without the branch rule the publish job is
    rejected) → *Required reviewers*: `JackDMF` → Save.
 2. *Rules* → *Rulesets* → **New tag ruleset** → target pattern `v*` → enforcement
-   Active → restrict creations, updates and deletions (bypass: yourself), so that
-   only you can create a tag that starts a release.
+   Active → restrict creations, updates and deletions (bypass: role **Repository admin** — the personal account is the admin), so that
+   only you can create a tag that starts a release. Create it **after** moving the
+   `v4.12.0` tag (see below), or give yourself the bypass.
 
 **Marketplace** (<https://marketplace.visualstudio.com/manage> → publisher
 `jackdmf` → **Trusted Publishing** → **Create**):
@@ -3383,23 +3384,36 @@ asks to.
 The first successful token exchange activates the policy; revoke it on the same
 page if the repository or workflow changes hands.
 
-### Publishing an existing tag afterwards (4.12.0)
+### Publishing 4.12.0 (the tag has to move)
 
-After the branch with the workflow is merged to `master` and pushed (the file
-must be on `master` for "Run workflow" to show up): GitHub → Actions → **Publish**
-→ **Run workflow** → branch `master`, `tag` = `v4.12.0`. The tag is checked out; the
-workflow file itself comes from `master`. The run stops at *publish* and waits for
-approval. **Before approving**, compare the file list of the built artefact with
-the local tree: download the artefact from the run, then
+"Run workflow" with a `tag` input only works for tags that already contain this
+workflow's prerequisites (`.nvmrc`, the `@vscode/vsce` devDependency); the build
+job stops with a clear message otherwise. `v4.12.0` (c40f1ff) predates them and
+4.12.0 never reached the Marketplace, so the tag is moved onto the merge commit.
+In this order:
 
-```bash
-npx vsce ls --no-dependencies > /tmp/lokal.txt                  # in a checkout of v4.12.0
-unzip -Z1 markdown-extended-pro-4.12.0.vsix | sed 's|^extension/||' | sort > /tmp/artefakt.txt
-diff <(sort /tmp/lokal.txt) /tmp/artefakt.txt                    # only vsix metadata may differ
-```
+1. Set up the GitHub environment and the Marketplace policy (above).
+2. Merge `ci/trusted-publishing` into `master` and push it. Then, once, `npm ci`
+   locally so that `release.mjs` uses vsce 4.1.0 instead of the global 3.9.2.
+3. Move the tag **before** the tag ruleset is active (or with bypass):
+   ```bash
+   git tag -f v4.12.0 <merge-commit>
+   git push --force origin refs/tags/v4.12.0
+   ```
+   The tag push starts the run.
+4. The run stops at *publish*. Download the artefact `markdown-extended-pro-4.12.0.vsix`
+   and compare its file list with the tree (in a checkout of the tag):
+   ```bash
+   npm ci && npm run package          # dist/ is gitignored
+   npx vsce ls --no-dependencies | sort > /tmp/lokal.txt
+   unzip -Z1 markdown-extended-pro-4.12.0.vsix | grep '^extension/' \
+     | sed 's|^extension/||' | sort > /tmp/artefakt.txt
+   diff /tmp/lokal.txt /tmp/artefakt.txt   # ignores [Content_Types].xml, extension.vsixmanifest
+   ```
+5. Approve in the run: "Review deployments" → `marketplace` → Approve.
 
-then approve in the run ("Review deployments" → `marketplace` → Approve). The same
-works for any tag whose run failed.
+For later versions `npm run release:publish` does tag and push itself. "Run workflow"
+remains for a re-run of a tag that already contains the workflow state.
 
 ### Fallback until 2026-12-01
 

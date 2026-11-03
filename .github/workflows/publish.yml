@@ -49,6 +49,14 @@ jobs:
           ref: refs/tags/${{ env.TAG }}
           persist-credentials: false
 
+      # Nur Tags ab dem Stand dieses Workflows lassen sich veröffentlichen:
+      # ältere haben weder .nvmrc noch vsce in den devDependencies.
+      - name: Tag has what the workflow needs
+        run: |
+          [ -f .nvmrc ] || { echo "::error::Tag ${TAG} has no .nvmrc — it predates the publish workflow; move the tag onto a commit that contains it"; exit 1; }
+          node -e "process.exit(require('./package.json').devDependencies?.['@vscode/vsce'] ? 0 : 1)" \
+            || { echo "::error::Tag ${TAG} has no @vscode/vsce devDependency — it predates the publish workflow"; exit 1; }
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
@@ -71,7 +79,7 @@ jobs:
 
       # `vsce package` runs vscode:prepublish (esbuild --production).
       - name: Package
-        run: npx vsce package --no-dependencies --out "markdown-extended-pro-${{ steps.version.outputs.version }}.vsix"
+        run: npx --no-install vsce package --no-dependencies --out "markdown-extended-pro-${TAG#v}.vsix"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -112,7 +120,7 @@ jobs:
 
       # Genau das gebaute Paket, nicht neu gepackt.
       - name: Publish to the Marketplace
-        run: npx vsce publish --oidc --packagePath "vsix/markdown-extended-pro-${VERSION}.vsix"
+        run: npx --no-install vsce publish --oidc --packagePath "vsix/markdown-extended-pro-${VERSION}.vsix"
 
   release:
     needs: [build, publish]
