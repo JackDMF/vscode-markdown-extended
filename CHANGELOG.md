@@ -3,6 +3,8 @@
 ## Unreleased
 
 - In the Visual Editor's completion list, Enter follows VS Code's `editor.acceptSuggestionOnEnter` for Markdown: with `off` it closes the list and starts a new line (Tab accepts), with `smart` it accepts only where that changes the text; the list's footer names Enter only where it accepts.
+- A completion provider that triggers on a space is asked at the end of a paragraph too, with the space in the text: the Studienhilfe's books after "1. " now show there, and accepting replaces "1. M" with the book. When nothing is accepted, the space at the paragraph's end goes again as before.
+- A completion list answered after the caret left its line (a quick Enter) no longer opens there.
 
 ## v4.12.0 — Other Extensions Write Where You Work
 

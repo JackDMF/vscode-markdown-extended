@@ -227,6 +227,23 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         await settle();
     });
 
+    test('an answer that comes after the caret left the line it was asked on (a quick Enter) opens nothing', async function () {
+        this.timeout(20000);
+        await showText(SOURCE);
+        await page.waitForFunction(t => document.querySelector('.ProseMirror > p')?.textContent === t, {}, LINE_2);
+        await page.click('.ProseMirror > p');
+        await page.keyboard.press('End');
+        const before = await count();
+        await page.keyboard.type(':');
+        const asked = await waitFor('complete', before);
+        await page.keyboard.press('Enter');
+        const at = { line: 2, character: LINE_2.length + 1 };
+        await send({ type: 'completions', requestId: asked.requestId, version, incomplete: false, items: [{ label: 'late', insertText: 'late', range: { start: at, end: at } }] });
+        await delay(150);
+        assert.strictEqual(await page.$('.mep-caret-completions'), null);
+        await showText(SOURCE);
+    });
+
     test('with acceptSuggestionOnEnter off, Enter closes the list and starts a new line, Tab accepts; the footer names Tab alone', async function () {
         this.timeout(20000);
         await send({ type: 'completionSettings', acceptSuggestionOnEnter: 'off' });

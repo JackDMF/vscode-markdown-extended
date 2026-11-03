@@ -23,7 +23,7 @@ import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
-import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
+import { completionBeforeSave, completionDocumentShown, completionHeld, completionMessage, completionPlugin } from './completion';
 import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
@@ -88,16 +88,24 @@ function post(message: WebviewMessage): void {
  * host's `map` requests and every serialization read the same one, so a block
  * edited since the host's parse is serialized once per state, not per question.
  */
-const pageMaps = new WeakMap<Node, { meta: Current; map: PositionMap }>();
+const pageMaps = new WeakMap<Node, { meta: Current; held: Node | null; map: PositionMap }>();
 
+/**
+ * The map of `doc`, and the text it writes. The editor's own document writes
+ * the closing spaces of the textblock the completion list holds
+ * (`completionHeld`), so the host sees a space typed at a paragraph's end
+ * while the list is asked for or open; every other document — the host's,
+ * just parsed — writes as the save does.
+ */
 function pageMap(doc: Node): PositionMap {
     const meta = current as Current;
+    const held = view !== undefined && doc === view.state.doc ? completionHeld(view) : null;
     const known = pageMaps.get(doc);
-    if (known && known.meta === meta) {
+    if (known && known.meta === meta && known.held === held) {
         return known.map;
     }
-    const map = createPositionMap({ doc, eol: meta.eol, tail: meta.tail }, { defaultWrap: meta.defaultWrap });
-    pageMaps.set(doc, { meta, map });
+    const map = createPositionMap({ doc, eol: meta.eol, tail: meta.tail }, { defaultWrap: meta.defaultWrap, keepTrailingSpace: held });
+    pageMaps.set(doc, { meta, held, map });
     return map;
 }
 
@@ -868,6 +876,7 @@ const languagePort = {
     map: () => (view && current ? pageMap(view.state.doc) : undefined),
     post,
     acceptOnEnter: () => acceptOnEnter,
+    textChanged: () => scheduleFlush(),
 };
 
 /**
@@ -1062,6 +1071,8 @@ function onSaveKeydown(e: KeyboardEvent): void {
     if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's' || !view) {
         return;
     }
+    // The file is written as the save writes it: no space held for the completion list.
+    completionBeforeSave(view);
     commitForSending();
     if (e.altKey || e.shiftKey) {
         // Save As and the like stay VS Code's; the pending edit is sent first.

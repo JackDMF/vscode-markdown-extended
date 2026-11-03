@@ -18,13 +18,23 @@
  * key to the text (a new line), `smart` accepts only where accepting changes
  * the text (`enterAccepts`).
  *
+ * **A space at a textblock's end.** The serializer drops it, so the host
+ * would hold the text without it and the caret after it would map only
+ * approximately. Asked there, the list holds it (`holding`): the page writes
+ * that textblock's closing spaces (`keepTrailingSpace`) while the question is
+ * on its way, the list open, or an accepted item on its way back — so the
+ * providers see "1. " and the item's range covers it. Let go, the next edit
+ * drops the space again, and a file nothing was accepted into ends as typing
+ * alone leaves it; a save lets go first.
+ *
  * **What accepting does.** Nothing on the page: the item's edit is the
  * provider's, applied by the host to the source (`applyCompletion`), and the
  * block comes back as any writer's change does, the caret where the host says
  * the insertion ends. The page shows what the source will say, never its own
  * guess of it.
  */
-import { EditorState, Plugin, PluginKey, PluginView, TextSelection } from 'prosemirror-state';
+import { Node } from 'prosemirror-model';
+import { EditorState, Plugin, PluginKey, PluginView, Selection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { WORD_CHARACTER } from '../../syntax/markers';
 import { PositionMap, caretOf } from '../positions';
@@ -132,10 +142,35 @@ export interface CompletionPort {
     post(message: WebviewMessage): void;
     /** VS Code's `editor.acceptSuggestionOnEnter` for Markdown, as the host last posted it. */
     acceptOnEnter(): AcceptOnEnter;
+    /** The page's text changed with no transaction — a held space let go (`holding`): send it as typing is sent. */
+    textChanged(): void;
 }
 
-/** Where the open list's items begin, mapped through every transaction: what was typed since is the query. */
-const anchorKey = new PluginKey<number | null>('mepCompletionAnchor');
+/**
+ * Where the open list's items begin (`anchor`: what was typed since is the
+ * query) and where the caret stood when the list was last asked for
+ * (`asked`), both mapped through every transaction.
+ */
+interface Places {
+    anchor: number | null;
+    asked: number | null;
+}
+
+const placesKey = new PluginKey<Places>('mepCompletionAnchor');
+
+/**
+ * Whether the selection is a caret at its textblock's end right after a
+ * space: the place whose space the serializer drops, unless it is held
+ * (`keepTrailingSpace`).
+ */
+export function afterClosingSpace(selection: Selection): boolean {
+    if (!(selection instanceof TextSelection) || !selection.empty) {
+        return false;
+    }
+    const $head = selection.$head;
+    const before = $head.nodeBefore;
+    return $head.parent.isTextblock && $head.parentOffset === $head.parent.content.size && before !== null && before.isText && (before.text ?? '').endsWith(' ');
+}
 
 interface Open {
     requestId: number;
@@ -156,6 +191,8 @@ class CaretCompletion implements PluginView {
     private queued: { trigger?: string; manual: boolean } | null = null;
     private timer: ReturnType<typeof setTimeout> | undefined;
     private awaitingApply: number | null = null;
+    /** The textblock at `asked` keeps its closing spaces (`afterClosingSpace`): asked there, the list open, or an item accepted there on its way. */
+    private holding = false;
     private seq = 0;
     private readonly mount: HTMLElement;
     private readonly onBeforeInput = (e: Event) => this.input(e as InputEvent);
@@ -178,6 +215,23 @@ class CaretCompletion implements PluginView {
     /** The rows listed now: for tests. */
     get listed(): readonly CompletionEntry[] {
         return this.open?.shown.map(s => s.entry) ?? [];
+    }
+
+    /** The textblock whose closing spaces the page writes now, `null` for none. */
+    get held(): Node | null {
+        const asked = this.holding ? placesKey.getState(this.view.state)?.asked : null;
+        if (asked == null) {
+            return null;
+        }
+        const doc = this.view.state.doc;
+        const parent = doc.resolve(Math.min(asked, doc.content.size)).parent;
+        return parent.isTextblock ? parent : null;
+    }
+
+    /** Whether a held space is in the page's text now: the held textblock still ends in one. */
+    get holdsSpace(): boolean {
+        const last = this.held?.lastChild;
+        return last?.isText === true && (last.text ?? '').endsWith(' ');
     }
 
     update(): void {
@@ -252,7 +306,9 @@ class CaretCompletion implements PluginView {
         const state = this.view.state;
         const selection = state.selection;
         const map = this.port.map();
-        if (!(selection instanceof TextSelection) || !selection.empty || !map) {
+        // The caret left the textblock it was asked in, or went back before that place (Enter, a click): the answer is not for it.
+        const asked = placesKey.getState(state)?.asked;
+        if (!(selection instanceof TextSelection) || !selection.empty || !map || asked == null || asked < selection.$head.start() || asked > selection.head) {
             this.close();
             return;
         }
@@ -264,7 +320,7 @@ class CaretCompletion implements PluginView {
         }
         this.open = { requestId: msg.requestId, items: msg.items, incomplete: msg.incomplete, shown: [], manual };
         // The update this dispatch makes draws the list (`refilter`).
-        this.view.dispatch(state.tr.setMeta(anchorKey, anchor).setMeta('addToHistory', false));
+        this.view.dispatch(state.tr.setMeta(placesKey, { anchor }).setMeta('addToHistory', false));
     }
 
     /** The host's `completionApplied`: the caret to where the insertion ends, in the document it posted just before. */
@@ -273,6 +329,8 @@ class CaretCompletion implements PluginView {
             return;
         }
         this.awaitingApply = null;
+        // Applied, the document is the host's; refused, the next edit drops the space again.
+        this.release();
         if (msg.caret === null) {
             showHint(this.view, 'Completion not applied — the text changed meanwhile. Ask again.', 'refusal');
             return;
@@ -296,11 +354,43 @@ class CaretCompletion implements PluginView {
         this.close();
     }
 
-    /** Close the list. Its anchor stays in the state, unread, until the next list sets its own: closing runs inside updates. */
-    close(): void {
+    /**
+     * Close the list. Its anchor stays in the state, unread, until the next
+     * list sets its own: closing runs inside updates. A held space is let go
+     * unless a question or an accepted item is still on its way, or the caller
+     * keeps it (`accept`).
+     */
+    close(keepHold = false): void {
         this.open = null;
         this.list?.remove();
         this.list = null;
+        if (!keepHold && !this.inFlight && this.awaitingApply === null) {
+            this.release();
+        }
+    }
+
+    /** A save is about to write the text: a held space goes first, and the list it was held for closes. */
+    beforeSave(): void {
+        if (!this.holdsSpace) {
+            return;
+        }
+        this.close();
+        this.holding = false;
+    }
+
+    /** Hold the caret's closing spaces, when it stands after one at its textblock's end; `asked` set to it. */
+    private hold(selection: TextSelection): void {
+        this.holding = afterClosingSpace(selection);
+        this.view.dispatch(this.view.state.tr.setMeta(placesKey, { asked: selection.head }).setMeta('addToHistory', false));
+    }
+
+    /** Let a held space go: the page's text drops it, and the edit that says so goes as typing does. */
+    private release(): void {
+        if (!this.holding) {
+            return;
+        }
+        this.holding = false;
+        this.port.textChanged();
     }
 
     /** A character typed (any path, a note's own input handler included): a non-word one asks, a letter filters. */
@@ -328,7 +418,7 @@ class CaretCompletion implements PluginView {
     /** What was typed since the open list's anchor, up to the caret; `null` without one. */
     private typed(): string | null {
         const state = this.view.state;
-        const anchor = anchorKey.getState(state);
+        const anchor = placesKey.getState(state)?.anchor;
         const selection = state.selection;
         if (anchor == null || !(selection instanceof TextSelection) || !selection.empty || anchor > selection.head || anchor < selection.$head.start()) {
             return null;
@@ -350,10 +440,14 @@ class CaretCompletion implements PluginView {
         if (!(selection instanceof TextSelection) || !selection.empty) {
             return;
         }
+        this.hold(selection);
         this.port.flush();
         const map = this.port.map();
         const caret = map ? caretOf(this.view.state.selection, map) : null;
         if (caret === null) {
+            if (!this.open) {
+                this.release();
+            }
             return;
         }
         const requestId = ++this.seq;
@@ -361,24 +455,37 @@ class CaretCompletion implements PluginView {
             if (this.inFlight?.requestId === requestId) {
                 this.inFlight = null;
                 this.queued = null;
+                if (!this.open) {
+                    this.release();
+                }
             }
         }, COMPLETION_TIMEOUT_MS);
         this.inFlight = { requestId, timer, manual };
         this.port.post({ type: 'complete', requestId, baseVersion: version, position: caret, ...(trigger !== undefined ? { triggerCharacter: trigger } : {}) });
     }
 
-    /** Accept a row: the host applies it to the source; the list closes at once. */
+    /**
+     * Accept a row: the host applies it to the source; the list closes at
+     * once. A space at the caret's textblock end is held until the host
+     * answers, so the text the item is applied to still holds it.
+     */
     private accept(row: ListedCompletion | undefined): void {
         const open = this.open;
-        this.close();
+        this.close(true);
         const version = this.port.version();
-        if (!open || !row || version === undefined) {
+        const selection = this.view.state.selection;
+        if (!open || !row || version === undefined || !(selection instanceof TextSelection)) {
+            this.close();
             return;
+        }
+        if (afterClosingSpace(selection)) {
+            this.hold(selection);
         }
         this.port.flush();
         const map = this.port.map();
         const caret = map ? caretOf(this.view.state.selection, map) : null;
         if (caret === null) {
+            this.close();
             return;
         }
         this.awaitingApply = open.requestId;
@@ -389,7 +496,7 @@ class CaretCompletion implements PluginView {
     private refilter(): void {
         const open = this.open;
         const state = this.view.state;
-        const anchor = anchorKey.getState(state);
+        const anchor = placesKey.getState(state)?.anchor;
         const selection = state.selection;
         if (!open || anchor == null || !(selection instanceof TextSelection) || !selection.empty) {
             this.close();
@@ -449,6 +556,16 @@ export function completionDocumentShown(view: EditorView): void {
     instances.get(view)?.documentShown();
 }
 
+/** The textblock whose closing spaces the page writes now (`keepTrailingSpace`), `null` for none. */
+export function completionHeld(view: EditorView): Node | null {
+    return instances.get(view)?.held ?? null;
+}
+
+/** A save is about to write the page's text: a space held for the list goes first. */
+export function completionBeforeSave(view: EditorView): void {
+    instances.get(view)?.beforeSave();
+}
+
 /** Whether the view's list is open: the hover waits while it is. */
 export function completionOpen(view: EditorView): boolean {
     return instances.get(view)?.isOpen ?? false;
@@ -464,17 +581,16 @@ export function completionsListed(view: EditorView): readonly CompletionEntry[] 
  * `Tab` and the arrows are the list's while it is open. `Ctrl+Space` is kept
  * from VS Code, which would open its own suggest widget on nothing.
  */
-export function completionPlugin(port: CompletionPort): Plugin<number | null> {
-    return new Plugin<number | null>({
-        key: anchorKey,
+export function completionPlugin(port: CompletionPort): Plugin<Places> {
+    return new Plugin<Places>({
+        key: placesKey,
         state: {
-            init: () => null,
+            init: () => ({ anchor: null, asked: null }),
             apply(tr, value) {
-                const set = tr.getMeta(anchorKey) as number | null | undefined;
-                if (set !== undefined) {
-                    return set;
-                }
-                return value !== null && tr.docChanged ? tr.mapping.map(value, -1) : value;
+                const set = tr.getMeta(placesKey) as Partial<Places> | undefined;
+                const map = (pos: number | null) => (pos !== null && tr.docChanged ? tr.mapping.map(pos, -1) : pos);
+                const mapped = tr.docChanged ? { anchor: map(value.anchor), asked: map(value.asked) } : value;
+                return set === undefined ? mapped : { ...mapped, ...set };
             },
         },
         view: view => {
@@ -492,5 +608,5 @@ export function completionPlugin(port: CompletionPort): Plugin<number | null> {
 
 /** For tests: the anchor the state holds. */
 export function completionAnchor(state: EditorState): number | null {
-    return anchorKey.getState(state) ?? null;
+    return placesKey.getState(state)?.anchor ?? null;
 }
