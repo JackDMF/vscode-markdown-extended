@@ -354,6 +354,35 @@ suite('Editor positions: page ↔ source', () => {
         assert.strictEqual(caretOf(TextSelection.create(withEmpty.doc, inside), map), null, 'an approximate caret is not reported');
     });
 
+    test('spaces at a textblock\'s end are dropped, the caret after them approximate; kept (keepTrailingSpace), written and exact', () => {
+        const cases: [string, string, string][] = [
+            ['paragraph', 'Intro.\n\nsiehe 1.\n\nEnd.\n', 'siehe 1.'],
+            ['heading', '# Siehe 1.\n', 'Siehe 1.'],
+            ['list item, after a mark', '- siehe *1.*\n- b\n', '1.'],
+            ['quote', '> siehe 1.\n', 'siehe 1.'],
+            ['footnote text', '[^a]: siehe 1.\n\nx[^a]\n', 'siehe 1.'],
+            ['CRLF paragraph', toCrlf('Intro.\n\nsiehe 1.\n'), 'siehe 1.'],
+        ];
+        for (const [what, source, needle] of cases) {
+            const parsed = parseDocument(md, source);
+            const end = pageOf(parsed.doc, needle) + needle.length;
+            const typed = edited(parsed, state => state.tr.insertText(' ', end));
+            const caret = TextSelection.create(typed.doc, end + 1);
+            const textblock = caret.$head.parent;
+            const dropped = createPositionMap(typed, OPTIONS);
+            assert.ok(!dropped.text.includes(`${needle} `), `${what}: dropped as the save drops it`);
+            assert.strictEqual(caretOf(caret, dropped), null, `${what}: no caret after a space that is not written`);
+            const kept = createPositionMap(typed, { ...OPTIONS, keepTrailingSpace: textblock });
+            const at = caretOf(caret, kept);
+            assert.ok(at !== null, `${what}: the caret after the kept space is exact`);
+            const space = offsetOf(kept.text, at) - 1;
+            assert.strictEqual(kept.text.charAt(space), ' ', `${what}: after the space`);
+            assert.strictEqual(kept.text.slice(0, space) + kept.text.slice(space + 1), dropped.text, `${what}: the space is all that differs`);
+            assert.deepStrictEqual(caretOf(TextSelection.create(typed.doc, end), kept), caretOf(TextSelection.create(typed.doc, end), dropped), `${what}: before it, as without`);
+            assert.deepStrictEqual(kept.pagePositionOf(at), { pos: end + 1, approximate: false }, `${what}: and back`);
+        }
+    });
+
     test('a block too large for the alignment\'s budget is aligned greedily, every answer approximate', () => {
         const words = Array.from({ length: 200 }, (_, i) => `w${i}`).join(' ');
         const source = `${words} [link](https://example.com/${'a'.repeat(6000)}) end.\n`;
