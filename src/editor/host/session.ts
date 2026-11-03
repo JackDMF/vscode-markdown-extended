@@ -108,6 +108,11 @@ const sessions = new Map<string, VisualEditorSession>();
 /** A reveal for a document whose page is opening: taken by its session when it is made. */
 const pendingReveals = new Map<string, Reveal>();
 
+/** The session a request by uri goes to (a reveal, Sort Footnotes, `insertBlock`); `undefined` when none is open over it. */
+function sessionFor(uri: vscode.Uri): VisualEditorSession | undefined {
+    return sessions.get(uri.toString());
+}
+
 /**
  * Bring `reveal` into view in the Visual Editor over `uri`: now, if a session
  * is open for it, else as soon as one is (the page a `vscode.open` just
@@ -115,7 +120,7 @@ const pendingReveals = new Map<string, Reveal>();
  * page has the document.
  */
 export function revealInVisualEditor(uri: vscode.Uri, reveal: Reveal): void {
-    const session = sessions.get(uri.toString());
+    const session = sessionFor(uri);
     if (session) {
         session.reveal(reveal);
     } else {
@@ -125,7 +130,7 @@ export function revealInVisualEditor(uri: vscode.Uri, reveal: Reveal): void {
 
 /** The palette's "Sort Footnotes" for the Visual Editor over `uri`: its page sorts them (`sortFootnotes`). Whether one is open. */
 export function sortFootnotesIn(uri: vscode.Uri): boolean {
-    const session = sessions.get(uri.toString());
+    const session = sessionFor(uri);
     session?.sortFootnotes();
     return session !== undefined;
 }
@@ -137,7 +142,7 @@ export function sortFootnotesIn(uri: vscode.Uri): boolean {
  * set `supportsMultipleEditorsPerDocument`), so the uri names it.
  */
 export function insertBlockIn(uri: vscode.Uri, markdown: string, options?: InsertBlockOptions): Promise<InsertBlockResult> {
-    const session = sessions.get(uri.toString());
+    const session = sessionFor(uri);
     return session === undefined ? Promise.resolve({ inserted: false, reason: 'no-editor' }) : session.insertBlock(markdown, options);
 }
 
