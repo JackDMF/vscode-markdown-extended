@@ -22,10 +22,14 @@
  * would hold the text without it and the caret after it would map only
  * approximately. Asked there, the list holds it (`holding`): the page writes
  * that textblock's closing spaces (`keepTrailingSpace`) while the question is
- * on its way, the list open, or an accepted item on its way back — so the
- * providers see "1. " and the item's range covers it. Let go, the next edit
- * drops the space again, and a file nothing was accepted into ends as typing
- * alone leaves it; a save lets go first.
+ * on its way, and again while an accepted item is on its way back — so the
+ * providers see "1. " and the item's range covers it. Not while the list
+ * stands open: the answer lets go at once, and the edit that drops the space
+ * goes at once too, so another writer's change, a save or the window closing
+ * meanwhile finds the file as typing alone leaves it. A document the host
+ * parsed while the space was in its text marks that block edited
+ * (`dropSentSpace`), so the next edit drops it there too; a save lets go
+ * first.
  *
  * **What accepting does.** Nothing on the page: the item's edit is the
  * provider's, applied by the host to the source (`applyCompletion`), and the
@@ -142,7 +146,7 @@ export interface CompletionPort {
     post(message: WebviewMessage): void;
     /** VS Code's `editor.acceptSuggestionOnEnter` for Markdown, as the host last posted it. */
     acceptOnEnter(): AcceptOnEnter;
-    /** The page's text changed with no transaction — a held space let go (`holding`): send it as typing is sent. */
+    /** The page's text changed with no transaction — a held space let go (`holding`): send it now. */
     textChanged(): void;
 }
 
@@ -191,8 +195,10 @@ class CaretCompletion implements PluginView {
     private queued: { trigger?: string; manual: boolean } | null = null;
     private timer: ReturnType<typeof setTimeout> | undefined;
     private awaitingApply: number | null = null;
-    /** The textblock at `asked` keeps its closing spaces (`afterClosingSpace`): asked there, the list open, or an item accepted there on its way. */
+    /** The textblock at `asked` keeps its closing spaces (`afterClosingSpace`): a question asked there, or an item accepted there, on its way. */
     private holding = false;
+    /** A held space went to the host — the held textblock's text without it — and no document has come back since: one that comes may hold it (`dropSentSpace`). */
+    private spaceSent: string | null = null;
     private seq = 0;
     private readonly mount: HTMLElement;
     private readonly onBeforeInput = (e: Event) => this.input(e as InputEvent);
@@ -321,6 +327,8 @@ class CaretCompletion implements PluginView {
         this.open = { requestId: msg.requestId, items: msg.items, incomplete: msg.incomplete, shown: [], manual };
         // The update this dispatch makes draws the list (`refilter`).
         this.view.dispatch(state.tr.setMeta(placesKey, { anchor }).setMeta('addToHistory', false));
+        // The anchor was read from the text with the space; the list stands without it (`accept` holds it again).
+        this.release();
     }
 
     /** The host's `completionApplied`: the caret to where the insertion ends, in the document it posted just before. */
@@ -349,9 +357,59 @@ class CaretCompletion implements PluginView {
         this.view.dispatch(this.view.state.tr.setSelection(selection).setMeta('addToHistory', false).scrollIntoView());
     }
 
-    /** A new document from the host: what the list was for is gone. */
+    /**
+     * A new document from the host: what the list was for is gone, and so is
+     * any hold — the document is the host's. One parsed while a held space was
+     * in the host's text may hold it (`dropSentSpace`).
+     */
     documentShown(): void {
         this.close();
+        this.holding = false;
+        if (this.spaceSent !== null) {
+            this.dropSentSpace();
+        }
+    }
+
+    /**
+     * A document the host parsed from a text with a held space in it reads
+     * that block as untouched, its `src` holding the space, which the save
+     * would then write. The textblock is found again by its text — the held
+     * one without its closing spaces — in a block with a `src` whose text has
+     * a space right after the textblock's end, the one nearest `asked` (which
+     * the resync may have moved off it); that block is marked edited (`src`
+     * cleared), so the next edit writes it by rule and drops the space.
+     */
+    private dropSentSpace(): void {
+        const sent = this.spaceSent;
+        this.spaceSent = null;
+        const state = this.view.state;
+        const map = this.port.map();
+        if (sent === null || !map) {
+            return;
+        }
+        const lines = map.text.split(/\r\n|\r|\n/);
+        const asked = placesKey.getState(state)?.asked ?? 0;
+        const doc = state.doc;
+        let best = -1;
+        doc.descendants((node, pos) => {
+            if (!node.isTextblock) {
+                return true;
+            }
+            if (node.textContent !== sent) {
+                return false;
+            }
+            const index = doc.resolve(pos).index(0);
+            const top = doc.resolve(pos).posAtIndex(index, 0);
+            const at = (doc.child(index).attrs.src ?? null) === null ? null : map.sourcePositionOf(pos + node.nodeSize - 1);
+            if (at && !at.approximate && lines[at.line]?.charAt(at.character) === ' ' && (best < 0 || Math.abs(top - asked) < Math.abs(best - asked))) {
+                best = top;
+            }
+            return false;
+        });
+        const block = best < 0 ? null : doc.nodeAt(best);
+        if (block !== null) {
+            this.view.dispatch(state.tr.setNodeMarkup(best, undefined, { ...block.attrs, src: null }).setMeta('addToHistory', false));
+        }
     }
 
     /**
@@ -381,10 +439,14 @@ class CaretCompletion implements PluginView {
     /** Hold the caret's closing spaces, when it stands after one at its textblock's end; `asked` set to it. */
     private hold(selection: TextSelection): void {
         this.holding = afterClosingSpace(selection);
+        // The flush right after sends it.
+        if (this.holding) {
+            this.spaceSent = selection.$head.parent.textContent.replace(/ +$/, '');
+        }
         this.view.dispatch(this.view.state.tr.setMeta(placesKey, { asked: selection.head }).setMeta('addToHistory', false));
     }
 
-    /** Let a held space go: the page's text drops it, and the edit that says so goes as typing does. */
+    /** Let a held space go: the page's text drops it, and the edit that says so goes now. */
     private release(): void {
         if (!this.holding) {
             return;
@@ -438,6 +500,9 @@ class CaretCompletion implements PluginView {
         }
         const selection = this.view.state.selection;
         if (!(selection instanceof TextSelection) || !selection.empty) {
+            if (!this.open) {
+                this.release();
+            }
             return;
         }
         this.hold(selection);
@@ -519,6 +584,8 @@ class CaretCompletion implements PluginView {
             this.list.el.classList.add('mep-caret-completions');
             this.mount.append(this.list.el);
         }
+        // The setting may have changed since the list was made.
+        this.list.footer = caretCompletionKeys(this.port.acceptOnEnter());
         const chosen = Math.max(0, open.shown.findIndex(s => s.index === previous));
         this.list.render(open.shown.map(s => ({ label: s.entry.label, detail: s.entry.detail, kind: s.entry.kind })), chosen);
         this.place(anchor, $head.pos);
@@ -554,6 +621,11 @@ export function completionMessage(view: EditorView, msg: Extract<HostMessage, { 
 /** A new document arrived: an open list closes. */
 export function completionDocumentShown(view: EditorView): void {
     instances.get(view)?.documentShown();
+}
+
+/** The host's settings for the list changed: an open list says its keys afresh. */
+export function completionSettingsChanged(view: EditorView): void {
+    instances.get(view)?.update();
 }
 
 /** The textblock whose closing spaces the page writes now (`keepTrailingSpace`), `null` for none. */

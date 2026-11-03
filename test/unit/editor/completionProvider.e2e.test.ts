@@ -28,11 +28,15 @@ interface Asked {
  * position — and nothing else, so the books show only where the provider sees
  * the space in the document.
  */
-function registerBooks(asked: Asked[]): vscode.Disposable {
+function registerBooks(asked: Asked[], meanwhile: { edit?: () => Thenable<unknown> }): vscode.Disposable {
     return vscode.languages.registerCompletionItemProvider({ language: 'markdown' }, {
-        provideCompletionItems(document, position, _token, context) {
+        async provideCompletionItems(document, position, _token, context) {
             const before = document.lineAt(position.line).text.slice(0, position.character);
             asked.push({ before, triggerCharacter: context.triggerCharacter, triggerKind: context.triggerKind });
+            // Another writer's change while the question is on its way, once.
+            const edit = meanwhile.edit;
+            meanwhile.edit = undefined;
+            await edit?.();
             const m = /(?<![\p{L}\p{N}.])1\. $/u.exec(before);
             if (context.triggerKind !== vscode.CompletionTriggerKind.TriggerCharacter || context.triggerCharacter !== ' ' || !m) {
                 return undefined;
@@ -134,6 +138,13 @@ suite('Editor completion with a provider of VS Code\'s (e2e)', () => {
     let file: string;
     let provider: vscode.Disposable;
     const asked: Asked[] = [];
+    const meanwhile: { edit?: () => Thenable<unknown> } = {};
+    /** Another writer's change: "Intro" becomes "Opening" on the first line. */
+    const otherWriter = () => {
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(textDocument.uri, new vscode.Range(0, 0, 0, 5), 'Opening');
+        return vscode.workspace.applyEdit(edit);
+    };
     const engineChanged = new vscode.EventEmitter<void>();
 
     /** Set Enter's setting for Markdown, and wait until the page has it. */
@@ -163,7 +174,7 @@ suite('Editor completion with a provider of VS Code\'s (e2e)', () => {
     suiteSetup(async () => {
         // Word-based suggestions would answer where the books do not; Markdown's own are off in VS Code too.
         await markdownEditor().update('wordBasedSuggestions', 'off', vscode.ConfigurationTarget.Global, true);
-        provider = registerBooks(asked);
+        provider = registerBooks(asked, meanwhile);
     });
 
     suiteTeardown(async () => {
@@ -217,7 +228,7 @@ suite('Editor completion with a provider of VS Code\'s (e2e)', () => {
         assert.deepStrictEqual(await rows(), BOOKS);
         const spaced = asked.find(a => a.triggerCharacter === ' ' && a.before.endsWith('1. '));
         assert.deepStrictEqual(spaced, { before: 'Siehe 1. ', triggerCharacter: ' ', triggerKind: vscode.CompletionTriggerKind.TriggerCharacter }, `the provider sees the space: ${JSON.stringify(asked)}`);
-        assert.strictEqual(textDocument.lineAt(2).text, 'Siehe 1. ', 'held in the file while the list is open');
+        await until(() => (textDocument.lineAt(2).text === 'Siehe 1.' ? true : undefined), 'the space let go while the list stands open');
         assert.strictEqual(await page.$eval('.mep-caret-completions .mep-completions-keys', el => el.textContent), '↹ accept · Esc close');
 
         await page.keyboard.press('Enter');
@@ -234,7 +245,6 @@ suite('Editor completion with a provider of VS Code\'s (e2e)', () => {
         await toSiehe();
         await page.keyboard.type(' 1. ');
         await page.waitForSelector('.mep-caret-completions .mep-completion');
-        await until(() => (textDocument.getText().includes('Siehe 1. \n') ? true : undefined), 'the held space in the file');
         await page.keyboard.press('Escape');
         assert.strictEqual(await page.$('.mep-caret-completions'), null);
         await settled();
@@ -243,7 +253,7 @@ suite('Editor completion with a provider of VS Code\'s (e2e)', () => {
         assert.strictEqual((await (editor as EditorPage).posted()).filter(m => m.type === 'applyCompletion').length, 0);
     });
 
-    test('a save while the list is open writes no held space: the list closes first', async function () {
+    test('Ctrl+S while the list is open writes no space; the list stays', async function () {
         this.timeout(30000);
         await open(this, 'off');
         await toSiehe();
@@ -252,12 +262,52 @@ suite('Editor completion with a provider of VS Code\'s (e2e)', () => {
         await page.keyboard.down(MOD);
         await page.keyboard.press('s');
         await page.keyboard.up(MOD);
-        assert.strictEqual(await page.$('.mep-caret-completions'), null, 'the list closes');
+        assert.ok(await page.$('.mep-caret-completions'), 'the list stays: the space was let go when it opened');
         const saved = 'Intro paragraph.\n\nSiehe 1.\n\nLast paragraph.\n';
         await until(() => (fs.readFileSync(file, 'utf8') === saved && !textDocument.isDirty ? true : undefined), 'the save');
         await settled();
         assert.strictEqual(textDocument.getText(), saved);
         assert.strictEqual(textDocument.isDirty, false, 'nothing written after the save');
+    });
+
+    test('VS Code saving while the list is open writes no space', async function () {
+        this.timeout(30000);
+        await open(this, 'off');
+        await toSiehe();
+        await page.keyboard.type(' 1. ');
+        await page.waitForSelector('.mep-caret-completions .mep-completion');
+        // The space goes back out when the list opens; the save comes after, as any save a person starts does.
+        await until(() => (textDocument.lineAt(2).text === 'Siehe 1.' ? true : undefined), 'the space let go');
+        assert.ok(await textDocument.save(), 'saved');
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), 'Intro paragraph.\n\nSiehe 1.\n\nLast paragraph.\n');
+        assert.ok(await page.$('.mep-caret-completions'), 'the list still open');
+    });
+
+    test('another writer\'s change while the list is open: the file keeps no space', async function () {
+        this.timeout(30000);
+        await open(this, 'off');
+        await toSiehe();
+        await page.keyboard.type(' 1. ');
+        await page.waitForSelector('.mep-caret-completions .mep-completion');
+        await otherWriter();
+        await until(async () => ((await paragraphs())[0] === 'Opening paragraph.' ? true : undefined), 'the page shows the change');
+        await page.keyboard.press('Escape');
+        await settled();
+        assert.strictEqual(textDocument.getText(), 'Opening paragraph.\n\nSiehe 1.\n\nLast paragraph.\n');
+    });
+
+    test('another writer\'s change while the question is on its way, the space in the file: the next edit drops it', async function () {
+        this.timeout(30000);
+        await open(this, 'off');
+        await toSiehe();
+        meanwhile.edit = otherWriter;
+        await page.keyboard.type(' 1. ');
+        await until(async () => ((await paragraphs())[0] === 'Opening paragraph.' ? true : undefined), 'the page shows the change');
+        await settled();
+        await delay(300);
+        await settled();
+        assert.strictEqual(await page.$('.mep-caret-completions'), null, 'the answer for the text before is dropped');
+        assert.strictEqual(textDocument.getText(), 'Opening paragraph.\n\nSiehe 1.\n\nLast paragraph.\n', 'the space the host parsed is not kept');
     });
 
     test('Tab accepts in a narrow window: "1. M" is replaced by the book, the caret after it', async function () {

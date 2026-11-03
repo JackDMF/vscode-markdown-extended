@@ -633,8 +633,9 @@ Editor too, asked of VS Code as the text editor asks, so both show the same.
   edit into the file, and the paragraph shows what the file now says, the caret after the
   inserted text. A provider that triggers on a
   space answers at the end of a paragraph too (the Studienhilfe's books after "1. "): the
-  space stays in the file while its list is asked for or open, and goes again when nothing
-  is accepted, as it always does at a paragraph's end.
+  space is in the file only while the providers are asked and while an accepted item is
+  written, and goes again as soon as the list opens — as it always does at a paragraph's
+  end.
 - **Problems on the page.** Every diagnostic VS Code holds for the file (the Problems view's)
   is a squiggle on the text it is about — red for an error, yellow for a warning, blue for an
   info, dotted for a hint. One that cannot be placed exactly — in a table, a source block,

@@ -23,7 +23,7 @@ import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
-import { completionBeforeSave, completionDocumentShown, completionHeld, completionMessage, completionPlugin } from './completion';
+import { completionBeforeSave, completionDocumentShown, completionHeld, completionMessage, completionPlugin, completionSettingsChanged } from './completion';
 import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
@@ -876,7 +876,7 @@ const languagePort = {
     map: () => (view && current ? pageMap(view.state.doc) : undefined),
     post,
     acceptOnEnter: () => acceptOnEnter,
-    textChanged: () => scheduleFlush(),
+    textChanged: () => flush(),
 };
 
 /**
@@ -1217,6 +1217,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'completionSettings':
             acceptOnEnter = msg.acceptSuggestionOnEnter;
+            if (view) {
+                completionSettingsChanged(view);
+            }
             break;
         case 'diagnostics':
             showDiagnostics(msg.version, msg.items);

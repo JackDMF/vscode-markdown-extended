@@ -2448,30 +2448,39 @@ caret at. The block comes back as another writer's change does, in place (`resyn
 item's command is started unless it works on a text editor (`editor.*`, re-triggering
 suggest). A refused item answers `caret: null`, and the hint says the text changed.
 
-**A space at a paragraph's end is held for the list.** The serializer drops a textblock's
+**A space at a paragraph's end is held for the question.** The serializer drops a textblock's
 closing spaces (`wrapInline`), so a space typed last in a paragraph would not be in the text
 the host holds, and the caret after it would map only approximately — the Studienhilfe's books
 after "1. " (its trigger character is the space) could never be asked for there. So a question
 asked with the caret at its textblock's end right after a space (`afterClosingSpace`) **holds**
 that space: the page's own document is written with that textblock's closing spaces
 (`SerializeOptions.keepTrailingSpace`, honoured by the paragraph and heading rules —
-paragraphs in lists, quotes and footnote texts included; a table cell keeps its own rule) for
-as long as the question is on its way, the list is open, or an accepted item is on its way
-back. The held textblock is the one at `asked`, the caret's place when the list was last asked
-for, kept beside the anchor in the plugin's state and mapped through every transaction; the
-page's position map (`pageMap`) is made with it, so the edit, the caret, `hostText` and every
-other question agree on one text. `positions.ts` reads a body's own final line break as no
-line prefix, so the place after the kept spaces is exact. Let go — the list closed without
-accepting, an empty or stale answer, the answer's time out, the document replaced, the host's
-`completionApplied` — the page's text drops the space again and the edit goes as typing goes
-(`textChanged`, the edit delay): a file nothing was accepted into ends byte for byte as typing
-alone leaves it. Accepting holds it again if it was let go meanwhile, so the item is applied to
-the text it was offered for and its range ("1. ") covers the space. Ctrl+S lets go first
-(`completionBeforeSave`), closing the list, so the save writes no held space; a save VS Code
-starts itself (auto-save, the File menu) while the list is open may write it, and the next edit
-takes it out again. An answer is shown only while the caret is still in the textblock it was
-asked in and not before that place: "1. " and a quick Enter no longer open the list on the new
-line.
+paragraphs in lists, quotes and footnote texts included; a table cell keeps its own rule) while
+the question is on its way, and again while an accepted item is on its way back — **not while
+the list stands open**. The held textblock is the one at `asked`, the caret's place when the
+list was last asked for, kept beside the anchor in the plugin's state and mapped through every
+transaction; the page's position map (`pageMap`) is made with it, so the edit, the caret,
+`hostText` and every other question agree on one text. `positions.ts` reads a body's own final
+line break as no line prefix, so the place after the kept spaces is exact.
+
+The answer lets go at once, after the list's anchor is read from the text with the space; so
+does every other end of the question (an empty or stale answer, its time out, the document
+replaced, `completionApplied`), and the edit that drops the space goes **at once**
+(`textChanged` is `flush`), not after the edit delay: another writer's change, a save VS Code
+starts (the File menu, auto-save, the close prompt) or Ctrl+S while the list stands open finds
+the file as typing alone leaves it. Accepting holds the space again when the caret stands after
+it, so the item is applied to the text it was offered for and its range ("1. ") covers it; a
+question asked again for an incomplete list holds it through `ask` as any question does.
+Ctrl+S during a question lets go first (`completionBeforeSave`). What the short hold cannot
+rule out — a document the host parsed from a text with the space in it, another writer's
+change landing while the question was on its way — reads that block as untouched, its `src`
+holding the space: the page then finds the textblock again by its text without the space, in a
+block with a `src` whose text has a space right after its end, the one nearest `asked`, and
+marks the block edited (`src` cleared, `dropSentSpace`), so the next edit writes it by rule and
+drops the space. A save VS Code starts in the few milliseconds a question is on its way can
+still write the space; the next edit takes it out. An answer is shown only while the caret is
+still in the textblock it was asked in and not before that place: "1. " and a quick Enter no
+longer open the list on the new line.
 
 **Diagnostics** (sketch 6). The host reads `languages.getDiagnostics(uri)` — what the text
 editor squiggles and the Problems view lists — when `onDidChangeDiagnostics` names the

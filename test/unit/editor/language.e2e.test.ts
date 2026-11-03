@@ -244,6 +244,27 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         await showText(SOURCE);
     });
 
+    test('a setting changed while the list is open: its footer says the keys afresh', async function () {
+        this.timeout(20000);
+        await showText(SOURCE);
+        await page.waitForFunction(t => document.querySelector('.ProseMirror > p')?.textContent === t, {}, LINE_2);
+        await page.click('.ProseMirror > p');
+        await page.keyboard.press('End');
+        const before = await count();
+        await page.keyboard.type(':');
+        const asked = await waitFor('complete', before);
+        const at = { line: 2, character: LINE_2.length + 1 };
+        await send({ type: 'completions', requestId: asked.requestId, version, incomplete: false, items: [{ label: 'one', insertText: 'one', range: { start: at, end: at } }] });
+        await page.waitForSelector('.mep-caret-completions .mep-completion');
+        const keys = () => page.$eval('.mep-caret-completions .mep-completions-keys', el => el.textContent);
+        assert.strictEqual(await keys(), '↹ ↵ accept · Esc close');
+        await send({ type: 'completionSettings', acceptSuggestionOnEnter: 'off' });
+        await page.waitForFunction(() => document.querySelector('.mep-caret-completions .mep-completions-keys')?.textContent === '↹ accept · Esc close');
+        await send({ type: 'completionSettings', acceptSuggestionOnEnter: 'on' });
+        await page.keyboard.press('Escape');
+        await showText(SOURCE);
+    });
+
     test('with acceptSuggestionOnEnter off, Enter closes the list and starts a new line, Tab accepts; the footer names Tab alone', async function () {
         this.timeout(20000);
         await send({ type: 'completionSettings', acceptSuggestionOnEnter: 'off' });
