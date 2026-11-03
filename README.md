@@ -445,10 +445,10 @@ selected — and never above the first.
 | `Shift+Tab` | Back: note to reference, reference to before the note |
 | `Esc` | Out of it, the caret after it |
 | `→` at the end, `←` at the start | On to the next part, or out; from outside, `→`/`←` go in |
-| `Backspace` at the start of an empty reference or sidebar | Removes the whole note |
-| `Backspace` at the start of a reference with text | Selects the note; a second press removes it |
+| `Backspace` (on a Mac `Delete`) at the start of an empty reference or sidebar | Removes the whole note |
+| `Backspace` (on a Mac `Delete`) at the start of a reference with text | Selects the note; a second press removes it |
 
-The reference and the note stay two parts: `Delete` at the end of one does not join them,
+The reference and the note stay two parts: `Delete` (on a Mac `Fn+Delete`) at the end of one does not join them,
 and pasting into a note pastes its text.
 
 To remove, convert or edit a note as a whole, use its bar (below).
@@ -458,7 +458,7 @@ To remove, convert or edit a note as a whole, use its bar (below).
 | Keys | Does |
 | ---- | ---- |
 | `Enter` in an empty last paragraph | Leaves it: the caret goes to a new paragraph after it |
-| `Backspace` at the start of an empty first paragraph | Removes the admonition or container, keeping its content |
+| `Backspace` (on a Mac `Delete`) at the start of an empty first paragraph | Removes the admonition or container, keeping its content |
 
 **Inside a table:**
 
@@ -856,7 +856,7 @@ monospace, since it *is* the key — and a control that fits the value it holds:
 | Text, a number, nothing | a text field |
 | A date written `YYYY-MM-DD` | the date as text, a calendar button beside it (`Alt+↓` opens it too); a value that is no date is refused, saying so |
 | `true` / `false` | a checkbox |
-| A list of short values (`[a, b]` or `- a` lines) | chips, each with `×`, and **+ Add** (`Enter` adds and stays for the next, `Backspace` in the empty field takes the last one back) |
+| A list of short values (`[a, b]` or `- a` lines) | chips, each with `×`, and **+ Add** (`Enter` adds and stays for the next, `Backspace` — on a Mac `Delete` — in the empty field takes the last one back) |
 | `lang` | a text field listing the values `lang` has anywhere in the file under it as you type, as the editor's other completions do |
 | `uid`, or a key ending in `uid`/`id` holding a UUID | read-only, in mono and dimmed; a click copies it |
 | Anything nested — a map, a list of maps, a multi-line text | one row, *5 items, nested · edit as source*, which opens the YAML at that key |
@@ -867,7 +867,7 @@ silently turn back. A second `Esc` puts the caret in the text below. **+ Add**, 
 last row, asks for the name and then the value; the value is typed from what you write
 (`2026-10-01`, `true`, `[a, b]`). Every value you can edit has a faint outline, so it reads as a
 field before you point at it; the read-only id has none. Pointing at a row, or tabbing to it,
-shows a small `×` right after its value that removes the key — `Shift+Delete` in the row does
+shows a small `×` right after its value that removes the key — `Shift+Delete` (on a Mac `Shift+Fn+Delete`) in the row does
 the same — announced as *Removed key — Ctrl+Z*; `Ctrl+Z` in the panel is the editor's undo, so the key
 comes back. **Edit as source** and a nested row's link open the YAML between the `---`
 lines in a box (`Ctrl+Enter` or clicking away applies, `Esc` cancels). While a row, the box
@@ -1454,7 +1454,7 @@ $left sidebar${.my-class}
 
 Renders keyboard shortcuts with proper styling.
 
-**Wiki embeds and links (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key. It is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it, and nothing inside it is read as syntax: `![[x]](y)` is the embed followed by `(y)`, not an image, and a `{…}` right after it stays text. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor an embed is one unit, drawn as its source and written back exactly as it was; typing `![[name]]`, or pasting it from anywhere but the Visual Editor itself, makes one; a paste of the editor's own copy keeps what it carries, also in another document's Visual Editor. Backspace right after typing an embed, or **Convert to text** in its bar, makes it text (the caret stays after it); delete the last `]` and type it again to make it an embed. It is drawn in the colour of inline code. A paste as plain text (Ctrl+Shift+V) brings only the text, and two limits follow from that: a plain-text paste of a copy made in any other Visual Editor page (another document's, or this document's before it was reopened) makes embeds like text from outside, and text from outside that is exactly the editor's last copy is taken as that copy and pasted as it was copied. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one.
+**Wiki embeds and links (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key. It is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it, and nothing inside it is read as syntax: `![[x]](y)` is the embed followed by `(y)`, not an image, and a `{…}` right after it stays text. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor an embed is one unit, drawn as its source and written back exactly as it was; typing `![[name]]`, or pasting it from anywhere but the Visual Editor itself, makes one; a paste of the editor's own copy keeps what it carries, also in another document's Visual Editor. Backspace (on a Mac Delete) right after typing an embed, or **Convert to text** in its bar, makes it text (the caret stays after it); delete the last `]` and type it again to make it an embed. It is drawn in the colour of inline code. A paste as plain text (Ctrl+Shift+V) brings only the text, and two limits follow from that: a plain-text paste of a copy made in any other Visual Editor page (another document's, or this document's before it was reopened) makes embeds like text from outside, and text from outside that is exactly the editor's last copy is taken as that copy and pasted as it was copied. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one.
 
 ### markdown-it-ib
 

@@ -65,6 +65,8 @@ async function barOf(page: puppeteer.Page) {
         ids: Array.from(bar.querySelectorAll(':scope > button[data-verb]')).filter(b => !(b as HTMLElement).hidden).map(b => (b as HTMLElement).dataset.verb),
         /** Every verb the bar holds, those given way to "…" too (a sidebar in a left margin has the room of the margin only). */
         all: Array.from(bar.querySelectorAll(':scope > button[data-verb]')).map(b => (b as HTMLElement).dataset.verb),
+        more: bar.querySelector<HTMLElement>('.mep-object-more')?.hidden === false,
+        cut: bar.scrollWidth > bar.clientWidth + 1,
     }));
 }
 
@@ -316,8 +318,11 @@ suite('Editor note attributes: the note bar (e2e)', () => {
         await page.waitForSelector(BAR, { visible: true, timeout: 2000 });
         const bar = await barOf(page);
         assert.strictEqual(bar.title, 'Left sidebar {.l}');
-        // The bar of a sidebar in the left margin stands there, with text beside it: its verbs give way to "…" (`leftMargin.e2e.test.ts`), none is lost.
+        // The sidebar floats into the left margin, where the bar stands (`leftMargin.e2e.test.ts`): the verbs that do not fit the margin are in "…", as worded, and none is cut by the bar's edge.
+        assert.deepStrictEqual(bar.verbs, ['Move to right', 'Attributes…']);
         assert.deepStrictEqual(bar.all, ['convert-note', 'note-attributes', 'edit-source', 'remove-attributes', 'remove-note']);
+        assert.ok(bar.more, 'the verbs given way are behind "…"');
+        assert.ok(!bar.cut, 'nothing cut by the bar\'s edge');
     });
 
     test('crumbs: List item {.i} › Marginal note {.tipp}; Remove ▾ says "marginal note stays"', async function () {
@@ -761,22 +766,21 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test('with a margin layout at 1280: the left sidebar\'s bar grows into the empty right margin, every verb on it, up to the edge less 16 px', async function () {
+    test('with a margin layout at 1280: the left sidebar\'s bar stands in the left margin at the edge + 16 px, off the column\'s text, never cut (it no longer grows over the column into the right margin)', async function () {
         this.timeout(60000);
         editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [USER_STYLESHEET] });
         if (!editor) {
             this.skip();
         }
         page = (editor as EditorPage).page;
-        // Without the notes: nothing in the right margin at the bar's height, whichever side of the item it takes.
         await b.show('Erster Absatz ohne alles.\n\n- Zeit $Uhrzeit${class=living} und ein ruhiger Satz, der weitergeht. {.punkt}\n\n- Ein zweiter Punkt ohne Notiz. {.punkt}\n\nThe last paragraph.\n');
         await b.restAt('Uhrzeit', 2);
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         const bar = await barBox();
         const column = await columnRight();
-        assert.ok(bar.right > column + 1, `past the column: ${JSON.stringify({ bar, column })}`);
-        assert.ok(bar.right <= bar.edge - 16 + 0.5, `inside the edge less 16 px: ${JSON.stringify(bar)}`);
-        assert.ok(!bar.more, `no word gave way: ${JSON.stringify(bar)}`);
+        assert.ok(Math.abs(bar.left - 16) < 1, `at the edge + 16 px: ${JSON.stringify(bar)}`);
+        assert.ok(bar.right <= column - 100, `in the left margin, not across the column: ${JSON.stringify({ bar, column })}`);
+        assert.ok(await page.$eval(BAR, el => el.scrollWidth <= el.clientWidth + 1), `never cut: ${JSON.stringify(bar)}`);
     });
 
     test('with a margin layout at 1280: a sidebar floated beside a heading has its bar off the heading\'s text lines, not only off its own box', async function () {

@@ -11,6 +11,8 @@ import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 const BUBBLE = '.mep-bubble:not([hidden])';
 
 const MARGIN_LAYOUT = path.join(repoRoot, 'test', 'fixtures', 'editor', 'marginLayout.css');
+/** The geometry of Daniel's archive sheet: a time margin of 3 cm (2 cm below 1200 px) that a bar's narrowest form does not fit. */
+const TIME_MARGIN = path.join(repoRoot, 'test', 'fixtures', 'editor', 'timeMargin.css');
 
 /**
  * Bars at the left margin (wave 4 #5b follow-up, mirroring #15's rule for the
@@ -48,7 +50,7 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
                 lines.push({ top: q.top, bottom: q.bottom, left: q.left, right: q.right, text: (n.textContent ?? '').slice(0, 12) });
             }
         }
-        return { bar: { left: r.left, right: r.right, top: r.top, bottom: r.bottom, more: more !== null && !more.hidden && more.isConnected }, nouns, column, lines };
+        return { bar: { left: r.left, right: r.right, top: r.top, bottom: r.bottom, more: more !== null && !more.hidden && more.isConnected, cut: bar.scrollWidth > bar.clientWidth + 1 }, nouns, column, lines };
     }, BAR);
 
     const overText = (m: Awaited<ReturnType<typeof measure>>) => m.lines.filter(l => m.bar.left < l.right && m.bar.right > l.left && m.bar.top < l.bottom && m.bar.bottom > l.top);
@@ -74,7 +76,7 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
             for (const [theme, label] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as const) {
                 await applyTheme(page, theme);
                 await delay(300);
-                await shot(page, `${name}-1280-${label}.png`);
+                await shot(page, `${name}-${page.viewport()?.width ?? 0}-${label}.png`);
             }
             await applyTheme(page, LIGHT_MODERN);
         }
@@ -163,5 +165,51 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
         const column = await page.$eval('.ProseMirror p', el => el.getBoundingClientRect().left);
         assert.ok(r.left >= 16 - 0.5 && r.left < column, `in the margin: ${JSON.stringify({ r, column })}`);
         await page.keyboard.press('Escape');
+    });
+
+    for (const width of [1280, 800]) {
+        test(`with the archive sheet's time margin at ${width}: the narrowest bar does not fit the margin — it is never cut and never over text; a list item's sidebar is the same`, async function () {
+            this.timeout(90000);
+            await closeEditorPage(this, editor);
+            editor = await openEditorPage({ width, height: 900, styles: ['markdown-extended.css'], userStyles: [TIME_MARGIN] });
+            if (!editor) {
+                this.skip();
+            }
+            page = (editor as EditorPage).page;
+            const lines = Array.from({ length: 4 }, (_, k) => `Zeile ${k} mit etwas Text, der bis an den Rand der Spalte läuft und weitergeht und weitergeht.`).join('\n\n');
+            const doc = `${lines}\n\nMitte $Uhrzeit\${class=living} und ein ruhiger Satz.\n\n- Punkt $Listenzeit$ mit Text, der weitergeht.\n- Zweiter Punkt mit Text.\n\n${lines}\n\nThe last paragraph.\n`;
+            for (const needle of ['Uhrzeit', 'Listenzeit']) {
+                const m = await barAt(doc, needle, `time-margin-${needle === 'Uhrzeit' ? 'paragraph' : 'list'}`);
+                assert.ok(!m.bar.cut, `never cut: ${JSON.stringify(m.bar)}`);
+                assert.deepStrictEqual(overText(m), [], `${needle}: no text under the bar: ${JSON.stringify(m)}`);
+                assert.ok(Math.abs(m.bar.left - 16) < 1, `${needle}: at the window's left edge + 16 px: ${JSON.stringify(m.bar)}`);
+            }
+        });
+    }
+
+    test('with the archive sheet\'s time margin: scrolling moves the bar with the text and probes nothing again', async function () {
+        this.timeout(60000);
+        if (editor === undefined) {
+            this.skip();
+        }
+        const filler = Array.from({ length: 40 }, (_, k) => `Zeile ${k} mit etwas Text.`).join('\n\n');
+        await b.show(`${filler}\n\nMitte $Uhrzeit\${class=living} kurz.\n\n${filler}\n\nThe last paragraph.\n`);
+        await page.evaluate(() => (Array.from(document.querySelectorAll('.ProseMirror .left-sidebar')).find(e => (e.textContent ?? '').includes('Uhrzeit')) as HTMLElement).scrollIntoView({ block: 'center' }));
+        await delay(300);
+        await b.restAt('Uhrzeit', 2);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        const before = (await measure()).bar;
+        const calls = await page.evaluate(async () => {
+            let n = 0;
+            const orig = document.elementFromPoint.bind(document);
+            document.elementFromPoint = (x, y) => { n++; return orig(x, y); };
+            window.scrollBy(0, 3);
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            document.elementFromPoint = orig;
+            return n;
+        });
+        const after = (await measure()).bar;
+        assert.strictEqual(calls, 0, 'no probes for a scroll');
+        assert.ok(Math.abs(after.top - (before.top - 3)) < 1.5 && Math.abs(after.left - before.left) < 1, JSON.stringify({ before, after }));
     });
 });

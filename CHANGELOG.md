@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- A bar (or bubble, or field) for a left sidebar stands in the left margin, at the window's edge + 16 px, and reaches into the text column only where the column has no text at its height — it no longer covers the first words of the lines beside it. Where the margin is narrow its verbs give way to "…" first, as at the right margin.
+- A bar (or bubble, or field) for a left sidebar stands in the left margin, at the window's edge + 16 px, and reaches into the text column only where the column has no text at its height — it no longer covers the first words of the lines beside it. Where the margin is narrow its verbs give way to "…" first, as at the right margin; where even the narrowest bar does not fit (the archive sheet's 2 or 3 cm time margin), it stands at a height where the column has no text across its width, else in the column under the block as before — never cut. A list item's sidebar is the same.
 - On a Mac the hints and tooltips name the key as its cap reads: *Delete* for the key above Return (Backspace elsewhere), *Fn+Delete* for the forward one (Delete elsewhere) — in the footnote reference's "…again deletes" hint and the wiki embed's tooltip.
 
 ## v4.12.0 — Other Extensions Write Where You Work

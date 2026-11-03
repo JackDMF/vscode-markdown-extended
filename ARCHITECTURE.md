@@ -2091,8 +2091,8 @@ stands at its anchor, never left of the window's edge + 16 px (`Frame.windowLeft
 into the column only where the column has no text at its height (`contentLeft` in
 `clearance.ts`, probed across the whole room, so the width does not decide it); where it has,
 the layer is fitted to the margin and its verbs drop their nouns first (`ObjectBar.fit`).
-Notes in the margin are kept off like any layer. Fitted and placed up to three times: the side
-decides whether text is at its height, the text decides the width. Bar, bubble and field alike.
+Floated content in the margin (any float, probed: `marginItemRects`) is kept off like any layer. Fitted and placed up to three times: the side
+decides whether text is at its height, the text decides the width. A bar stands directly under the subject's own box (`LayerClaim.box`, `floatedBox`), at the window's edge + 16 px whatever x the subject has (a list item's sidebar starts a rem further in). Where even its narrowest form (`scrollWidth`) does not fit before the column's text, a height within 400 px with no text across that width is looked for; none: the column, under the block, as before. A scroll moves the layer with the text without probing. Bar, bubble and field alike.
 
 **The inline field** (`webview/inlineField.ts`) is one reusable component for every place a
 value is asked for where it is used — the verbs' fields, and the toolbar's **Span with

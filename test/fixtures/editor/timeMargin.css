@@ -1,0 +1,45 @@
+/*
+ * A user stylesheet with the geometry of Daniel's archive sheet (Styles.css) at
+ * the left: a time margin of 3 cm from 1200 px, 2 cm below, the body's padding
+ * making it, `$…$` floated into it at 0.75 × the margin, 0.75 rem in from the
+ * window's edge — and a list item's one rem further in. Test fixture, not his
+ * file; `MEP_USER_STYLESHEET`-style runs against the real one are in the review notes.
+ */
+:root {
+    --time-margin: 2cm;
+    --time-width: calc(0.75 * var(--time-margin));
+    --time-offset: calc(-1 * var(--time-margin) + 0.75rem);
+}
+
+@media (min-width: 1200px) {
+    :root {
+        --time-margin: 3cm;
+    }
+}
+
+html {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+body {
+    padding-left: var(--time-margin) !important;
+    padding-right: 0 !important;
+    width: calc(100% - 10cm - var(--time-margin)) !important;
+    max-width: none !important;
+}
+
+span.left-sidebar,
+sub {
+    width: var(--time-width);
+    margin-left: var(--time-offset);
+    float: left;
+    clear: left;
+    display: block;
+    text-align: center;
+}
+
+li > span.left-sidebar,
+li > sub {
+    margin-left: calc(var(--time-offset) - 1rem);
+}
