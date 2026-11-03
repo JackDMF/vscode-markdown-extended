@@ -12,7 +12,7 @@ import {
 } from '../../../src/editor/host/includes';
 import { blockIndexForLine, hidesLens, lensHintOf, lensRows } from '../../../src/editor/host/lenses';
 import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
-import { SessionHost, SessionWebview, VisualEditorSession, insertBlockIn, revealInVisualEditor } from '../../../src/editor/host/session';
+import { SessionHost, SessionWebview, VisualEditorSession, insertBlockIn, revealInVisualEditor, sortFootnotesIn } from '../../../src/editor/host/session';
 import { fillDestination } from '../../../src/editor/host/images';
 import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
 import { GITHUB_SLUG_REPLACE } from '../../../src/syntax/githubSlugRegex';
@@ -1811,6 +1811,129 @@ suite('Editor host: the active Visual Editor', () => {
             const gone = await until(() => (api.active()?.uri.toString() === uri.toString() ? undefined : true), 10000);
             assert.ok(gone, 'a closed Visual Editor is not active');
         } finally {
+            fs.rmSync(uri.fsPath, { force: true });
+        }
+    });
+});
+
+/** Every Visual Editor tab over `uri`, in every group. */
+function customTabs(uri: vscode.Uri): vscode.Tab[] {
+    return vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputCustom
+        && tab.input.viewType === VISUAL_EDITOR_VIEW_TYPE && tab.input.uri.toString() === uri.toString());
+}
+
+/**
+ * One file in the Visual Editor twice — a split, or the open file as a
+ * diff's side — in the real VS Code: two panels, two pages, two sessions
+ * (#22). A request by uri goes to the one active, else the one last active;
+ * neither takes the other's place.
+ */
+suite('Editor host: one file in two Visual Editors (live)', () => {
+    test('requests by uri go to the session active last — insertBlock, Sort Footnotes, a reveal; neither replaces the other, and closing one leaves the other', async function () {
+        this.timeout(20000);
+        const uri = tempMarkdown(SOURCE);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const engine = buildEditorEngine(EXTENSION_ID, () => undefined);
+        const open = () => {
+            const webview = new FakeWebview();
+            const session = new VisualEditorSession(document, webview, { engine: () => engine, onDidChangeEngine: engineChanged.event, log: () => undefined });
+            webview.send({ type: 'ready' });
+            return { webview, session };
+        };
+        const a = open();
+        const b = open();
+        const asked = (w: FakeWebview, type: HostMessage['type']) => w.posted.filter(m => m.type === type).length;
+        try {
+            await Promise.all([a.session.settled(), b.session.settled()]);
+            b.session.activated();
+            a.session.activated();
+            const inserting = insertBlockIn(uri, '> One');
+            const request = await until(() => a.webview.posted.find((m): m is InsertBlockMessage => m.type === 'insertBlock'), 2000);
+            assert.ok(request, 'the editor active last is asked');
+            assert.strictEqual(asked(b.webview, 'insertBlock'), 0, 'the other is not');
+            const text = document.getText().replace('wrapped as it was written.\n', 'wrapped as it was written.\n\n> One\n');
+            a.webview.send({ type: 'edit', text, baseVersion: (a.webview.documents().pop() as { version: number }).version, reparse: true });
+            a.webview.send({ type: 'blockInserted', requestId: request.requestId, inserted: true });
+            assert.deepStrictEqual(await inserting, { inserted: true });
+            await until(() => (b.webview.documents().some(d => d.version === document.version) ? true : undefined), 2000);
+            assert.ok(b.webview.documents().some(d => d.version === document.version), 'the other page is given the document with the block, as another writer\'s change');
+
+            b.session.activated();
+            assert.ok(sortFootnotesIn(uri));
+            revealInVisualEditor(uri, { anchor: 'x', line: null });
+            await Promise.all([a.session.settled(), b.session.settled()]);
+            assert.deepStrictEqual([asked(a.webview, 'sortFootnotes'), asked(b.webview, 'sortFootnotes')], [0, 1]);
+            assert.deepStrictEqual([asked(a.webview, 'revealAnchor'), asked(b.webview, 'revealAnchor')], [0, 1]);
+
+            b.session.dispose();
+            assert.ok(sortFootnotesIn(uri), 'the editor left open is still reached');
+            await a.session.settled();
+            assert.strictEqual(asked(a.webview, 'sortFootnotes'), 1);
+            b.session.activated();
+            assert.ok(sortFootnotesIn(uri), 'a closed session never comes back to the front');
+            await a.session.settled();
+            assert.strictEqual(asked(a.webview, 'sortFootnotes'), 2);
+            a.session.dispose();
+            assert.deepStrictEqual(await insertBlockIn(uri, '> Two'), { inserted: false, reason: 'no-editor' });
+            assert.strictEqual(sortFootnotesIn(uri), false);
+        } finally {
+            a.session.dispose();
+            b.session.dispose();
+            engineChanged.dispose();
+            await document.save();
+            fs.rmSync(uri.fsPath, { force: true });
+        }
+    });
+
+    test('VS Code opens a second Visual Editor over the same file; insertBlock goes to the active one, and to the one left open when the other closes', async function () {
+        this.timeout(60000);
+        const extension = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(extension);
+        const api = (await extension.activate() as { visualEditor: VisualEditorApi }).visualEditor;
+        const uri = tempMarkdown(SOURCE);
+        const document = await vscode.workspace.openTextDocument(uri);
+        /** `insertBlock` until the page it goes to has its document (the pages load meanwhile). */
+        const insert = async (markdown: string, options?: { focus?: boolean }): Promise<InsertBlockResult> => {
+            let result: InsertBlockResult = { inserted: false, reason: 'error-state' };
+            for (const end = Date.now() + 10000; 'reason' in result && result.reason === 'error-state' && Date.now() < end; await delay(100)) {
+                result = await api.insertBlock(uri, markdown, options);
+            }
+            return result;
+        };
+        try {
+            await vscode.commands.executeCommand('vscode.openWith', uri, VISUAL_EDITOR_VIEW_TYPE, vscode.ViewColumn.One);
+            await vscode.commands.executeCommand('vscode.openWith', uri, VISUAL_EDITOR_VIEW_TYPE, vscode.ViewColumn.Two);
+            const both = await until(() => (customTabs(uri).length === 2 ? true : undefined), 10000);
+            assert.ok(both, `two Visual Editor tabs over the file, one per group: ${customTabs(uri).map(t => t.group.viewColumn).join(', ')}`);
+            // Both pages loaded and given their document.
+            await delay(3000);
+
+            // The first group's editor takes the focus; the second stays open beside it.
+            await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+            const first = await until(() => (vscode.window.tabGroups.activeTabGroup.viewColumn === vscode.ViewColumn.One
+                && api.active()?.uri.toString() === uri.toString() ? true : undefined), 10000);
+            assert.ok(first, 'the first group\'s Visual Editor is the active one');
+            assert.deepStrictEqual(await insert('> One', { focus: true }), { inserted: true });
+            // The ext host hears of a group change a moment later.
+            await delay(1000);
+            assert.strictEqual(vscode.window.tabGroups.activeTabGroup.viewColumn, vscode.ViewColumn.One,
+                'insertBlock with focus brought the active editor to the front, not the other one');
+            assert.ok(document.getText().includes('\n\n> One\n'), document.getText());
+
+            // The second group's tab closed: the first editor, still open, takes the next request.
+            assert.ok(await document.save());
+            const second = customTabs(uri).find(tab => tab.group.viewColumn === vscode.ViewColumn.Two);
+            assert.ok(second);
+            await vscode.window.tabGroups.close(second);
+            await until(() => (customTabs(uri).length === 1 ? true : undefined), 10000);
+            assert.deepStrictEqual(await insert('> Two'), { inserted: true }, 'the editor left open still inserts');
+            assert.ok(document.getText().includes('\n\n> Two\n'), document.getText());
+            assert.ok(await document.save());
+        } finally {
+            for (const tab of customTabs(uri)) {
+                await vscode.window.tabGroups.close(tab);
+            }
             fs.rmSync(uri.fsPath, { force: true });
         }
     });

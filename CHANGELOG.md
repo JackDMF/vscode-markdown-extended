@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- With a file open in the Visual Editor twice (split, or beside a diff), inserting blocks, Sort Footnotes and following a link go to the editor you used last, and the other one keeps working when one closes.
+
 ## v4.12.0 — Other Extensions Write Where You Work
 
 - Other extensions can insert Markdown blocks into the Visual Editor after the caret's block, undoable with Ctrl+Z (Cmd+Z) and without losing what you were typing (`visualEditor.insertBlock`).

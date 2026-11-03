@@ -103,14 +103,24 @@ interface PendingInsert {
     stopTimers(): void;
 }
 
-/** The open sessions by document uri, so a link followed from one page can land in another. */
-const sessions = new Map<string, VisualEditorSession>();
+/**
+ * The open sessions by document uri, so a link followed from one page can land
+ * in another. VS Code gives a custom text editor as many panels over one file
+ * as are asked for — a split, the open file as a diff's side — each with a
+ * page and a session of its own (#22): the one active last comes first
+ * (`activated`), and a request by uri goes to it.
+ */
+const sessions = new Map<string, VisualEditorSession[]>();
 /** A reveal for a document whose page is opening: taken by its session when it is made. */
 const pendingReveals = new Map<string, Reveal>();
 
-/** The session a request by uri goes to (a reveal, Sort Footnotes, `insertBlock`); `undefined` when none is open over it. */
+/**
+ * The session a request by uri goes to (a reveal, Sort Footnotes,
+ * `insertBlock`): of the Visual Editors open over it, the one active — else
+ * the one active last; `undefined` when none is open over it.
+ */
 function sessionFor(uri: vscode.Uri): VisualEditorSession | undefined {
-    return sessions.get(uri.toString());
+    return sessions.get(uri.toString())?.[0];
 }
 
 /**
@@ -138,8 +148,8 @@ export function sortFootnotesIn(uri: vscode.Uri): boolean {
 /**
  * `visualEditor.insertBlock` for another extension: `markdown` inserted by the
  * Visual Editor over `uri` (`VisualEditorSession.insertBlock`), or `no-editor`
- * when none is open for it. One editor per document (the provider does not
- * set `supportsMultipleEditorsPerDocument`), so the uri names it.
+ * when none is open for it. With the file open in the Visual Editor twice, the
+ * one active, else the one active last, inserts (`sessionFor`).
  */
 export function insertBlockIn(uri: vscode.Uri, markdown: string, options?: InsertBlockOptions): Promise<InsertBlockResult> {
     const session = sessionFor(uri);
@@ -275,7 +285,8 @@ export class VisualEditorSession implements vscode.Disposable {
             host.onDidChangeEngine(() => this.enqueue(() => this.post())),
         ];
         const key = document.uri.toString();
-        sessions.set(key, this);
+        // Behind any other Visual Editor over the file: the provider says when this one is active (`activated`).
+        sessions.set(key, [...sessions.get(key) ?? [], this]);
         this.pendingReveal = pendingReveals.get(key);
         pendingReveals.delete(key);
     }
@@ -304,6 +315,19 @@ export class VisualEditorSession implements vscode.Disposable {
         this.pendingReveal = undefined;
         if (reveal) {
             await this.webview.postMessage({ type: 'revealAnchor', anchor: reveal.anchor, line: reveal.line });
+        }
+    }
+
+    /**
+     * This editor's panel became the active editor: a request by uri for its
+     * document comes here now, and after it loses the focus, until another
+     * Visual Editor over the file is active.
+     */
+    activated(): void {
+        const key = this.document.uri.toString();
+        const open = sessions.get(key);
+        if (!this.disposed && open !== undefined && open[0] !== this) {
+            sessions.set(key, [this, ...open.filter(s => s !== this)]);
         }
     }
 
@@ -405,8 +429,12 @@ export class VisualEditorSession implements vscode.Disposable {
         // Only those the page has not answered: an answered one is settled in the queue once its edit
         // is applied — which it still is — and says what the document holds.
         [...this.pendingInserts.values()].filter(pending => !pending.answered).forEach(pending => pending.settle({ inserted: false, reason: 'closed' }));
-        if (sessions.get(this.document.uri.toString()) === this) {
-            sessions.delete(this.document.uri.toString());
+        const key = this.document.uri.toString();
+        const left = (sessions.get(key) ?? []).filter(s => s !== this);
+        if (left.length > 0) {
+            sessions.set(key, left);
+        } else {
+            sessions.delete(key);
         }
         [...this.pendingMaps.values()].forEach(settle => settle(undefined));
         this.subscriptions.forEach(d => d.dispose());

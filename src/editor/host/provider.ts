@@ -58,8 +58,18 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
             reveal: () => panel.reveal(undefined, false),
         });
         const tracking = this.tracker?.track(panel, session);
+        // The file may be open in the Visual Editor twice: a request by uri goes to the panel active last.
+        const viewState = panel.onDidChangeViewState(() => {
+            if (panel.active) {
+                session.activated();
+            }
+        });
+        if (panel.active) {
+            session.activated();
+        }
         panel.onDidDispose(() => {
             folders.dispose();
+            viewState.dispose();
             tracking?.dispose();
             session.dispose();
         });
