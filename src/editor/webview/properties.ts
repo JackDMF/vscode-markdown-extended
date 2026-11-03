@@ -834,6 +834,7 @@ export class PropertiesView implements NodeView, SourceEditor {
             typed,
             focused,
             pos: () => (standing ? this.getPos() : undefined),
+            editor: this,
             ...(standing ? { refocus: () => this.focusSlot('source') } : {}),
         });
     }

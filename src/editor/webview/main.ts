@@ -15,6 +15,7 @@
 import { Node } from 'prosemirror-model';
 import { closeHistory, redo, undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
+import type { Mappable } from 'prosemirror-transform';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap, selectionOf } from '../positions';
@@ -33,7 +34,7 @@ import { SOURCE_VERB_META } from './sourceBlock';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
 import { DROP_LOCK, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLockReason } from './objects';
 import { pendingRangePlugin } from './pendingRange';
-import { EditorPort, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceChangedOutside, SourceEditor } from './nodeViews';
+import { EditorPort, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceChangedOutside, SourceEditor, reopenRawSourceAt } from './nodeViews';
 import { PropertiesView } from './properties';
 import { lensPlugin, lensVerbsAt, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
@@ -1005,6 +1006,9 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
             dismissRefusal(shown);
         }
         const resync = resyncTransaction(shown.state, doc);
+        const before = shown.state.doc;
+        // Where each open box stood, should the document draw its block anew.
+        const boxesAt = new Map(Array.from(openSourceEditors, editor => [editor, editor.position?.()] as const));
         // Only another text is a change from outside: the host's parse of the page's own edit (a save, a
         // source box's reparse) closes no box.
         takingHostDocument = changesText;
@@ -1013,7 +1017,7 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         } finally {
             takingHostDocument = false;
         }
-        sayClosedSourceBoxes(shown);
+        sayClosedSourceBoxes(shown, change => reopenBox(shown, change, before, boxesAt.get(change.editor), resync.mapping));
         if (insertedBlock !== undefined) {
             // The host's parse of blocks another extension inserted: the source block is now what its text is.
             const { end, focus } = insertedBlock;
@@ -1048,8 +1052,9 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
  * was not applied; a neutral word where nothing was typed. A box that had the
  * focus gives it to its block, selected, so the keyboard is still in the page.
  */
-function sayClosedSourceBoxes(shown: EditorView): void {
-    const closed = closedByChange.splice(0);
+function sayClosedSourceBoxes(shown: EditorView, reopen: (change: SourceChangedOutside) => boolean): void {
+    // A block drawn anew but not changed keeps its box: nothing to say for it.
+    const closed = closedByChange.splice(0).filter(change => !reopen(change));
     if (closed.length === 0) {
         return;
     }
@@ -1075,6 +1080,40 @@ function sayClosedSourceBoxes(shown: EditorView): void {
         ? `Not applied — the ${said.what} changed outside the editor. Your text is on the clipboard.`
         : `Source closed — the ${said.what} changed outside the editor.`,
     said.typed !== null ? 'refusal' : 'neutral', near instanceof Element ? near : undefined);
+}
+
+/**
+ * A source block's box whose view a document from the host replaced
+ * (`SourceChangedOutside.reopen`) opens again on the same block, as it was,
+ * when that block is there unchanged: ProseMirror draws an untouched block
+ * anew when much around it changed. The same block is the one with the box's
+ * source, in the run the document replaced (between where the box's old place
+ * maps to on either side), at the same place among the blocks of that very
+ * source — counted in the whole document, before and after, which must hold
+ * as many of them; anything less certain closes the box as a change does.
+ */
+function reopenBox(shown: EditorView, change: SourceChangedOutside, before: Node, oldPos: number | undefined, mapping: Mappable): boolean {
+    const text = change.reopen;
+    if (text === undefined || oldPos === undefined) {
+        return false;
+    }
+    const same = (doc: Node) => {
+        const at: number[] = [];
+        doc.forEach((node, offset) => {
+            if (node.type === editorSchema.nodes.raw_block && node.attrs.src === text.source) {
+                at.push(offset);
+            }
+        });
+        return at;
+    };
+    const was = same(before);
+    const now = same(shown.state.doc);
+    const index = was.indexOf(oldPos);
+    const pos = now[index];
+    if (index < 0 || was.length !== now.length || pos < mapping.map(oldPos, -1) || pos > mapping.map(oldPos, 1)) {
+        return false;
+    }
+    return reopenRawSourceAt(shown, pos, text);
 }
 
 /**

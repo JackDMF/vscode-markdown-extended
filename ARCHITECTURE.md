@@ -1562,8 +1562,12 @@ on), says so at the block — a refusal, *Not applied — the block changed outs
 Your text is on the clipboard.*, or a neutral *Source closed — …* where nothing was typed —
 and gives a box that had the focus back to its block, selected (the properties' box: to
 **Edit as source**). A change elsewhere in the file leaves the box open, with its typing and
-the focus. A page verb that removes the block (Delete block) is the person's own and says
-nothing.
+the focus — also where ProseMirror draws the untouched block anew because much around it
+changed: the box's view is destroyed then, and the page opens the box again as it was (text,
+selection, focus; `reopenBox`) on the block of the same source in the replaced run, at the same
+place among the blocks of that source — only when the document holds as many of them before
+and after; anything less certain closes it as a change does. A page verb that removes the block
+(Delete block) is the person's own and says nothing.
 
 ### Where fidelity is enforced
 

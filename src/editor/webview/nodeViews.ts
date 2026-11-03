@@ -64,6 +64,23 @@ export interface SourceChangedOutside {
     pos(): number | undefined;
     /** Give the focus back where the box was, when the view knows a place for it (the panel's Edit as source); else the page selects the block. */
     refocus?(): void;
+    /** The box that closed, as the page tracked it (`trackSourceEditor`): where it stood before the document came, the page knows. */
+    editor: SourceEditor;
+    /**
+     * A source block's box whose view the document replaced — ProseMirror may
+     * draw an untouched block anew when much around it changed: what it held,
+     * for the page to open again on the same block, should that be there
+     * unchanged (`reopenRawSourceAt`).
+     */
+    reopen?: BoxText;
+}
+
+/** What an open source box holds: the source it stands on, its text and selection. */
+export interface BoxText {
+    source: string;
+    value: string;
+    selectionStart: number;
+    selectionEnd: number;
 }
 
 /**
@@ -80,6 +97,8 @@ export function typedInBox(value: string, opened: string): string | null {
 export interface SourceEditor {
     /** Write what the textarea holds into the document now, leaving it open. */
     commitSource(): void;
+    /** Where the block it edits stands in the document, when the editor is a block's box. */
+    position?(): number | undefined;
 }
 
 type GetPos = () => number | undefined;
@@ -284,8 +303,13 @@ export class RawBlockView extends AtomView implements SourceEditor {
         return this.getPos();
     }
 
-    /** Open the block's source in a textarea; the object toolbar's **Edit source** calls it, and the formatting toolbar for a block it inserted. */
-    editSource(): void {
+    /**
+     * Open the block's source in a textarea; the object toolbar's **Edit
+     * source** calls it, and the formatting toolbar for a block it inserted.
+     * With `restore`, the box a document from the host closed on this very
+     * block opens again as it was: its text and selection.
+     */
+    editSource(restore?: BoxText): void {
         if (this.editor) {
             return;
         }
@@ -293,7 +317,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
         const area = element('textarea', 'mep-raw-editor');
         // The textarea shows `\n`; the terminator of the last line is not text
         // anybody edits, and is put back on commit.
-        area.value = src.replace(/\r\n?/g, '\n').replace(/\n$/, '');
+        area.value = restore?.value ?? src.replace(/\r\n?/g, '\n').replace(/\n$/, '');
         area.rows = Math.max(3, area.value.split('\n').length + 1);
         area.spellcheck = false;
         area.addEventListener('keydown', e => {
@@ -323,7 +347,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
         // At the end, where a person adding to the block starts; the source
         // lines do not map to points of the rendering, so a double click cannot
         // say where in the source it meant.
-        area.setSelectionRange(area.value.length, area.value.length);
+        area.setSelectionRange(restore?.selectionStart ?? area.value.length, restore?.selectionEnd ?? area.value.length);
     }
 
     commitSource(): void {
@@ -361,6 +385,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
         }
         const focused = area.ownerDocument.activeElement === area;
         const typed = typedInBox(area.value, this.boxSource);
+        const held: BoxText = { source: this.boxSource, value: area.value, selectionStart: area.selectionStart, selectionEnd: area.selectionEnd };
         this.stopEditing(false);
         // Still the selection (the click that opened the box made it): drawn again, as the keyboard comes back to it.
         if (standing && this.selected) {
@@ -371,6 +396,8 @@ export class RawBlockView extends AtomView implements SourceEditor {
             typed,
             focused,
             pos: () => (standing ? this.getPos() : undefined),
+            editor: this,
+            ...(standing ? {} : { reopen: held }),
         });
     }
 
@@ -511,6 +538,17 @@ export function rawBlockControl(el: Element): DeclaredControl | null {
     const atom = el.closest('.mep-raw-block');
     const rawView = atom ? rawBlockViews.get(atom) : undefined;
     return rawView?.holdsFocusOf(el) ? { pos: rawView.position(), role: 'source' } : null;
+}
+
+/** Open the box of the raw block at `pos` again with what a box held (`BoxText`). False when there is no raw block there. */
+export function reopenRawSourceAt(view: EditorView, pos: number, text: BoxText): boolean {
+    const dom = view.nodeDOM(pos);
+    const rawView = dom ? rawBlockViews.get(dom) : undefined;
+    if (!rawView) {
+        return false;
+    }
+    rawView.editSource(text);
+    return true;
 }
 
 /** Open the **Edit source** box of the raw block at `pos`. False when there is no raw block there. */

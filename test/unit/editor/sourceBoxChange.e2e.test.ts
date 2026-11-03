@@ -158,6 +158,51 @@ suite('Editor source box and a change from outside (e2e)', () => {
         assert.strictEqual(last?.text, 'First paragraph, replaced outside.\n\n<div>raw block</div> typed!\n\nLast one, replaced too.\n');
     });
 
+    test('blocks added before the block and changed after it, the block itself untouched: the box stays open with its typing', async function () {
+        this.timeout(30000);
+        if (!await open(SOURCE)) {
+            this.skip();
+        }
+        await openBox();
+        await page.keyboard.type(' typed');
+        await showDocument(SOURCE.replace('First paragraph.', 'New one.\n\n- an item\n\nFirst paragraph, changed.').replace('Last paragraph.', 'Last, changed.\n\nAnd more.'));
+        assert.strictEqual(await page.$eval('.mep-raw-editor', el => (el as HTMLTextAreaElement).value), '<div>raw block</div> typed');
+        assert.deepStrictEqual(await copied(), []);
+        await page.keyboard.press('ArrowLeft');
+        await showDocument('<div>raw block</div>\n');
+        // Every other block gone: ProseMirror draws the block anew, and the page opens its box again as it was.
+        assert.deepStrictEqual(await page.$eval('.mep-raw-editor', el => {
+            const a = el as HTMLTextAreaElement;
+            return { value: a.value, focused: document.activeElement === a, start: a.selectionStart, end: a.selectionEnd };
+        }), { value: '<div>raw block</div> typed', focused: true, start: 25, end: 25 });
+        assert.deepStrictEqual(await copied(), []);
+        assert.strictEqual((await hint()).shown, false, 'nothing to say');
+        await page.keyboard.type('!');
+        await apply();
+        assert.strictEqual((await edits()).pop()?.text, '<div>raw block</div> type!d\n');
+    });
+
+    test('two blocks of the same source, much changed around them: the box stays on its own block; that block removed closes it, never moving it to the other', async function () {
+        this.timeout(30000);
+        const twice = 'Intro.\n\n<div>same</div>\n\nMiddle.\n\n<div>same</div>\n\nEnd.\n';
+        if (!await open(twice)) {
+            this.skip();
+        }
+        // The second block's box.
+        const blocks = await page.$$('.mep-raw-block .mep-atom-content');
+        const second = await blocks[1].boundingBox();
+        assert.ok(second);
+        await page.mouse.click(second.x + 10, second.y + second.height / 2, { clickCount: 2 });
+        await page.waitForSelector('.mep-raw-editor');
+        await page.keyboard.type(' two');
+        await showDocument('New.\n\n<div>same</div>\n\nMiddle, changed.\n\n<div>same</div>\n');
+        assert.deepStrictEqual(await page.$$eval('.mep-raw-block', els => els.map(el => (el.querySelector('.mep-raw-editor') as HTMLTextAreaElement | null)?.value ?? null)),
+            [null, '<div>same</div> two'], 'the box is on the second block still');
+        await showDocument('New.\n\n<div>same</div>\n\nMiddle, changed.\n');
+        assert.strictEqual(await page.$('.mep-raw-editor'), null, 'its block removed: closed, not moved to the other one');
+        assert.deepStrictEqual(await copied(), ['<div>same</div> two']);
+    });
+
     test('the block removed outside while the box holds typing: the typing on the clipboard, the hint at the caret', async function () {
         this.timeout(30000);
         if (!await open(SOURCE)) {
