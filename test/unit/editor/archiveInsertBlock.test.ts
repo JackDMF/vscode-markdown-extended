@@ -7,6 +7,7 @@ import { EditorState, NodeSelection } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
+import { resyncTransaction } from '../../../src/editor/webview/resync';
 import { insertBlockTransaction } from '../../../src/editor/webview/toolbar/commands';
 import { hostEngine, topChildren } from './helpers';
 
@@ -22,7 +23,9 @@ import { hostEngine, topChildren } from './helpers';
  * back untouched. Each time the text differs from the file by added lines
  * only: a blank line and the block, and one blank line after it only where the
  * next block stood tight to the one before. The host's parse of it reads one block
- * more, the quote, written back unchanged; one undo gives the file's bytes.
+ * more, the quote, written back unchanged; one undo gives the file's bytes,
+ * before the parse and after it (re-synced as the page is, with the parse's
+ * tail) — without a line break more, also for the files that end without one.
  */
 const ROOT = process.env.MEP_ARCHIVE_ROOT;
 
@@ -59,7 +62,8 @@ function addedOnly(src: string, written: string): 'blank' | 'blank+after' | null
     const lines = written.split(/(?<=\n)/);
     const blank = (line: string | undefined) => line === '\n' || line === '\r\n';
     const bare = (line: string) => line.replace(/\r?\n$/, '');
-    // A file without a final line break gains one where the block goes after its last line.
+    // A file without a final line break: its last line gains one where the block goes after it,
+    // and the file still ends without one, after the block (`written` is checked for that below).
     const same = (text: string) => text === src || (!src.endsWith('\n') && (text === `${src}\n` || text === `${src}\r\n`));
     for (let j = 1; j + QUOTE.length <= lines.length; j++) {
         if (!blank(lines[j - 1]) || !QUOTE.every((q, k) => bare(lines[j + k]) === q)) {
@@ -139,6 +143,9 @@ suite('Editor insertBlock: Daniel\'s archive takes a quote block line for line (
                 const after = state.apply(inserted.tr);
                 const written = write(parsed, after.doc);
                 const diff = addedOnly(src, written);
+                if (!/\n$/.test(src) && /\n$/.test(written)) {
+                    failures.push(`${where}: the file had no final line break, and has one now`);
+                }
                 if (diff === null) {
                     failures.push(`${where}: not added lines only`);
                     continue;
@@ -160,6 +167,16 @@ suite('Editor insertBlock: Daniel\'s archive takes a quote block line for line (
                 });
                 if (write(parsed, undone.doc) !== src) {
                     failures.push(`${where}: undo does not give the file's bytes`);
+                }
+                // And after the host's parse, as the page has it then: re-synced to it, its tail and
+                // line ending the parse's, undone — the file's bytes, not one line break more.
+                const shown = after.apply(resyncTransaction(after, reparsed.doc));
+                let undoneShown = shown;
+                undo(shown, tr => {
+                    undoneShown = shown.apply(tr);
+                });
+                if (write(reparsed, undoneShown.doc) !== src) {
+                    failures.push(`${where}: undo after the host's parse does not give the file's bytes`);
                 }
             }
         }

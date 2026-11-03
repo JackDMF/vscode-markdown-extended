@@ -622,8 +622,20 @@ export function insertBlockTransaction(state: EditorState, markdown: string, eol
         return null;
     }
     const pos = insertionPoint(state);
-    const block = nodes.raw_block.create({ src: blockSource(markdown, eol), gap: null, html: '' });
-    const tr = state.tr.insert(pos, block);
+    const tr = state.tr;
+    let src = blockSource(markdown, eol);
+    // After the last block of a file without a final line break: the file still ends without one,
+    // after the inserted block now. The block before gains its line break in this very step — the
+    // host's parse of the new text gives it that `src` anyway — so undoing the step, before or
+    // after that parse, gives back the file's last line as it was, not with a line break added.
+    const last = state.doc.lastChild;
+    const lastSrc = last?.attrs.src;
+    if (last !== null && pos === state.doc.content.size && typeof lastSrc === 'string' && lastSrc !== '' && !/\n$/.test(lastSrc)) {
+        tr.setNodeMarkup(pos - last.nodeSize, undefined, { ...last.attrs, src: lastSrc + eol });
+        src = src.slice(0, -eol.length);
+    }
+    const block = nodes.raw_block.create({ src, gap: null, html: '' });
+    tr.insert(pos, block);
     const end = pos + block.nodeSize;
     // The block after keeps the text that stood before it — a blank line as the file wrote it, with
     // its spaces, its line ending, a second one — so the file only gains lines. A block that stood

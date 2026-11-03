@@ -662,6 +662,21 @@ suite('Editor: a block another extension inserts (insertBlock)', () => {
         }
     });
 
+    test('after the last line of a file without a final line break: the file still ends without one, and one undo gives its bytes', () => {
+        const source = 'Alpha.\n\nOmega.';
+        const state = caretAt(stateOf(source), 'Omega');
+        const inserted = insertBlockTransaction(state, QUOTE, '\n');
+        assert.ok(inserted);
+        const next = state.apply(inserted.tr);
+        assert.strictEqual(serializeDocument({ doc: next.doc, eol: '\n', tail: '' }, { defaultWrap: 90 }), `${source}\n\n${QUOTE}`);
+        assert.strictEqual(next.doc.child(1).attrs.src, 'Omega.\n', 'the last line gains its line break in the same step, as the parse will give it');
+        let undone = next;
+        assert.ok(undo(next, tr => {
+            undone = next.apply(tr);
+        }));
+        assert.strictEqual(serializeDocument({ doc: undone.doc, eol: '\n', tail: '' }, { defaultWrap: 90 }), source);
+    });
+
     test('Markdown of whitespace only is nothing to insert', () => {
         assert.strictEqual(insertBlockTransaction(stateOf(SOURCE), ' \n\t\r\n', '\n'), null);
     });
