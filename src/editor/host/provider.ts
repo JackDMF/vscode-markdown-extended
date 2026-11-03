@@ -54,8 +54,10 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
             onDidChangeEngine: this.engines.onDidChange,
             log: this.log,
             includeProviders: () => collectIncludeProviders(this.selfId, this.log),
-            // `insertBlock` with `focus`: the panel in its own column, the keyboard in it.
-            reveal: () => panel.reveal(undefined, false),
+            // `insertBlock` with `focus`: the panel in its own column, the keyboard in it. The column is named:
+            // without it VS Code shows the editor in the active group — for a custom text editor a second
+            // Visual Editor over the file there, the text editor that was active pushed aside.
+            reveal: () => panel.reveal(panel.viewColumn, false),
         });
         const tracking = this.tracker?.track(panel, session);
         // The file may be open in the Visual Editor twice: a request by uri goes to the panel active last.

@@ -2935,8 +2935,10 @@ markdown, { focus })`.
   once would otherwise race — the second edit based on the document before the first parse,
   and dropped). The session asks in its queue, behind the edits received before, and does not
   wait there: it posts `insertBlock { requestId, src, focus }` and returns. With `focus` it
-  first reveals the panel (`SessionHost.reveal`, `panel.reveal(undefined, false)`), which works
-  for an editor in a background tab too.
+  first reveals the panel in its own column (`SessionHost.reveal`, `panel.reveal(panel.viewColumn,
+  false)`), which works for an editor in a background tab too. The column is named: without it
+  VS Code shows the editor in the active group, and for a custom text editor that is a second
+  Visual Editor over the file there, the active text editor pushed aside (4.12.0).
 - **Page.** A source box open meanwhile is committed first, as a save commits it — its text is
   a history step before the block's and goes in the same edit; the focus leaving it later
   commits nothing more. Then `insertBlockTransaction` (`toolbar/commands.ts`, the sister of

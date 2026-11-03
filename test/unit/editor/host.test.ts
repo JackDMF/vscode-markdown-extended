@@ -1937,6 +1937,44 @@ suite('Editor host: one file in two Visual Editors (live)', () => {
             fs.rmSync(uri.fsPath, { force: true });
         }
     });
+
+    test('insertBlock with focus, a text editor active in another group: the Visual Editor comes to the front in its own group — no second one opens over the file', async function () {
+        this.timeout(60000);
+        const extension = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(extension);
+        const api = (await extension.activate() as { visualEditor: VisualEditorApi }).visualEditor;
+        const uri = tempMarkdown(SOURCE);
+        const other = tempMarkdown('Other file.\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        try {
+            await vscode.commands.executeCommand('vscode.openWith', uri, VISUAL_EDITOR_VIEW_TYPE, vscode.ViewColumn.Two);
+            await delay(3000);
+            await vscode.window.showTextDocument(other, { viewColumn: vscode.ViewColumn.One, preview: false });
+            await until(() => (vscode.window.tabGroups.activeTabGroup.viewColumn === vscode.ViewColumn.One ? true : undefined), 5000);
+            let result: InsertBlockResult = { inserted: false, reason: 'error-state' };
+            for (const end = Date.now() + 10000; 'reason' in result && result.reason === 'error-state' && Date.now() < end; await delay(100)) {
+                result = await api.insertBlock(uri, '> Quote', { focus: true });
+            }
+            assert.deepStrictEqual(result, { inserted: true });
+            const front = await until(() => (vscode.window.tabGroups.activeTabGroup.viewColumn === vscode.ViewColumn.Two ? true : undefined), 5000);
+            assert.ok(front, 'the Visual Editor\'s group is the active one');
+            assert.deepStrictEqual(customTabs(uri).map(tab => tab.group.viewColumn), [vscode.ViewColumn.Two], 'one Visual Editor over the file, where it was');
+            const first = vscode.window.tabGroups.all.find(group => group.viewColumn === vscode.ViewColumn.One);
+            assert.ok(first?.tabs.some(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === other.toString()), 'the text editor stays in its group');
+            assert.ok(await document.save());
+        } finally {
+            for (const tab of customTabs(uri)) {
+                await vscode.window.tabGroups.close(tab);
+            }
+            const text = vscode.window.tabGroups.all.flatMap(group => group.tabs)
+                .find(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === other.toString());
+            if (text) {
+                await vscode.window.tabGroups.close(text);
+            }
+            fs.rmSync(uri.fsPath, { force: true });
+            fs.rmSync(other.fsPath, { force: true });
+        }
+    });
 });
 
 suite('Editor host: what a source box held, on the clipboard', () => {
