@@ -1,7 +1,7 @@
 import type { ExportFormatName } from '../services/exporter/formats';
 import type { InlineEngineDefinition } from './inlineEngine';
 import type { ParsedDocumentJSON } from './parse';
-import type { MappedPagePosition, MappedSourcePosition, SourcePosition, SourceRange } from './positions';
+import type { MappedPagePosition, MappedSourcePosition, SourcePosition, SourceRange, SourceSelection } from './positions';
 
 /**
  * The messages between the rich editor's webview and the extension host.
@@ -187,6 +187,27 @@ export type HostMessage =
     | { type: 'revealAnchor'; anchor: string; line: number | null }
     /** The palette's "Sort Footnotes" for this page (wave 4 #5b): the footnotes' texts in number order, or a hint that they are. */
     | { type: 'sortFootnotes' }
+    /**
+     * Insert Markdown blocks another extension handed (`visualEditor.insertBlock`,
+     * `host/activeEditor.ts`): `src` as it was given, which the page writes in
+     * the document's line ending (`blockSource`), after the block its selection
+     * ends in — one step of its history, in the same edit as typing still in
+     * its delay, sent with `reparse` — and then `blockInserted`. Once the host's
+     * parse of it is shown, the caret goes right after the blocks, scrolled into
+     * view; with `focus` the page takes the keyboard. Answered exactly once per
+     * `requestId`, whether `insertBlockCancel` comes before or after it.
+     */
+    | { type: 'insertBlock'; requestId: number; src: string; focus: boolean }
+    /**
+     * The host has waited `MAP_TIMEOUT_MS` for the answer to `insertBlock`
+     * `requestId` and withdraws it. A page that has already answered it ignores
+     * this — its answer is on the way, and it is the one that counts. A page
+     * that has not seen the request (a page loaded again since, which never
+     * got it) answers `blockInserted` without the block, `cancelled`, and
+     * writes nothing should the request still reach it. No clock is compared:
+     * the page's word decides.
+     */
+    | { type: 'insertBlockCancel'; requestId: number }
     /**
      * The answer to `pickInclude`: the line the person chose, exactly as the
      * extension offering it wrote it (`IncludeChoice.insert`, one line without
@@ -391,9 +412,11 @@ export type WebviewMessage =
      * selection settles, and only while the host holds the page's text (after
      * the pending edit, never before it); the host drops one whose
      * `baseVersion` is not the document it last posted, or that arrives while
-     * the document holds another text.
+     * the document holds another text. `selection` (since 4.12.0) is the
+     * selection's two ends, `active` the caret, for a non-empty text selection
+     * whose ends both map exactly (`selectionOf`); absent otherwise.
      */
-    | { type: 'caret'; baseVersion: number; position: SourcePosition | null }
+    | { type: 'caret'; baseVersion: number; position: SourcePosition | null; selection?: SourceSelection }
     /**
      * The answer to `map`: one entry per position asked, in order, `null` for
      * one that is none. `baseVersion` is the document the page shows, `-1`
@@ -424,6 +447,16 @@ export type WebviewMessage =
      * into since the answer ends. Sent after the pending edit.
      */
     | { type: 'applyCompletion'; requestId: number; index: number; baseVersion: number; position: SourcePosition }
+    /**
+     * The answer to `insertBlock` (or to `insertBlockCancel` for a request the
+     * page had not seen), once per `requestId`, posted right after the `edit`
+     * (with `reparse`) that carries the block. Without the block, `reason`
+     * says why: the page shows no document (`no-document`), the host withdrew
+     * the request first (`cancelled`), or the page would not take the block
+     * (`refused`). The host takes it in its queue, behind that edit, and
+     * answers the extension once the edit has been applied.
+     */
+    | { type: 'blockInserted'; requestId: number; inserted: boolean; reason?: InsertRefusal }
     /** The quick fixes for a diagnostic's source `range`, in the text of `baseVersion`; answered with `quickFixes`. */
     | { type: 'quickFixesFor'; requestId: number; baseVersion: number; range: SourceRange }
     /** Ask the hover providers at `position` (the pointer, rested), in the text of `baseVersion`; answered with `hoverResult`. */
@@ -451,6 +484,9 @@ export type WebviewMessage =
     | { type: 'export'; format: ExportFormatName }
     /** **Export → Export settings…**: VS Code's Settings, filtered to `markdownExtended.export`. */
     | { type: 'exportSettings' };
+
+/** Why the page did not insert a block (`blockInserted`). */
+export type InsertRefusal = 'no-document' | 'cancelled' | 'refused';
 
 /** The format names of the export's table (`formats.ts`), which the page and the host both read. */
 export type { ExportFormatName };

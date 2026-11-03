@@ -6,7 +6,8 @@ import { lift, setBlockType, toggleMark, wrapIn } from 'prosemirror-commands';
 import { Mark, MarkType, Node, NodeType, ResolvedPos } from 'prosemirror-model';
 import { liftListItem, wrapInList } from 'prosemirror-schema-list';
 import { GapCursor } from 'prosemirror-gapcursor';
-import { AllSelection, Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
+import { closeHistory } from 'prosemirror-history';
+import { AllSelection, Command, EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { isInTable } from 'prosemirror-tables';
 import { parseAttrsLiteral } from '../../attrs';
 import { DEFAULT_FENCE } from '../../fences';
@@ -590,6 +591,63 @@ export function insertLineTransaction(state: EditorState, line: string, eol: '\n
     const tr = state.tr.insert(pos, nodes.raw_block.create({ src: singleLine(line) + eol, gap: null, html: '' }));
     tr.setSelection(NodeSelection.create(tr.doc, pos));
     return { tr: tr.scrollIntoView(), pos };
+}
+
+/**
+ * Blocks another extension handed as Markdown, as a source block's `src`: the
+ * line breaks at its end dropped, every one inside — `\n`, `\r\n` or `\r` —
+ * written as the document's `eol`, and the last line terminated with it.
+ */
+export function blockSource(markdown: string, eol: '\n' | '\r\n'): string {
+    return markdown.replace(/(?:\r\n|\r|\n)+$/, '').split(/\r\n|\r|\n/).join(eol) + eol;
+}
+
+/**
+ * The transaction `insertBlock` makes for another extension (`visualEditor.insertBlock`,
+ * ARCHITECTURE.md, "Inserting blocks for another extension"): a new source block
+ * holding `markdown` exactly as given (`blockSource`), after the block the
+ * selection ends in (`insertionPoint`) — where the Insert menu puts any block —
+ * a blank line before it, the caret right after it. The block after it keeps
+ * the blank lines that stood before it, so the file gains lines only; one held
+ * tight to the block before gets a blank line. The sister of
+ * `insertLineTransaction` for any number of lines. It is a step of the history
+ * of its own, never merged with typing just before it (`closeHistory`), so
+ * Ctrl+Z takes out the block and nothing else. The page then sends the text
+ * with `reparse`, and the host's parser, with every markdown-it plugin, turns
+ * the source block into whatever the text is. `end` is the position right
+ * after the inserted block; `null` for Markdown that is only whitespace.
+ */
+export function insertBlockTransaction(state: EditorState, markdown: string, eol: '\n' | '\r\n'): { tr: Transaction; pos: number; end: number } | null {
+    if (markdown.trim() === '') {
+        return null;
+    }
+    const pos = insertionPoint(state);
+    const tr = state.tr;
+    let src = blockSource(markdown, eol);
+    // After the last block of a file without a final line break: the file still ends without one,
+    // after the inserted block now. The block before gains its line break in this very step — the
+    // host's parse of the new text gives it that `src` anyway — so undoing the step, before or
+    // after that parse, gives back the file's last line as it was, not with a line break added.
+    const last = state.doc.lastChild;
+    const lastSrc = last?.attrs.src;
+    if (last !== null && pos === state.doc.content.size && typeof lastSrc === 'string' && lastSrc !== '' && !/\n$/.test(lastSrc)) {
+        tr.setNodeMarkup(pos - last.nodeSize, undefined, { ...last.attrs, src: lastSrc + eol });
+        src = src.slice(0, -eol.length);
+    }
+    const block = nodes.raw_block.create({ src, gap: null, html: '' });
+    tr.insert(pos, block);
+    const end = pos + block.nodeSize;
+    // The block after keeps the text that stood before it — a blank line as the file wrote it, with
+    // its spaces, its line ending, a second one — so the file only gains lines. A block that stood
+    // tight to the one before is written a blank line below instead: after the inserted text, a
+    // tight line could be read as its lazy continuation.
+    const next = tr.doc.nodeAt(end);
+    if (next !== null && 'gap' in next.attrs && !(typeof next.attrs.gap === 'string' && next.attrs.gap.includes('\n'))) {
+        tr.setNodeMarkup(end, undefined, { ...next.attrs, gap: null });
+    }
+    tr.setSelection(Selection.near(tr.doc.resolve(end), 1));
+    // Every other source attribute stays as it is: nothing but this block and that gap changed.
+    return { tr: closeHistory(tr).setMeta(PRESERVE_SOURCE_META, true).scrollIntoView(), pos, end };
 }
 
 /**

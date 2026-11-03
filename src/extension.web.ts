@@ -62,7 +62,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     ].filter(Boolean);
 
     // The Visual Editor is desktop-only (extension.ts), so no editor is ever
-    // active here; the export has the same shape on both builds.
+    // active here, and `insertBlock` answers `no-editor`; the export has the
+    // same shape on both builds.
     const visualEditors = new ActiveVisualEditorTracker();
     subscriptions.push(visualEditors);
 

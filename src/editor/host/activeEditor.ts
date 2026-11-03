@@ -12,7 +12,18 @@ import * as vscode from 'vscode';
  * extension that owns the editor says it: the panel's own `active` flag, and
  * the caret the page reports (`webview/caret.ts`), mapped to the document's
  * text by `positions.ts`.
+ *
+ * API 2 (4.12.0) adds what the Studienhilfe needs to write where a person
+ * works in the Visual Editor: the selection, and `insertBlock`, which has the
+ * page insert Markdown blocks as its own Insert menu would — undoable there,
+ * with no keystroke lost — instead of another writer's `WorkspaceEdit`, which
+ * the page's undo cannot take back (ARCHITECTURE.md, "Inserting blocks for
+ * another extension"). Readers test for the member they need: API 1 has
+ * neither, and no `version`.
  */
+
+/** The level of the API `activate` exports: absent in 4.0–4.11 (level 1), 2 from 4.12.0. */
+export const VISUAL_EDITOR_API_VERSION = 2;
 
 /** The Visual Editor that has the focus: its document, and the caret's position in its text. */
 export interface ActiveVisualEditor {
@@ -25,15 +36,76 @@ export interface ActiveVisualEditor {
      * not seen is on its way to it.
      */
     caret: vscode.Position | undefined;
+    /**
+     * Since API 2 (4.12.0). The selection in the document's text when it is a
+     * non-empty text selection whose both ends map exactly; `undefined` for an
+     * empty selection (then `caret` says where it is) and wherever `caret` is
+     * `undefined`. `selection.active` equals `caret`.
+     */
+    selection?: vscode.Selection;
+}
+
+/**
+ * How `insertBlock` went. `inserted: true`: the document holds the blocks.
+ * `inserted: false` means *not confirmed*: with every reason but
+ * `unconfirmed` nothing was written; with `unconfirmed` nobody can say.
+ */
+export type InsertBlockResult =
+    | { inserted: true }
+    | { inserted: false; reason: InsertBlockRefusal };
+
+/**
+ * Why `insertBlock` reports no insertion. Nothing was written for: no Visual
+ * Editor open over the uri (`no-editor`, and always in the web build); it
+ * shows the error state, no document yet, or would not take the block
+ * (`error-state`); Markdown of whitespace only (`empty`); its page did not
+ * answer within 2 s, so the request was withdrawn and the page confirmed it
+ * wrote nothing (`timeout`); its panel closed before the page answered
+ * (`closed`); the file changed elsewhere as the page's edit arrived, which was
+ * dropped for it (`changed`).
+ *
+ * `unconfirmed` is the exception: the page gave no word at all within 30 s
+ * (it is hung), and the blocks **may be in the document or not**. A caller
+ * must not take it as "not inserted" — not insert the blocks a second time
+ * elsewhere, but say that it is unknown and let the person look.
+ */
+export type InsertBlockRefusal = 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'unconfirmed';
+
+export interface InsertBlockOptions {
+    /** Bring the Visual Editor to the front, the keyboard in its page. */
+    focus?: boolean;
 }
 
 /** The API, exported by `activate` as `visualEditor`. */
 export interface VisualEditorApi {
-    /** The Visual Editor that has focus, if one does: its document uri and the caret's source position. */
+    /** API level: absent = 1 (4.0–4.11), 2 from 4.12.0. Readers test for the member they need. */
+    readonly version?: number;
+    /** The Visual Editor that has focus, if one does: its document uri, the caret's source position and, since API 2, the selection. */
     active(): ActiveVisualEditor | undefined;
-    /** Fires when another Visual Editor (or none) takes the focus, and when the active one's caret changes. */
+    /** Fires when another Visual Editor (or none) takes the focus, and when the active one's caret or selection changes. */
     onDidChangeActive: vscode.Event<ActiveVisualEditor | undefined>;
+    /**
+     * Since API 2. Insert Markdown blocks into the Visual Editor over `uri`,
+     * where its own Insert menu would put a block: after the top-level block the
+     * page's selection ends in, never before the first block. The text is
+     * written as given — line endings turned into the document's, line breaks
+     * at its end dropped — a blank line before it, as one step of the page's
+     * history (Ctrl+Z removes it), in the same edit as any typing still in the
+     * page's delay, and parsed by the host with every markdown-it plugin.
+     * Afterwards the caret is right after the inserted blocks and they are
+     * scrolled into view. With `focus`, the panel is revealed and the page
+     * takes the keyboard. Works on a Visual Editor in a background tab too.
+     * Requests to one editor are taken one after the other. Resolves once the
+     * document holds the blocks, or with the reason it does not — or, with
+     * `unconfirmed`, that it cannot say.
+     */
+    insertBlock(uri: vscode.Uri, markdown: string, options?: InsertBlockOptions): Promise<InsertBlockResult>;
 }
+
+/** Who inserts for `insertBlock`: the open sessions (`session.ts`, `insertBlockIn`); without them — the web build — none is open. */
+export type BlockInserter = (uri: vscode.Uri, markdown: string, options?: InsertBlockOptions) => Promise<InsertBlockResult>;
+
+const NO_EDITOR: BlockInserter = () => Promise.resolve({ inserted: false, reason: 'no-editor' });
 
 /** The part of a `vscode.WebviewPanel` the tracker reads. */
 export interface TrackedPanel {
@@ -45,6 +117,8 @@ export interface TrackedPanel {
 export interface TrackedEditor {
     readonly uri: vscode.Uri;
     readonly caret: vscode.Position | undefined;
+    /** The non-empty selection, when the page reported one that maps exactly. */
+    readonly selection?: vscode.Selection;
     readonly onDidChangeCaret: vscode.Event<unknown>;
 }
 
@@ -56,14 +130,28 @@ export class ActiveVisualEditorTracker implements vscode.Disposable {
     private current: { panel: TrackedPanel; editor: TrackedEditor } | undefined;
     private readonly changed = new vscode.EventEmitter<ActiveVisualEditor | undefined>();
     readonly onDidChangeActive = this.changed.event;
-    /** What other extensions get: the two members, and nothing of the tracker. */
-    readonly api: VisualEditorApi = {
-        active: () => this.active(),
-        onDidChangeActive: this.onDidChangeActive,
-    };
+    /** What other extensions get: the API's members, and nothing of the tracker. */
+    readonly api: VisualEditorApi;
+
+    /** `inserter` writes for `insertBlock`: the sessions' `insertBlockIn` on the desktop; the web build, with no editor, leaves it out. */
+    constructor(inserter: BlockInserter = NO_EDITOR) {
+        this.api = {
+            version: VISUAL_EDITOR_API_VERSION,
+            active: () => this.active(),
+            onDidChangeActive: this.onDidChangeActive,
+            // A caller's mistake (no uri) is answered as no editor over it, never thrown.
+            insertBlock: (uri, markdown, options) => (uri === undefined || uri === null
+                ? Promise.resolve({ inserted: false, reason: 'no-editor' })
+                : inserter(uri, markdown, options)),
+        };
+    }
 
     active(): ActiveVisualEditor | undefined {
-        return this.current === undefined ? undefined : { uri: this.current.editor.uri, caret: this.current.editor.caret };
+        if (this.current === undefined) {
+            return undefined;
+        }
+        const { uri, caret, selection } = this.current.editor;
+        return selection === undefined ? { uri, caret } : { uri, caret, selection };
     }
 
     /** Follow one editor's panel; dispose the result when the panel is closed. */

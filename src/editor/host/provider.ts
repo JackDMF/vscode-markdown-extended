@@ -54,6 +54,8 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
             onDidChangeEngine: this.engines.onDidChange,
             log: this.log,
             includeProviders: () => collectIncludeProviders(this.selfId, this.log),
+            // `insertBlock` with `focus`: the panel in its own column, the keyboard in it.
+            reveal: () => panel.reveal(undefined, false),
         });
         const tracking = this.tracker?.track(panel, session);
         panel.onDidDispose(() => {

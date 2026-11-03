@@ -144,6 +144,31 @@ The extension works seamlessly with other markdown plugins that contribute to th
 
 The extension doesn't aim to do everything - use specialized plugins for deep features!
 
+### For extension authors: the Visual Editor's API
+
+A custom editor is not `vscode.window.activeTextEditor`, so the Visual Editor says itself
+where a person works. `vscode.extensions.getExtension('jackdmf.markdown-extended-pro')`
+exports `visualEditor`:
+
+- `active()` — the Visual Editor that has the focus: its document's `uri`, the `caret` as a
+  `vscode.Position` in the document's text, and (since 4.12.0) the `selection` when text is
+  selected. `undefined` when none has the focus; `caret` is `undefined` where it is no place in
+  the text (a source block, Ctrl+A). `onDidChangeActive` fires when either changes.
+- `insertBlock(uri, markdown, { focus })` (since 4.12.0) — Markdown blocks inserted into the
+  Visual Editor over `uri` where its own **Insert** menu puts a block: after the block the
+  caret is in, a blank line before it, the caret after it. Ctrl+Z (Cmd+Z) takes it out again,
+  typing still on its way is kept, and the line endings are the file's. With `focus`, the
+  editor comes to the front; requests to one editor are taken one after the other. It
+  resolves with `{ inserted: true }` once the file holds the blocks, or with
+  `{ inserted: false, reason }`. With `no-editor`, `error-state`, `empty`, `timeout`, `closed`
+  or `changed` nothing was written. With `unconfirmed` — the editor gave no answer at all
+  within 30 s — **it is not known**: the blocks may be in the file. Do not insert them a second
+  time elsewhere; say so and let the person look.
+
+`visualEditor.version` is 2 from 4.12.0 and absent before; test for the member you call
+(`typeof api.insertBlock === 'function'`). ARCHITECTURE.md, *The active editor and its caret*
+and *Inserting blocks for another extension*, has the details.
+
 ## Exporter
 
 Find in command palette, or right click on an editor / workspace folder, and execute:

@@ -7,8 +7,9 @@ import { ExportFormat, formatNamed } from '../../services/exporter/formats';
 import { escapeHtml } from '../../services/exporter/shared';
 import { inlineEngineDefinition } from '../inlineEngine';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
-import { MappedPagePosition, SourcePosition, validPosition, validRange } from '../positions';
-import { HostMessage, WebviewMessage } from '../protocol';
+import { MappedPagePosition, SourcePosition, SourceSelection, validPosition, validRange } from '../positions';
+import { HostMessage, InsertRefusal, WebviewMessage } from '../protocol';
+import type { InsertBlockOptions, InsertBlockResult } from './activeEditor';
 import { CodeActionController } from './codeActions';
 import { engineEnvironment } from './engineHost';
 import { message } from './errors';
@@ -41,8 +42,10 @@ export interface SessionHost {
     linkFiles?: FileLister;
     /** VS Code's open dialog (the default) for **Insert → Image…**; a test answers for the person. */
     openDialog?(options: vscode.OpenDialogOptions): Thenable<vscode.Uri[] | undefined>;
-    /** How long `toSource`/`toPage` wait for the page's answer (`MAP_TIMEOUT_MS`, the default). */
+    /** How long `toSource`/`toPage` wait for the page's answer, and `insertBlock` before it is withdrawn (`MAP_TIMEOUT_MS`, the default). */
     mapTimeoutMs?: number;
+    /** How long `insertBlock` waits for the page's word at all before it says `unconfirmed` (`INSERT_UNCONFIRMED_MS`, the default). */
+    insertUnconfirmedMs?: number;
     /**
      * `vscode.commands.executeCommand` (the default), through which completion,
      * hover, quick fixes and code actions ask VS Code; a test answers for it.
@@ -54,6 +57,8 @@ export interface SessionHost {
     onDidChangeDiagnostics?: vscode.Event<vscode.DiagnosticChangeEvent>;
     /** The extension's export of a document in a format chosen already (`exportUri`, the default); a test records what it was asked. */
     exportDocument?(uri: vscode.Uri, format: ExportFormat): Thenable<unknown>;
+    /** Bring the page's panel to the front with the keyboard (`WebviewPanel.reveal`), for `insertBlock` with `focus`; nothing without it. */
+    reveal?(): void;
 }
 
 /** The part of a `vscode.Webview` a session talks to. */
@@ -67,8 +72,15 @@ export interface SessionWebview {
 /** How long a burst of changes from another writer (typing in the text editor) is left to settle before re-parsing. */
 const RESYNC_DELAY_MS = 100;
 
-/** How long a `map` request waits for the page's answer before it answers `undefined`. */
+/** How long a `map` request waits for the page's answer before it answers `undefined`; and an `insertBlock` before it is withdrawn. */
 export const MAP_TIMEOUT_MS = 2000;
+
+/**
+ * How long an `insertBlock` waits for the page's word at all: past it the
+ * extension is told `unconfirmed` — the block may or may not be in the
+ * document. A page that does not answer a withdrawal within this is hung.
+ */
+export const INSERT_UNCONFIRMED_MS = 30000;
 
 type MappedMessage = Extract<WebviewMessage, { type: 'mapped' }>;
 
@@ -81,6 +93,14 @@ export interface Reveal {
 /** Where a link's fragment lands in the file it names: a `Reveal`, and whether a heading carries the fragment. */
 interface Landing extends Reveal {
     heading: boolean;
+}
+
+/** An `insertBlock` waiting for the page's `blockInserted` (`VisualEditorSession.pendingInserts`). */
+interface PendingInsert {
+    settle(result: InsertBlockResult): void;
+    /** The page has answered; it is settled in the queue, behind the edit before the answer. */
+    answered: boolean;
+    stopTimers(): void;
 }
 
 /** The open sessions by document uri, so a link followed from one page can land in another. */
@@ -108,6 +128,17 @@ export function sortFootnotesIn(uri: vscode.Uri): boolean {
     const session = sessions.get(uri.toString());
     session?.sortFootnotes();
     return session !== undefined;
+}
+
+/**
+ * `visualEditor.insertBlock` for another extension: `markdown` inserted by the
+ * Visual Editor over `uri` (`VisualEditorSession.insertBlock`), or `no-editor`
+ * when none is open for it. One editor per document (the provider does not
+ * set `supportsMultipleEditorsPerDocument`), so the uri names it.
+ */
+export function insertBlockIn(uri: vscode.Uri, markdown: string, options?: InsertBlockOptions): Promise<InsertBlockResult> {
+    const session = sessions.get(uri.toString());
+    return session === undefined ? Promise.resolve({ inserted: false, reason: 'no-editor' }) : session.insertBlock(markdown, options);
 }
 
 /**
@@ -150,8 +181,10 @@ export class VisualEditorSession implements vscode.Disposable {
     private pendingReveal: Reveal | undefined;
     /** The page's caret in the document's text, as it last reported it (`caret`). */
     private caretPosition: vscode.Position | undefined;
+    /** The page's non-empty selection, reported with the caret, which is its active end; forgotten with it. */
+    private caretSelection: vscode.Selection | undefined;
     private readonly caretChanged = new vscode.EventEmitter<vscode.Position | undefined>();
-    /** Fires when the caret the page reported changes, or stops being known. */
+    /** Fires when the caret the page reported changes, or stops being known, or the selection with it does. */
     readonly onDidChangeCaret = this.caretChanged.event;
     /** The `map` requests waiting for the page's `mapped`, by id. */
     private readonly pendingMaps = new Map<number, (answer: MappedMessage | undefined) => void>();
@@ -160,6 +193,19 @@ export class VisualEditorSession implements vscode.Disposable {
     private readonly execute: <T>(command: string, ...args: unknown[]) => Thenable<T>;
     /** The format of an export the page asked for that is running, from its request until `exportDone`; another is dropped meanwhile. */
     private exporting: ExportFormat | null = null;
+    /**
+     * The `insertBlock` requests waiting for the page's `blockInserted`, by
+     * id: how to answer the extension, whether the page's answer has come (it
+     * is then settled in the queue, behind the edit it follows), and the
+     * timers that withdraw the request and, much later, give up on it.
+     */
+    private readonly pendingInserts = new Map<number, PendingInsert>();
+    private insertSeq = 0;
+    /** The last `insertBlock` asked: the next one is posted only once it is settled, so it is written into the page's parse of it. */
+    private insertChain: Promise<unknown> = Promise.resolve();
+    /** Whether the last edit the page sent was written to the document — read for the `blockInserted` behind it. */
+    private lastEditLanded = false;
+    private disposed = false;
 
     constructor(
         private readonly document: vscode.TextDocument,
@@ -274,6 +320,15 @@ export class VisualEditorSession implements vscode.Disposable {
     }
 
     /**
+     * The page's selection in the document's text when it is a non-empty text
+     * selection whose ends both map exactly, `active` the caret; `undefined`
+     * for an empty one, and wherever `caret` is.
+     */
+    get selection(): vscode.Selection | undefined {
+        return this.caretSelection;
+    }
+
+    /**
      * Where page position `pos` stands in the document's text, and whether that
      * is only the nearest place — asked of the page, which owns the mapping
      * (`positions.ts`, over its own document). `undefined` for a position
@@ -338,9 +393,13 @@ export class VisualEditorSession implements vscode.Disposable {
     }
 
     dispose(): void {
+        this.disposed = true;
         if (this.resyncTimer !== undefined) {
             clearTimeout(this.resyncTimer);
         }
+        // Only those the page has not answered: an answered one is settled in the queue once its edit
+        // is applied — which it still is — and says what the document holds.
+        [...this.pendingInserts.values()].filter(pending => !pending.answered).forEach(pending => pending.settle({ inserted: false, reason: 'closed' }));
         if (sessions.get(this.document.uri.toString()) === this) {
             sessions.delete(this.document.uri.toString());
         }
@@ -417,12 +476,27 @@ export class VisualEditorSession implements vscode.Disposable {
             case 'caret':
                 // In the queue, behind the edit the page sent before it: the
                 // position is in the text that edit leaves.
-                this.enqueue(async () => this.takeCaret(msg.baseVersion, msg.position));
+                this.enqueue(async () => this.takeCaret(msg.baseVersion, msg.position, msg.selection));
                 break;
             case 'mapped':
                 // Behind the edit the page flushed before answering, likewise.
                 this.enqueue(async () => this.takeMapped(msg));
                 break;
+            case 'blockInserted': {
+                const pending = this.pendingInserts.get(msg.requestId);
+                if (pending === undefined || pending.answered) {
+                    // Given up on (`unconfirmed`), or never asked.
+                    break;
+                }
+                // The page's word: the timers stop here, not in the queue — the
+                // edit before it may take a while to apply there.
+                pending.answered = true;
+                pending.stopTimers();
+                // Answered in the queue, behind the edit that carries the block:
+                // the extension hears of it once the edit is applied.
+                this.enqueue(async () => pending.settle(this.insertedResult(msg.inserted, msg.reason)));
+                break;
+            }
             case 'quickFixesFor':
                 // In the queue, behind the edit the page flushed before asking,
                 // so the range is read in the text the page holds; a page on
@@ -482,6 +556,97 @@ export class VisualEditorSession implements vscode.Disposable {
     }
 
     /**
+     * `visualEditor.insertBlock` (`host/activeEditor.ts`): the page inserts
+     * `markdown` after the block its selection ends in, as one step of its
+     * history, in one edit with typing still in its delay, and the host parses
+     * it with every plugin (`reparse`). One at a time: a request is posted once
+     * the one before is settled, so it lands in the page's parse of that one.
+     * Asked in the queue, behind the edits received before, and not waited for
+     * there: the page's edit and its `blockInserted` come in behind it.
+     *
+     * Only the page's word settles it — no clock is compared. Resolves once
+     * the edit is applied, or with why nothing was written: `empty`,
+     * `error-state` (the document cannot be shown, the page shows none, or
+     * would not take the block), `closed` (the panel closed before the page
+     * answered), `timeout` (no answer within `MAP_TIMEOUT_MS`: the request was
+     * withdrawn — `insertBlockCancel` — and the page confirmed it wrote
+     * nothing), or `changed` (the file changed elsewhere as the edit arrived,
+     * and the edit was dropped). `unconfirmed` is not one of them: the page
+     * said nothing at all within `INSERT_UNCONFIRMED_MS`, and the block may be
+     * in the document or not. With `focus`, the panel comes to the front
+     * first, and the page takes the keyboard.
+     */
+    insertBlock(markdown: string, options: InsertBlockOptions = {}): Promise<InsertBlockResult> {
+        if (typeof markdown !== 'string' || markdown.trim() === '') {
+            return Promise.resolve({ inserted: false, reason: 'empty' });
+        }
+        const focus = options.focus === true;
+        if (focus && !this.disposed) {
+            this.host.reveal?.();
+        }
+        const result = this.insertChain.then(() => this.askToInsert(markdown, focus));
+        this.insertChain = result;
+        return result;
+    }
+
+    /** One `insertBlock`, asked in the queue; never rejects. */
+    private askToInsert(markdown: string, focus: boolean): Promise<InsertBlockResult> {
+        return new Promise(resolve => {
+            this.enqueue(async () => {
+                if (this.disposed) {
+                    resolve({ inserted: false, reason: 'closed' });
+                    return;
+                }
+                if (this.broken || this.postedVersion < 0) {
+                    resolve({ inserted: false, reason: 'error-state' });
+                    return;
+                }
+                const requestId = ++this.insertSeq;
+                const settle = (answer: InsertBlockResult) => {
+                    pending.stopTimers();
+                    this.pendingInserts.delete(requestId);
+                    resolve(answer);
+                };
+                // Unanswered in time: withdrawn, and the page's answer to that decides.
+                const withdraw = setTimeout(() => {
+                    void this.postQuietly({ type: 'insertBlockCancel', requestId });
+                }, this.host.mapTimeoutMs ?? MAP_TIMEOUT_MS);
+                // No word at all: the page is hung, and nobody can say what the document holds.
+                const giveUp = setTimeout(() => settle({ inserted: false, reason: 'unconfirmed' }), this.host.insertUnconfirmedMs ?? INSERT_UNCONFIRMED_MS);
+                const pending: PendingInsert = {
+                    settle,
+                    answered: false,
+                    stopTimers: () => {
+                        clearTimeout(withdraw);
+                        clearTimeout(giveUp);
+                    },
+                };
+                this.pendingInserts.set(requestId, pending);
+                Promise.resolve(this.webview.postMessage({ type: 'insertBlock', requestId, src: markdown, focus })).then(
+                    delivered => {
+                        if (!delivered && !pending.answered) {
+                            settle({ inserted: false, reason: 'closed' });
+                        }
+                    },
+                    () => {
+                        if (!pending.answered) {
+                            settle({ inserted: false, reason: 'closed' });
+                        }
+                    },
+                );
+            });
+        });
+    }
+
+    /** What the extension is told for the page's `blockInserted`, read behind the edit that carried the block. */
+    private insertedResult(inserted: boolean, refusal: InsertRefusal | undefined): InsertBlockResult {
+        if (!inserted) {
+            return { inserted: false, reason: refusal === 'cancelled' ? 'timeout' : 'error-state' };
+        }
+        return this.lastEditLanded ? { inserted: true } : { inserted: false, reason: 'changed' };
+    }
+
+    /**
      * This document exported in `format` (`exportUri`), as `markdownExtended.export`
      * exports it once the format is chosen — a failure reported as the command reports one.
      */
@@ -507,19 +672,31 @@ export class VisualEditorSession implements vscode.Disposable {
      * and while the document holds the page's text; any other is stale and
      * dropped, and the page reports again after the document it is sent.
      */
-    private takeCaret(baseVersion: number, position: SourcePosition | null): void {
+    private takeCaret(baseVersion: number, position: SourcePosition | null, selection?: SourceSelection): void {
         if (this.broken || baseVersion !== this.postedVersion || this.document.getText() !== this.webviewText) {
             return;
         }
-        this.setCaret(validPosition(position) ? new vscode.Position(position.line, position.character) : undefined);
+        if (!validPosition(position)) {
+            this.setCaret(undefined);
+            return;
+        }
+        const caret = new vscode.Position(position.line, position.character);
+        // A selection is taken only as the page means it: its active end the caret, its anchor elsewhere.
+        const anchor = selection !== null && typeof selection === 'object' && validPosition(selection.anchor) && validPosition(selection.active)
+            && caret.isEqual(new vscode.Position(selection.active.line, selection.active.character))
+            ? new vscode.Position(selection.anchor.line, selection.anchor.character)
+            : undefined;
+        this.setCaret(caret, anchor === undefined || anchor.isEqual(caret) ? undefined : new vscode.Selection(anchor, caret));
     }
 
-    private setCaret(caret: vscode.Position | undefined): void {
-        const same = caret === undefined ? this.caretPosition === undefined : this.caretPosition?.isEqual(caret) === true;
-        if (same) {
+    private setCaret(caret: vscode.Position | undefined, selection?: vscode.Selection): void {
+        const sameCaret = caret === undefined ? this.caretPosition === undefined : this.caretPosition?.isEqual(caret) === true;
+        const sameSelection = selection === undefined ? this.caretSelection === undefined : this.caretSelection?.isEqual(selection) === true;
+        if (sameCaret && sameSelection) {
             return;
         }
         this.caretPosition = caret;
+        this.caretSelection = caret === undefined ? undefined : selection;
         this.caretChanged.fire(caret);
     }
 
@@ -712,6 +889,7 @@ export class VisualEditorSession implements vscode.Disposable {
      * or without it: the document on its way is parsed afresh anyway.
      */
     private async applyEdit(text: string, baseVersion: number, reparse = false): Promise<void> {
+        this.lastEditLanded = false;
         if (this.broken || baseVersion !== this.postedVersion) {
             // Broken: never write. Stale base: a newer document is on its way,
             // and the webview rebuilds from it.
@@ -724,6 +902,8 @@ export class VisualEditorSession implements vscode.Disposable {
         }
         const replacement = minimalReplacement(current, text);
         if (replacement === null) {
+            // The document holds the page's text already.
+            this.lastEditLanded = true;
             if (reparse) {
                 await this.post();
             }
@@ -743,6 +923,7 @@ export class VisualEditorSession implements vscode.Disposable {
             replacement.text,
         );
         const applied = await vscode.workspace.applyEdit(edit);
+        this.lastEditLanded = applied;
         if (!applied || this.document.getText() !== text || reparse) {
             // Refused, or VS Code normalized the inserted line endings: show the
             // person what the document now holds. Or the page asked to see it.

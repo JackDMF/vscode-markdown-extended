@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { SourcePosition } from '../../../src/editor/positions';
+import { SourcePosition, SourceSelection } from '../../../src/editor/positions';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { CaretPort, CaretReporter } from '../../../src/editor/webview/caret';
 
@@ -11,6 +11,7 @@ class FakeCaretPage implements CaretPort {
     text = 'text';
     held = 'text';
     caret: SourcePosition | null = { line: 0, character: 1 };
+    selection: SourceSelection | null = null;
 
     version(): number | undefined {
         return this.versionNow;
@@ -22,7 +23,7 @@ class FakeCaretPage implements CaretPort {
         return this.held;
     }
     measure() {
-        return { text: this.text, caret: this.caret };
+        return { text: this.text, caret: this.caret, selection: this.selection };
     }
     post(message: Extract<WebviewMessage, { type: 'caret' }>): void {
         this.posted.push(message);
@@ -101,6 +102,31 @@ suite('Editor positions: the caret the page reports', () => {
         reporter.selectionMoved();
         await delay(DELAY * 3);
         assert.strictEqual(page.posted.length, 3, 'the error state reports nothing');
+        reporter.dispose();
+    });
+
+    test('a selection goes with its caret; one whose anchor alone moved is reported again; none without a caret', async () => {
+        const page = new FakeCaretPage();
+        const reporter = new CaretReporter(page, DELAY);
+        page.caret = { line: 0, character: 9 };
+        page.selection = { anchor: { line: 0, character: 2 }, active: { line: 0, character: 9 } };
+        reporter.selectionMoved();
+        await delay(DELAY * 3);
+        assert.deepStrictEqual(page.posted, [{ type: 'caret', baseVersion: 3, position: { line: 0, character: 9 }, selection: page.selection }]);
+        page.selection = { anchor: { line: 0, character: 4 }, active: { line: 0, character: 9 } };
+        reporter.selectionMoved();
+        await delay(DELAY * 3);
+        assert.strictEqual(page.posted.length, 2, 'the same caret with another anchor is news');
+        assert.deepStrictEqual(page.posted[1].selection?.anchor, { line: 0, character: 4 });
+        page.selection = null;
+        reporter.selectionMoved();
+        await delay(DELAY * 3);
+        assert.deepStrictEqual(page.posted[2], { type: 'caret', baseVersion: 3, position: { line: 0, character: 9 } }, 'collapsed: the caret alone');
+        page.caret = null;
+        page.selection = { anchor: { line: 0, character: 2 }, active: { line: 0, character: 9 } };
+        reporter.selectionMoved();
+        await delay(DELAY * 3);
+        assert.deepStrictEqual(page.posted[3], { type: 'caret', baseVersion: 3, position: null }, 'no caret, no selection');
         reporter.dispose();
     });
 });

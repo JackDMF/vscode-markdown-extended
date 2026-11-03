@@ -17,8 +17,8 @@ import { closeHistory, redo, undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
-import { PositionMap, SourcePosition, caretOf, createPositionMap } from '../positions';
-import type { CodeActionItem, ExportFormatName, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import { PositionMap, SourcePosition, caretOf, createPositionMap, selectionOf } from '../positions';
+import type { CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
@@ -41,7 +41,7 @@ import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
 import { sortFootnotesCommand } from './footnotes';
 import { resyncTransaction } from './resync';
-import { changeIncludeTransaction, insertLineTransaction } from './toolbar/commands';
+import { changeIncludeTransaction, insertBlockTransaction, insertLineTransaction } from './toolbar/commands';
 import { refreshToolbar, toolbarPlugin, toolbarStatusSlot } from './toolbar/toolbar';
 
 interface VsCodeApi {
@@ -119,7 +119,10 @@ const caretReporter = new CaretReporter({
         }
         const map = pageMap(view.state.doc);
         // A source box or a property's field is not a place in the text: no caret while one has the focus.
-        return { text: map.text, caret: inControl() ? null : caretOf(view.state.selection, map) };
+        if (inControl()) {
+            return { text: map.text, caret: null };
+        }
+        return { text: map.text, caret: caretOf(view.state.selection, map), selection: selectionOf(view.state.selection, map) };
     },
     post,
 });
@@ -497,6 +500,87 @@ function applyInclude(requestId: number, insert: string | undefined): void {
     flush(false, true);
 }
 
+/**
+ * A block another extension inserted (`insertBlock`) whose parse the host has
+ * not shown yet: the position right after it, mapped through every change the
+ * page makes meanwhile, and whether the page takes the keyboard once it shows.
+ */
+let insertedBlock: { end: number; focus: boolean } | undefined;
+
+/**
+ * The `insertBlock` requests this page has answered, or that the host withdrew
+ * before the page saw them (`insertBlockCancel`), by id: each is answered once,
+ * and a withdrawn one is never written.
+ */
+const answeredInserts = new Set<number>();
+
+/**
+ * The host's `insertBlock`: the open source boxes committed first (their
+ * text is a history step before the block's, as a save commits them), the
+ * blocks written after the block the selection ends in
+ * (`insertBlockTransaction`, one history step) and sent at once with
+ * `reparse` — in one edit with whatever typing still waits in the delay, so
+ * no keystroke is lost to it — then `blockInserted`, which the host takes
+ * behind that edit. Answered without the block when the page shows no
+ * document or the block was not taken; a request the host withdrew already
+ * is not written and not answered again. The caret is put after the blocks
+ * once the host's parse shows them (`showDocument`).
+ */
+function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
+    if (answeredInserts.has(msg.requestId)) {
+        return;
+    }
+    answeredInserts.add(msg.requestId);
+    const refuse = (reason: InsertRefusal) => post({ type: 'blockInserted', requestId: msg.requestId, inserted: false, reason });
+    if (!view || !current) {
+        refuse('no-document');
+        return;
+    }
+    // A box open meanwhile is committed now, in the edit below: the focus leaving it would commit it after the block.
+    commitForSending();
+    const before = view.state.doc;
+    const inserted = insertBlockTransaction(view.state, msg.src, current.eol);
+    if (inserted !== null) {
+        view.dispatch(inserted.tr);
+    }
+    if (inserted === null || view.state.doc === before) {
+        flush();
+        refuse('refused');
+        return;
+    }
+    insertedBlock = { end: inserted.end, focus: msg.focus };
+    flush(false, true);
+    post({ type: 'blockInserted', requestId: msg.requestId, inserted: true });
+}
+
+/**
+ * The host withdrew `insertBlock` `requestId` after waiting for it. Answered
+ * already: nothing — that answer is on its way and counts. Not seen yet (a
+ * page loaded again since): answered `cancelled`, and never written.
+ */
+function cancelInsert(requestId: number): void {
+    if (answeredInserts.has(requestId)) {
+        return;
+    }
+    answeredInserts.add(requestId);
+    post({ type: 'blockInserted', requestId, inserted: false, reason: 'cancelled' });
+}
+
+/**
+ * The caret right after the blocks another extension inserted, now that the
+ * host's parse of them is shown — `end`, mapped through that re-sync — and
+ * brought into view; with `focus`, the page takes the keyboard. Not a step of
+ * the history, and it closes the insertion's: typing next is undone on its own.
+ */
+function placeAfterInserted(target: EditorView, end: number, focus: boolean): void {
+    const doc = target.state.doc;
+    const tr = target.state.tr.setSelection(Selection.near(doc.resolve(Math.min(end, doc.content.size)), 1));
+    target.dispatch(closeHistory(tr).setMeta('addToHistory', false).scrollIntoView());
+    if (focus) {
+        target.focus();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Links and images: the host completes, chooses, relativizes and saves
 // ---------------------------------------------------------------------------
@@ -866,6 +950,9 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
         apply();
     }
     if (tr.docChanged) {
+        if (insertedBlock !== undefined) {
+            insertedBlock.end = tr.mapping.map(insertedBlock.end, -1);
+        }
         scheduleFlush();
     }
     if (tr.docChanged || tr.selectionSet) {
@@ -911,6 +998,12 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         }
         const resync = resyncTransaction(shown.state, doc);
         keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
+        if (insertedBlock !== undefined) {
+            // The host's parse of blocks another extension inserted: the source block is now what its text is.
+            const { end, focus } = insertedBlock;
+            insertedBlock = undefined;
+            placeAfterInserted(shown, resync.mapping.map(end, 1), focus);
+        }
         sendDeferredActions();
         caretReporter.documentShown();
         // An open list and a card were about the text before.
@@ -988,6 +1081,7 @@ function showError(message: string): void {
         editTimer = undefined;
     }
     caretReporter.dispose();
+    insertedBlock = undefined;
     view?.destroy();
     view = undefined;
     current = undefined;
@@ -1078,6 +1172,12 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'includeChosen':
             applyInclude(msg.requestId, msg.insert);
+            break;
+        case 'insertBlock':
+            insertBlock(msg);
+            break;
+        case 'insertBlockCancel':
+            cancelInsert(msg.requestId);
             break;
         case 'linkChoicesResult':
             applyLinkChoices(msg.requestId, msg.items);
