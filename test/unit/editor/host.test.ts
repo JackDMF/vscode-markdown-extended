@@ -12,7 +12,7 @@ import {
 } from '../../../src/editor/host/includes';
 import { blockIndexForLine, hidesLens, lensHintOf, lensRows } from '../../../src/editor/host/lenses';
 import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
-import { SessionHost, SessionWebview, VisualEditorSession, revealInVisualEditor } from '../../../src/editor/host/session';
+import { SessionHost, SessionWebview, VisualEditorSession, insertBlockIn, revealInVisualEditor } from '../../../src/editor/host/session';
 import { fillDestination } from '../../../src/editor/host/images';
 import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
 import { GITHUB_SLUG_REPLACE } from '../../../src/syntax/githubSlugRegex';
@@ -24,7 +24,7 @@ import { blockLineRanges, parseDocument } from '../../../src/editor/parse';
 import { plugins } from '../../../src/plugin/plugins';
 import { entriesDocument } from './footnoteSample';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
-import { ActiveVisualEditor, ActiveVisualEditorTracker, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
+import { ActiveVisualEditor, ActiveVisualEditorTracker, InsertBlockResult, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
 
 const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
 
@@ -1731,7 +1731,7 @@ suite('Editor host: the active Visual Editor', () => {
             trackingB.dispose();
             assert.strictEqual(tracker.api.active(), undefined, 'a closed editor is not active');
             assert.deepStrictEqual(events, ['/a.md', '/a.md@3:4', 'none', '/b.md@9:9', 'none']);
-            assert.deepStrictEqual(Object.keys(tracker.api).sort(), ['active', 'onDidChangeActive'], 'nothing of the tracker leaks');
+            assert.deepStrictEqual(Object.keys(tracker.api).sort(), ['active', 'insertBlock', 'onDidChangeActive', 'version'], 'nothing of the tracker leaks');
         } finally {
             tracker.dispose();
         }
@@ -1744,11 +1744,28 @@ suite('Editor host: the active Visual Editor', () => {
         const api = (await extension.activate() as { visualEditor: VisualEditorApi }).visualEditor;
         assert.strictEqual(typeof api.active, 'function');
         assert.strictEqual(typeof api.onDidChangeActive, 'function');
+        assert.strictEqual(api.version, 2, 'API 2 (4.12.0)');
+        assert.strictEqual(typeof api.insertBlock, 'function');
         const uri = tempMarkdown(SOURCE);
         try {
+            assert.deepStrictEqual(await api.insertBlock(uri, '> Quote'), { inserted: false, reason: 'no-editor' }, 'no Visual Editor over it yet');
             await vscode.commands.executeCommand('vscode.openWith', uri, VISUAL_EDITOR_VIEW_TYPE);
             const active = await until(() => (api.active()?.uri.toString() === uri.toString() ? api.active() : undefined), 10000);
             assert.ok(active, 'the opened Visual Editor is the active one');
+
+            // The real page in VS Code's webview inserts it, and the document holds it once the promise resolves.
+            const document = await vscode.workspace.openTextDocument(uri);
+            let result: InsertBlockResult = { inserted: false, reason: 'error-state' };
+            // The page may not have its document yet right after opening.
+            for (const end = Date.now() + 10000; 'reason' in result && result.reason === 'error-state' && Date.now() < end; await delay(100)) {
+                result = await api.insertBlock(uri, '> ## Römer 12:2 {.nwtsty}\n> Text\n');
+            }
+            assert.deepStrictEqual(result, { inserted: true });
+            assert.ok(document.getText().includes('\n\n> ## Römer 12:2 {.nwtsty}\n> Text\n'), document.getText());
+            assert.strictEqual(document.getText().replace('\n> ## Römer 12:2 {.nwtsty}\n> Text\n', ''), SOURCE, 'the block and a blank line, nothing else');
+            assert.deepStrictEqual(await api.insertBlock(uri, '  \n'), { inserted: false, reason: 'empty' });
+            // Saved, so closing the tab asks nothing.
+            assert.ok(await document.save());
             const tab = await until(() => customTab(uri), 10000);
             assert.ok(tab);
             await vscode.window.tabGroups.close(tab);
@@ -1757,6 +1774,157 @@ suite('Editor host: the active Visual Editor', () => {
         } finally {
             fs.rmSync(uri.fsPath, { force: true });
         }
+    });
+});
+
+type InsertBlockMessage = Extract<HostMessage, { type: 'insertBlock' }>;
+
+/**
+ * `insertBlock` on the host (`VisualEditorSession.insertBlock`, `insertBlockIn`):
+ * the page's half played by the test, as the page answers — the edit with
+ * `reparse` that carries the block, then `blockInserted` — or as it fails to.
+ */
+suite('Editor host: insertBlock', () => {
+    const QUOTE = '> ## Römer 12:2 {.nwtsty}\n> Text';
+    const TIMEOUT = 300;
+
+    /** A session over a fresh copy of SOURCE, its first document posted; `reveals` counts the panel's reveals. */
+    async function open(engine: () => Promise<MarkdownIt> = () => buildEditorEngine(EXTENSION_ID, () => undefined)) {
+        const uri = tempMarkdown(SOURCE);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const webview = new FakeWebview();
+        let reveals = 0;
+        const session = new VisualEditorSession(document, webview, {
+            engine,
+            onDidChangeEngine: engineChanged.event,
+            log: () => undefined,
+            mapTimeoutMs: TIMEOUT,
+            reveal: () => {
+                reveals++;
+            },
+        });
+        webview.send({ type: 'ready' });
+        await session.settled();
+        const requests = () => webview.posted.filter((m): m is InsertBlockMessage => m.type === 'insertBlock');
+        return {
+            uri, document, webview, session, requests,
+            reveals: () => reveals,
+            posted: () => webview.documents().pop() as Extract<HostMessage, { type: 'document' }>,
+            close: () => {
+                session.dispose();
+                engineChanged.dispose();
+                fs.rmSync(uri.fsPath, { force: true });
+            },
+        };
+    }
+
+    test('no Visual Editor over the uri: no-editor, from the module and from an API without one (the web build)', async () => {
+        assert.deepStrictEqual(await insertBlockIn(vscode.Uri.file('/nowhere/none.md'), QUOTE), { inserted: false, reason: 'no-editor' });
+        const tracker = new ActiveVisualEditorTracker();
+        try {
+            assert.deepStrictEqual(await tracker.api.insertBlock(vscode.Uri.file('/a.md'), QUOTE), { inserted: false, reason: 'no-editor' });
+            assert.deepStrictEqual(await tracker.api.insertBlock(undefined as unknown as vscode.Uri, QUOTE), { inserted: false, reason: 'no-editor' }, 'no uri is never thrown');
+            assert.strictEqual(tracker.api.version, 2);
+        } finally {
+            tracker.dispose();
+        }
+    });
+
+    test('the page inserts and answers behind its edit: the promise resolves once the document holds the block; with focus the panel comes to the front', async function () {
+        this.timeout(10000);
+        const s = await open();
+        try {
+            assert.deepStrictEqual(await insertBlockIn(s.uri, '\n \n'), { inserted: false, reason: 'empty' });
+            assert.strictEqual(s.requests().length, 0, 'nothing is asked for whitespace');
+
+            const started = Date.now();
+            const result = insertBlockIn(s.uri, QUOTE, { focus: true });
+            const asked = await until(() => s.requests()[0], 2000);
+            assert.ok(asked);
+            assert.strictEqual(asked.src, QUOTE, 'as given: the page writes it in the document\'s line ending');
+            assert.strictEqual(asked.focus, true);
+            assert.strictEqual(s.reveals(), 1);
+            assert.ok(asked.expires >= started + TIMEOUT / 2 - 5 && asked.expires <= Date.now() + TIMEOUT / 2, 'the page stops inserting at half the wait');
+
+            const text = s.document.getText().replace('wrapped as it was written.\n', `wrapped as it was written.\n\n${QUOTE}\n`);
+            let held: boolean | undefined;
+            void result.then(() => {
+                held = s.document.getText() === text;
+            });
+            s.webview.send({ type: 'edit', text, baseVersion: s.posted().version, reparse: true });
+            s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: true });
+            assert.deepStrictEqual(await result, { inserted: true });
+            assert.strictEqual(held, true, 'the document held the block when the extension heard of it');
+            assert.ok(s.posted().version === s.document.version, 'and the page got the host\'s parse of it');
+
+            void insertBlockIn(s.uri, QUOTE);
+            await until(() => s.requests()[1], 2000);
+            assert.strictEqual(s.reveals(), 1, 'without focus the panel stays where it is');
+        } finally {
+            s.close();
+        }
+    });
+
+    test('no answer within the wait: timeout, and the document is unchanged; a late answer is dropped', async function () {
+        this.timeout(10000);
+        const s = await open();
+        try {
+            const before = s.document.getText();
+            const started = Date.now();
+            assert.deepStrictEqual(await insertBlockIn(s.uri, QUOTE), { inserted: false, reason: 'timeout' });
+            assert.ok(Date.now() - started >= TIMEOUT - 20);
+            assert.strictEqual(s.document.getText(), before);
+            const asked = s.requests()[0];
+            s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: false });
+            await s.session.settled();
+            assert.strictEqual(s.document.getText(), before);
+        } finally {
+            s.close();
+        }
+    });
+
+    test('the page could not insert: error-state; its edit dropped as the file changed elsewhere: changed', async function () {
+        this.timeout(10000);
+        const s = await open();
+        try {
+            const refused = insertBlockIn(s.uri, QUOTE);
+            const first = await until(() => s.requests()[0], 2000);
+            assert.ok(first);
+            s.webview.send({ type: 'blockInserted', requestId: first.requestId, inserted: false });
+            assert.deepStrictEqual(await refused, { inserted: false, reason: 'error-state' });
+
+            const dropped = insertBlockIn(s.uri, QUOTE);
+            const second = await until(() => s.requests()[1], 2000);
+            assert.ok(second);
+            const stale = s.posted().version;
+            const other = new vscode.WorkspaceEdit();
+            other.insert(s.uri, s.document.positionAt(s.document.getText().length), 'Another writer.\n');
+            assert.ok(await vscode.workspace.applyEdit(other));
+            const text = SOURCE.replace('written.\n', `written.\n\n${QUOTE}\n`);
+            s.webview.send({ type: 'edit', text, baseVersion: stale, reparse: true });
+            s.webview.send({ type: 'blockInserted', requestId: second.requestId, inserted: true });
+            assert.deepStrictEqual(await dropped, { inserted: false, reason: 'changed' });
+            assert.ok(!s.document.getText().includes(QUOTE), 'the block was not written over the other writer\'s change');
+        } finally {
+            s.close();
+        }
+    });
+
+    test('a document that cannot be shown: error-state; the panel closed while waiting: closed', async function () {
+        this.timeout(10000);
+        const broken = await open(() => Promise.reject(new Error('no engine')));
+        try {
+            assert.deepStrictEqual(await insertBlockIn(broken.uri, QUOTE), { inserted: false, reason: 'error-state' });
+            assert.strictEqual(broken.requests().length, 0);
+        } finally {
+            broken.close();
+        }
+        const s = await open();
+        const waiting = insertBlockIn(s.uri, QUOTE);
+        await until(() => s.requests()[0], 2000);
+        s.close();
+        assert.deepStrictEqual(await waiting, { inserted: false, reason: 'closed' });
     });
 });
 

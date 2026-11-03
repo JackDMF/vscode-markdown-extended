@@ -41,7 +41,7 @@ import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
 import { sortFootnotesCommand } from './footnotes';
 import { resyncTransaction } from './resync';
-import { changeIncludeTransaction, insertLineTransaction } from './toolbar/commands';
+import { changeIncludeTransaction, insertBlockTransaction, insertLineTransaction } from './toolbar/commands';
 import { refreshToolbar, toolbarPlugin, toolbarStatusSlot } from './toolbar/toolbar';
 
 interface VsCodeApi {
@@ -497,6 +497,58 @@ function applyInclude(requestId: number, insert: string | undefined): void {
     flush(false, true);
 }
 
+/**
+ * A block another extension inserted (`insertBlock`) whose parse the host has
+ * not shown yet: the position right after it, mapped through every change the
+ * page makes meanwhile, and whether the page takes the keyboard once it shows.
+ */
+let insertedBlock: { end: number; focus: boolean } | undefined;
+
+/**
+ * The host's `insertBlock`: the blocks written after the block the selection
+ * ends in (`insertBlockTransaction`, one history step) and sent at once with
+ * `reparse` — in one edit with whatever typing still waits in the delay, so
+ * no keystroke is lost to it — then `blockInserted`, which the host takes
+ * behind that edit. Answered without the block when the page shows no
+ * document, the request comes after its `expires` (the host stopped waiting),
+ * or the block was not taken. The caret is put after the blocks once the
+ * host's parse shows them (`showDocument`).
+ */
+function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
+    const answer = (inserted: boolean) => post({ type: 'blockInserted', requestId: msg.requestId, inserted });
+    if (!view || !current || Date.now() > msg.expires) {
+        answer(false);
+        return;
+    }
+    const before = view.state.doc;
+    const inserted = insertBlockTransaction(view.state, msg.src, current.eol);
+    if (inserted !== null) {
+        view.dispatch(inserted.tr);
+    }
+    if (inserted === null || view.state.doc === before) {
+        answer(false);
+        return;
+    }
+    insertedBlock = { end: inserted.end, focus: msg.focus };
+    flush(false, true);
+    answer(true);
+}
+
+/**
+ * The caret right after the blocks another extension inserted, now that the
+ * host's parse of them is shown — `end`, mapped through that re-sync — and
+ * brought into view; with `focus`, the page takes the keyboard. Not a step of
+ * the history, and it closes the insertion's: typing next is undone on its own.
+ */
+function placeAfterInserted(target: EditorView, end: number, focus: boolean): void {
+    const doc = target.state.doc;
+    const tr = target.state.tr.setSelection(Selection.near(doc.resolve(Math.min(end, doc.content.size)), 1));
+    target.dispatch(closeHistory(tr).setMeta('addToHistory', false).scrollIntoView());
+    if (focus) {
+        target.focus();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Links and images: the host completes, chooses, relativizes and saves
 // ---------------------------------------------------------------------------
@@ -866,6 +918,9 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
         apply();
     }
     if (tr.docChanged) {
+        if (insertedBlock !== undefined) {
+            insertedBlock.end = tr.mapping.map(insertedBlock.end, -1);
+        }
         scheduleFlush();
     }
     if (tr.docChanged || tr.selectionSet) {
@@ -911,6 +966,12 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         }
         const resync = resyncTransaction(shown.state, doc);
         keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
+        if (insertedBlock !== undefined) {
+            // The host's parse of blocks another extension inserted: the source block is now what its text is.
+            const { end, focus } = insertedBlock;
+            insertedBlock = undefined;
+            placeAfterInserted(shown, resync.mapping.map(end, 1), focus);
+        }
         sendDeferredActions();
         caretReporter.documentShown();
         // An open list and a card were about the text before.
@@ -988,6 +1049,7 @@ function showError(message: string): void {
         editTimer = undefined;
     }
     caretReporter.dispose();
+    insertedBlock = undefined;
     view?.destroy();
     view = undefined;
     current = undefined;
@@ -1078,6 +1140,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'includeChosen':
             applyInclude(msg.requestId, msg.insert);
+            break;
+        case 'insertBlock':
+            insertBlock(msg);
             break;
         case 'linkChoicesResult':
             applyLinkChoices(msg.requestId, msg.items);

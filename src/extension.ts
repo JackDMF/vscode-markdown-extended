@@ -17,6 +17,7 @@ import { CommandExportWorkSpace } from './commands/exportWorkspace';
 import { ExtensionContext } from './services/common/extensionContext';
 import { BrowserManager } from './services/browser/browserManager';
 import { registerVisualEditor } from './editor/host/provider';
+import { insertBlockIn } from './editor/host/session';
 import { EditorEngineHost } from './editor/host/engineHost';
 import { ActiveVisualEditorTracker } from './editor/host/activeEditor';
 
@@ -31,8 +32,9 @@ export function activate(ctx: vscode.ExtensionContext) {
 
     // Which Visual Editor has the focus and where its caret is, for other
     // extensions (`visualEditor` below; ARCHITECTURE.md, "The active editor
-    // and its caret").
-    const visualEditors = new ActiveVisualEditorTracker();
+    // and its caret"), and Markdown blocks inserted into it by its page
+    // ("Inserting blocks for another extension").
+    const visualEditors = new ActiveVisualEditorTracker(insertBlockIn);
 
     const log = (line: string) => {
         // The channel can be gone when a test has reset the context.

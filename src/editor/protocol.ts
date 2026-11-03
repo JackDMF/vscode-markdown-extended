@@ -188,6 +188,20 @@ export type HostMessage =
     /** The palette's "Sort Footnotes" for this page (wave 4 #5b): the footnotes' texts in number order, or a hint that they are. */
     | { type: 'sortFootnotes' }
     /**
+     * Insert Markdown blocks another extension handed (`visualEditor.insertBlock`,
+     * `host/activeEditor.ts`): `src` as it was given, which the page writes in
+     * the document's line ending (`blockSource`), after the block its selection
+     * ends in — one step of its history, in the same edit as typing still in
+     * its delay, sent with `reparse` — and then `blockInserted`. Once the host's
+     * parse of it is shown, the caret goes right after the blocks, scrolled into
+     * view; with `focus` the page takes the keyboard. `expires` is the time
+     * (`Date.now()`) after which the page no longer inserts: the host gives up
+     * waiting soon after (`MAP_TIMEOUT_MS`) and tells the extension that
+     * nothing was written, so a request the page reaches late is answered
+     * without the block.
+     */
+    | { type: 'insertBlock'; requestId: number; src: string; focus: boolean; expires: number }
+    /**
      * The answer to `pickInclude`: the line the person chose, exactly as the
      * extension offering it wrote it (`IncludeChoice.insert`, one line without
      * its terminator); absent when they dismissed the pick or nothing was offered.
@@ -424,6 +438,14 @@ export type WebviewMessage =
      * into since the answer ends. Sent after the pending edit.
      */
     | { type: 'applyCompletion'; requestId: number; index: number; baseVersion: number; position: SourcePosition }
+    /**
+     * The answer to `insertBlock`, posted right after the `edit` (with
+     * `reparse`) that carries the block; `inserted` is `false` when the page
+     * shows no document, reached the request after its `expires`, or did not
+     * take the block. The host takes it in its queue, behind that edit, and
+     * answers the extension once the edit has landed.
+     */
+    | { type: 'blockInserted'; requestId: number; inserted: boolean }
     /** The quick fixes for a diagnostic's source `range`, in the text of `baseVersion`; answered with `quickFixes`. */
     | { type: 'quickFixesFor'; requestId: number; baseVersion: number; range: SourceRange }
     /** Ask the hover providers at `position` (the pointer, rested), in the text of `baseVersion`; answered with `hoverResult`. */

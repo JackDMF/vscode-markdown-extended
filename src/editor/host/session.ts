@@ -9,6 +9,7 @@ import { inlineEngineDefinition } from '../inlineEngine';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
 import { MappedPagePosition, SourcePosition, validPosition, validRange } from '../positions';
 import { HostMessage, WebviewMessage } from '../protocol';
+import type { InsertBlockOptions, InsertBlockResult } from './activeEditor';
 import { CodeActionController } from './codeActions';
 import { engineEnvironment } from './engineHost';
 import { message } from './errors';
@@ -54,6 +55,8 @@ export interface SessionHost {
     onDidChangeDiagnostics?: vscode.Event<vscode.DiagnosticChangeEvent>;
     /** The extension's export of a document in a format chosen already (`exportUri`, the default); a test records what it was asked. */
     exportDocument?(uri: vscode.Uri, format: ExportFormat): Thenable<unknown>;
+    /** Bring the page's panel to the front with the keyboard (`WebviewPanel.reveal`), for `insertBlock` with `focus`; nothing without it. */
+    reveal?(): void;
 }
 
 /** The part of a `vscode.Webview` a session talks to. */
@@ -111,6 +114,17 @@ export function sortFootnotesIn(uri: vscode.Uri): boolean {
 }
 
 /**
+ * `visualEditor.insertBlock` for another extension: `markdown` inserted by the
+ * Visual Editor over `uri` (`VisualEditorSession.insertBlock`), or `no-editor`
+ * when none is open for it. One editor per document (the provider does not
+ * set `supportsMultipleEditorsPerDocument`), so the uri names it.
+ */
+export function insertBlockIn(uri: vscode.Uri, markdown: string, options?: InsertBlockOptions): Promise<InsertBlockResult> {
+    const session = sessions.get(uri.toString());
+    return session === undefined ? Promise.resolve({ inserted: false, reason: 'no-editor' }) : session.insertBlock(markdown, options);
+}
+
+/**
  * One rich editor over one `TextDocument`: the host half of the protocol in
  * `../protocol.ts`.
  *
@@ -160,6 +174,12 @@ export class VisualEditorSession implements vscode.Disposable {
     private readonly execute: <T>(command: string, ...args: unknown[]) => Thenable<T>;
     /** The format of an export the page asked for that is running, from its request until `exportDone`; another is dropped meanwhile. */
     private exporting: ExportFormat | null = null;
+    /** The `insertBlock` requests waiting for the page's `blockInserted`, by id: how to answer the extension, and the timer that gives up. */
+    private readonly pendingInserts = new Map<number, { settle: (result: InsertBlockResult) => void; timer: ReturnType<typeof setTimeout> }>();
+    private insertSeq = 0;
+    /** Whether the last edit the page sent was written to the document — read for the `blockInserted` behind it. */
+    private lastEditLanded = false;
+    private disposed = false;
 
     constructor(
         private readonly document: vscode.TextDocument,
@@ -338,9 +358,11 @@ export class VisualEditorSession implements vscode.Disposable {
     }
 
     dispose(): void {
+        this.disposed = true;
         if (this.resyncTimer !== undefined) {
             clearTimeout(this.resyncTimer);
         }
+        [...this.pendingInserts.values()].forEach(pending => pending.settle({ inserted: false, reason: 'closed' }));
         if (sessions.get(this.document.uri.toString()) === this) {
             sessions.delete(this.document.uri.toString());
         }
@@ -423,6 +445,21 @@ export class VisualEditorSession implements vscode.Disposable {
                 // Behind the edit the page flushed before answering, likewise.
                 this.enqueue(async () => this.takeMapped(msg));
                 break;
+            case 'blockInserted': {
+                // In time: the answer came, so the timer stops here, not in the
+                // queue — the edit before it may take a while to apply there.
+                const pending = this.pendingInserts.get(msg.requestId);
+                if (pending === undefined) {
+                    // Given up on already (`timeout`), or never asked: the page
+                    // checked `expires` and wrote nothing for a late request.
+                    break;
+                }
+                clearTimeout(pending.timer);
+                // Answered in the queue, behind the edit that carries the block:
+                // the extension hears of it once the document holds it.
+                this.enqueue(async () => pending.settle(this.insertedResult(msg.inserted)));
+                break;
+            }
             case 'quickFixesFor':
                 // In the queue, behind the edit the page flushed before asking,
                 // so the range is read in the text the page holds; a page on
@@ -479,6 +516,69 @@ export class VisualEditorSession implements vscode.Disposable {
                 });
                 break;
         }
+    }
+
+    /**
+     * `visualEditor.insertBlock` (`host/activeEditor.ts`): the page inserts
+     * `markdown` after the block its selection ends in, as one step of its
+     * history, in one edit with typing still in its delay, and the host parses
+     * it with every plugin (`reparse`). Asked in the queue, behind the edits
+     * received before, and not waited for there: the page's edit and its
+     * `blockInserted` come in behind it. Resolves once that edit has landed,
+     * or with why nothing was written: `empty`, `error-state` (the document
+     * cannot be shown, or the page shows none), `closed`, `timeout` (no answer
+     * in `MAP_TIMEOUT_MS`; the page writes nothing for a request it reaches
+     * after its `expires`, half that time), or `changed` (the file changed
+     * elsewhere as the edit arrived, and the edit was dropped). With `focus`,
+     * the panel comes to the front first, and the page takes the keyboard.
+     */
+    insertBlock(markdown: string, options: InsertBlockOptions = {}): Promise<InsertBlockResult> {
+        if (typeof markdown !== 'string' || markdown.trim() === '') {
+            return Promise.resolve({ inserted: false, reason: 'empty' });
+        }
+        const focus = options.focus === true;
+        if (focus && !this.disposed) {
+            this.host.reveal?.();
+        }
+        return new Promise(resolve => {
+            this.enqueue(async () => {
+                if (this.disposed) {
+                    resolve({ inserted: false, reason: 'closed' });
+                    return;
+                }
+                if (this.broken || this.postedVersion < 0) {
+                    resolve({ inserted: false, reason: 'error-state' });
+                    return;
+                }
+                const requestId = ++this.insertSeq;
+                const timeout = this.host.mapTimeoutMs ?? MAP_TIMEOUT_MS;
+                const settle = (result: InsertBlockResult) => {
+                    clearTimeout(timer);
+                    this.pendingInserts.delete(requestId);
+                    resolve(result);
+                };
+                const timer = setTimeout(() => settle({ inserted: false, reason: 'timeout' }), timeout);
+                this.pendingInserts.set(requestId, { settle, timer });
+                // The page writes nothing after half the wait: its answer has the other half to come back.
+                const expires = Date.now() + Math.floor(timeout / 2);
+                Promise.resolve(this.webview.postMessage({ type: 'insertBlock', requestId, src: markdown, focus, expires })).then(
+                    delivered => {
+                        if (!delivered) {
+                            settle({ inserted: false, reason: 'closed' });
+                        }
+                    },
+                    () => settle({ inserted: false, reason: 'closed' }),
+                );
+            });
+        });
+    }
+
+    /** What the extension is told for the page's `blockInserted`, read behind the edit that carried the block. */
+    private insertedResult(inserted: boolean): InsertBlockResult {
+        if (!inserted) {
+            return { inserted: false, reason: 'error-state' };
+        }
+        return this.lastEditLanded ? { inserted: true } : { inserted: false, reason: 'changed' };
     }
 
     /**
@@ -712,6 +812,7 @@ export class VisualEditorSession implements vscode.Disposable {
      * or without it: the document on its way is parsed afresh anyway.
      */
     private async applyEdit(text: string, baseVersion: number, reparse = false): Promise<void> {
+        this.lastEditLanded = false;
         if (this.broken || baseVersion !== this.postedVersion) {
             // Broken: never write. Stale base: a newer document is on its way,
             // and the webview rebuilds from it.
@@ -724,6 +825,8 @@ export class VisualEditorSession implements vscode.Disposable {
         }
         const replacement = minimalReplacement(current, text);
         if (replacement === null) {
+            // The document holds the page's text already.
+            this.lastEditLanded = true;
             if (reparse) {
                 await this.post();
             }
@@ -743,6 +846,7 @@ export class VisualEditorSession implements vscode.Disposable {
             replacement.text,
         );
         const applied = await vscode.workspace.applyEdit(edit);
+        this.lastEditLanded = applied;
         if (!applied || this.document.getText() !== text || reparse) {
             // Refused, or VS Code normalized the inserted line endings: show the
             // person what the document now holds. Or the page asked to see it.
