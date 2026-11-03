@@ -1,5 +1,11 @@
 # Change Log
 
+## v4.12.0 — Other Extensions Write Where You Work
+
+- Other extensions can insert Markdown blocks into the Visual Editor after the caret's block, undoable with Ctrl+Z (Cmd+Z) and without losing what you were typing (`visualEditor.insertBlock`).
+- Other extensions can read the Visual Editor's selection, not only its caret (`visualEditor.active().selection`).
+- The API says its level: `visualEditor.version` is 2.
+
 ## v4.11.0 — Footnotes Where They Are Written
 
 - Footnotes are edited in place: references as numbers in the text, their text where it is written.

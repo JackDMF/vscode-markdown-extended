@@ -2843,9 +2843,14 @@ that owns the caret says it: `activate` returns, beside `extendMarkdownIt`,
 
 ```ts
 visualEditor: {
-    /** The Visual Editor that has focus, if one does: its document uri and the caret's source position. */
-    active(): { uri: vscode.Uri; caret: vscode.Position | undefined } | undefined;
-    onDidChangeActive: vscode.Event<{ uri: vscode.Uri; caret: vscode.Position | undefined } | undefined>;
+    /** API level: absent = 1 (4.0–4.11), 2 from 4.12.0. Readers test for the member they need. */
+    readonly version?: number;
+    /** The Visual Editor that has focus, if one does: its document uri, the caret's source position, the selection (API 2). */
+    active(): { uri: vscode.Uri; caret: vscode.Position | undefined; selection?: vscode.Selection } | undefined;
+    onDidChangeActive: vscode.Event<{ uri: vscode.Uri; caret: vscode.Position | undefined; selection?: vscode.Selection } | undefined>;
+    /** API 2: Markdown blocks inserted by the page (below, "Inserting blocks for another extension"). */
+    insertBlock(uri: vscode.Uri, markdown: string, options?: { focus?: boolean }): Promise<
+        { inserted: true } | { inserted: false; reason: 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' }>;
 }
 ```
 
@@ -2855,10 +2860,15 @@ unchanged. It is `undefined` when the selection is in an atom (a source block, a
 block, the front matter, a badge) or is no caret (Ctrl+A, a gap cursor), while a field of the
 properties panel has the focus, when the mapping is
 only approximate, and while a change the page has not seen is on its way to it (above).
+`selection` (API 2, 4.12.0) is the selection in the same text when it is a non-empty text
+selection whose two ends both map exactly (`positions.ts`, `selectionOf`); `selection.active` is
+`caret`. It is left out for an empty selection — `caret` says where it is — and wherever `caret`
+is `undefined`. The page reports it in the caret's message (`caret { …, selection? }`), and the
+host takes it only when its active end is the caret and forgets it with the caret.
 `active()` is `undefined` when no Visual Editor has the focus — a text editor has it, or
 nothing does — and `onDidChangeActive` fires when another Visual Editor or none takes the focus,
-and when the active one's caret changes. The web build exports the same shape; there no editor
-is ever active.
+and when the active one's caret or selection changes. The web build exports the same shape; there no editor
+is ever active, and `insertBlock` answers `no-editor`.
 
 `host/activeEditor.ts` (`ActiveVisualEditorTracker`) follows every editor's `WebviewPanel`:
 the one whose panel is `active` — VS Code's own flag, updated through `onDidChangeViewState` —
@@ -2868,6 +2878,64 @@ takes it from `vscode.extensions.getExtension('jackdmf.markdown-extended-pro')` 
 or what `activate()` resolves with. The extension activates on any Markdown file and on the
 Visual Editor itself (`onLanguage:markdown`, `onCustomEditor:…`), so it is active whenever a
 Visual Editor can be; a reader that finds it inactive has no Visual Editor to ask about.
+`version` is 2 from 4.12.0 and absent before; a reader still tests for the member it calls
+(`typeof api.insertBlock === 'function'`), since a number says less than the member itself.
+
+### Inserting blocks for another extension
+
+The Studienhilfe writes Bible quote blocks where a person works. In the text editor it inserts
+a snippet at the caret; in the Visual Editor a `WorkspaceEdit` of its own would be another
+writer's change, and that costs three things: the re-sync that shows it is outside the page's
+history, so Ctrl+Z would take back the typing before it rather than the block; an edit still in
+the page's 250 ms delay is dropped by the document that follows (above); and where the page
+reports no caret (a selected source block, a gap cursor) there is no place to write at all. So
+the page writes it, as its Insert menu writes any block: `visualEditor.insertBlock(uri,
+markdown, { focus })`.
+
+- **Host.** `insertBlockIn` (`session.ts`) finds the session over `uri` — one per document,
+  since the provider does not set `supportsMultipleEditorsPerDocument` — else `no-editor`;
+  Markdown that is only whitespace is `empty`. The session asks in its queue, behind the edits
+  received before, and does not wait there: it posts `insertBlock { requestId, src, focus,
+  expires }` and returns. With `focus` it first reveals the panel (`SessionHost.reveal`,
+  `panel.reveal(undefined, false)`), which works for an editor in a background tab too.
+- **Page.** `insertBlockTransaction` (`toolbar/commands.ts`, the sister of
+  `insertLineTransaction`) puts a source block holding the text as given — its line breaks the
+  document's, those at its end dropped (`blockSource`) — at `insertionPoint`: after the
+  top-level block the selection ends in, never before the first block or the front matter,
+  `gap: null` (a blank line before). The block after it keeps its gap — the blank lines the
+  file wrote before it, spaces and line ending included — so the file gains lines only; only a
+  block that stood tight to the one before gets a blank line (`gap: null`), since after
+  arbitrary inserted text a tight line could be read as its lazy continuation. The transaction
+  sets that gap itself and carries `PRESERVE_SOURCE_META` (the fidelity plugin would clear the
+  gap of any block whose predecessor changed) and `closeHistory`: a history step of its own,
+  never merged with typing just before it. `archiveInsertBlock.test.ts` (gated,
+  `MEP_ARCHIVE_ROOT`) inserts a Bible quote block into every file of Daniel's archive at the
+  seams that matter and holds that each differs by added lines only. The page then flushes
+  with `reparse` — one edit that carries the pending typing with the block, so no keystroke is
+  lost — and posts `blockInserted { requestId, inserted }` right behind it. Typing *after* the
+  insertion and before the host's parse arrives (a round trip, milliseconds) is dropped by that
+  document, as after any reparse (Includes, a source box's commit).
+- **Back on the host**, `blockInserted` stops the timer as it arrives and is settled in the
+  queue behind that edit, so the promise resolves once the document holds the block — or with
+  `changed` when the edit was dropped because the file changed elsewhere at that moment. The
+  host's parse of the text (every markdown-it plugin) comes back as the document the edit asked
+  for, and the re-sync replaces the source block with what the text is, a quote here.
+- **Undo after the parse.** The re-sync is outside the history, but prosemirror-history maps
+  the insertion's step through it: the source block's range was replaced whole, and a step
+  map sends its start to the replacement's start and its end to the replacement's end, so the
+  undo deletes exactly the parsed blocks. `insertBlock.e2e.test.ts` holds this, byte for byte,
+  with and without typing just before, in LF and CRLF.
+- **The caret.** The page keeps the position right after the block, mapped through its own
+  changes meanwhile, and once the parse shows maps it through the re-sync and puts the caret
+  there (`Selection.near`, forward first — the start of the next block; after the last block,
+  the end of the quote), scrolled into view, the history closed so typing next is undone on
+  its own; with `focus` the editor takes the keyboard.
+- **Waiting.** No answer within `MAP_TIMEOUT_MS` (2 s) is `timeout`, and then nothing may be
+  written: the page inserts only until `expires`, half that time after the request, and
+  answers a request it reaches later with `inserted: false`. The other half is for the answer
+  to come back; only an answer delayed past it would arrive after the extension was told
+  `timeout`. A panel closed meanwhile is `closed`; a page with no document, or one that would
+  not take the block, is `error-state`.
 
 ### Styles
 
