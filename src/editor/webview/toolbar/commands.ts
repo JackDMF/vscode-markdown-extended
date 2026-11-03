@@ -607,7 +607,9 @@ export function blockSource(markdown: string, eol: '\n' | '\r\n'): string {
  * ARCHITECTURE.md, "Inserting blocks for another extension"): a new source block
  * holding `markdown` exactly as given (`blockSource`), after the block the
  * selection ends in (`insertionPoint`) — where the Insert menu puts any block —
- * a blank line before it, the caret right after it. The sister of
+ * a blank line before it, the caret right after it. The block after it keeps
+ * the blank lines that stood before it, so the file gains lines only; one held
+ * tight to the block before gets a blank line. The sister of
  * `insertLineTransaction` for any number of lines. It is a step of the history
  * of its own, never merged with typing just before it (`closeHistory`), so
  * Ctrl+Z takes out the block and nothing else. The page then sends the text
@@ -623,8 +625,17 @@ export function insertBlockTransaction(state: EditorState, markdown: string, eol
     const block = nodes.raw_block.create({ src: blockSource(markdown, eol), gap: null, html: '' });
     const tr = state.tr.insert(pos, block);
     const end = pos + block.nodeSize;
+    // The block after keeps the text that stood before it — a blank line as the file wrote it, with
+    // its spaces, its line ending, a second one — so the file only gains lines. A block that stood
+    // tight to the one before is written a blank line below instead: after the inserted text, a
+    // tight line could be read as its lazy continuation.
+    const next = tr.doc.nodeAt(end);
+    if (next !== null && 'gap' in next.attrs && !(typeof next.attrs.gap === 'string' && next.attrs.gap.includes('\n'))) {
+        tr.setNodeMarkup(end, undefined, { ...next.attrs, gap: null });
+    }
     tr.setSelection(Selection.near(tr.doc.resolve(end), 1));
-    return { tr: closeHistory(tr).scrollIntoView(), pos, end };
+    // Every other source attribute stays as it is: nothing but this block and that gap changed.
+    return { tr: closeHistory(tr).setMeta(PRESERVE_SOURCE_META, true).scrollIntoView(), pos, end };
 }
 
 /**

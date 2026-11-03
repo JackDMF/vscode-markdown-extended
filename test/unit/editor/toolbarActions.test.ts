@@ -642,6 +642,26 @@ suite('Editor: a block another extension inserts (insertBlock)', () => {
         assert.strictEqual(text(empty.apply(into.tr)), `${QUOTE}\n`);
     });
 
+    test('the file only gains lines: the next block keeps the blank lines before it as written; one held tight gets a blank line', () => {
+        const cases: [string, string, string][] = [
+            ['spaces on the blank line', 'Alpha.\n  \nOmega.\n', `Alpha.\n\n${QUOTE}\n  \nOmega.\n`],
+            ['two blank lines', 'Alpha.\n\n\nOmega.\n', `Alpha.\n\n${QUOTE}\n\n\nOmega.\n`],
+            ['a tight heading after a list', '- Alpha.\n## Omega\n', `- Alpha.\n\n${QUOTE}\n\n## Omega\n`],
+        ];
+        for (const [name, source, written] of cases) {
+            const state = caretAt(stateOf(source), 'Alpha');
+            const inserted = insertBlockTransaction(state, QUOTE, '\n');
+            assert.ok(inserted, name);
+            const next = state.apply(inserted.tr);
+            assert.strictEqual(serializeDocument({ doc: next.doc, eol: '\n', tail: '' }, { defaultWrap: 90 }), written, name);
+            let undone = next;
+            assert.ok(undo(next, tr => {
+                undone = next.apply(tr);
+            }));
+            assert.strictEqual(serializeDocument({ doc: undone.doc, eol: '\n', tail: '' }, { defaultWrap: 90 }), source, `${name}: undone`);
+        }
+    });
+
     test('Markdown of whitespace only is nothing to insert', () => {
         assert.strictEqual(insertBlockTransaction(stateOf(SOURCE), ' \n\t\r\n', '\n'), null);
     });
