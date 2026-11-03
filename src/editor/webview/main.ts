@@ -17,7 +17,7 @@ import { closeHistory, redo, undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
-import { PositionMap, SourcePosition, caretOf, createPositionMap } from '../positions';
+import { PositionMap, SourcePosition, caretOf, createPositionMap, selectionOf } from '../positions';
 import type { CodeActionItem, ExportFormatName, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
@@ -119,7 +119,10 @@ const caretReporter = new CaretReporter({
         }
         const map = pageMap(view.state.doc);
         // A source box or a property's field is not a place in the text: no caret while one has the focus.
-        return { text: map.text, caret: inControl() ? null : caretOf(view.state.selection, map) };
+        if (inControl()) {
+            return { text: map.text, caret: null };
+        }
+        return { text: map.text, caret: caretOf(view.state.selection, map), selection: selectionOf(view.state.selection, map) };
     },
     post,
 });

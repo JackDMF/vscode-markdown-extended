@@ -179,6 +179,31 @@ export function caretOf(selection: Selection, map: PositionMap): SourcePosition 
     return mapped === null || mapped.approximate ? null : { line: mapped.line, character: mapped.character };
 }
 
+/** A selection as the page reports it beside the caret: where it started and where it ends (the caret), in the source. */
+export interface SourceSelection {
+    anchor: SourcePosition;
+    active: SourcePosition;
+}
+
+/**
+ * The selection the page reports beside its caret: both ends as source
+ * positions, `active` the caret (`caretOf`). `null` for an empty selection —
+ * the caret alone says where it is — and wherever `caretOf` is `null`, or the
+ * anchor is not in text or maps only approximately: a selection that may be
+ * wrong is not reported.
+ */
+export function selectionOf(selection: Selection, map: PositionMap): SourceSelection | null {
+    if (selection.empty || !(selection instanceof TextSelection) || !holdsText(selection.$anchor.parent)) {
+        return null;
+    }
+    const active = caretOf(selection, map);
+    const anchor = map.sourcePositionOf(selection.anchor);
+    if (active === null || anchor === null || anchor.approximate || (anchor.line === active.line && anchor.character === active.character)) {
+        return null;
+    }
+    return { anchor: { line: anchor.line, character: anchor.character }, active };
+}
+
 /**
  * Whether a position whose parent is `node` is a position in text: a textblock,
  * a note's reference or body, a sidebar. A note itself holds its two parts,

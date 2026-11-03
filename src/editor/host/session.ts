@@ -7,7 +7,7 @@ import { ExportFormat, formatNamed } from '../../services/exporter/formats';
 import { escapeHtml } from '../../services/exporter/shared';
 import { inlineEngineDefinition } from '../inlineEngine';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
-import { MappedPagePosition, SourcePosition, validPosition, validRange } from '../positions';
+import { MappedPagePosition, SourcePosition, SourceSelection, validPosition, validRange } from '../positions';
 import { HostMessage, WebviewMessage } from '../protocol';
 import type { InsertBlockOptions, InsertBlockResult } from './activeEditor';
 import { CodeActionController } from './codeActions';
@@ -164,8 +164,10 @@ export class VisualEditorSession implements vscode.Disposable {
     private pendingReveal: Reveal | undefined;
     /** The page's caret in the document's text, as it last reported it (`caret`). */
     private caretPosition: vscode.Position | undefined;
+    /** The page's non-empty selection, reported with the caret, which is its active end; forgotten with it. */
+    private caretSelection: vscode.Selection | undefined;
     private readonly caretChanged = new vscode.EventEmitter<vscode.Position | undefined>();
-    /** Fires when the caret the page reported changes, or stops being known. */
+    /** Fires when the caret the page reported changes, or stops being known, or the selection with it does. */
     readonly onDidChangeCaret = this.caretChanged.event;
     /** The `map` requests waiting for the page's `mapped`, by id. */
     private readonly pendingMaps = new Map<number, (answer: MappedMessage | undefined) => void>();
@@ -291,6 +293,15 @@ export class VisualEditorSession implements vscode.Disposable {
      */
     get caret(): vscode.Position | undefined {
         return this.caretPosition;
+    }
+
+    /**
+     * The page's selection in the document's text when it is a non-empty text
+     * selection whose ends both map exactly, `active` the caret; `undefined`
+     * for an empty one, and wherever `caret` is.
+     */
+    get selection(): vscode.Selection | undefined {
+        return this.caretSelection;
     }
 
     /**
@@ -439,7 +450,7 @@ export class VisualEditorSession implements vscode.Disposable {
             case 'caret':
                 // In the queue, behind the edit the page sent before it: the
                 // position is in the text that edit leaves.
-                this.enqueue(async () => this.takeCaret(msg.baseVersion, msg.position));
+                this.enqueue(async () => this.takeCaret(msg.baseVersion, msg.position, msg.selection));
                 break;
             case 'mapped':
                 // Behind the edit the page flushed before answering, likewise.
@@ -607,19 +618,31 @@ export class VisualEditorSession implements vscode.Disposable {
      * and while the document holds the page's text; any other is stale and
      * dropped, and the page reports again after the document it is sent.
      */
-    private takeCaret(baseVersion: number, position: SourcePosition | null): void {
+    private takeCaret(baseVersion: number, position: SourcePosition | null, selection?: SourceSelection): void {
         if (this.broken || baseVersion !== this.postedVersion || this.document.getText() !== this.webviewText) {
             return;
         }
-        this.setCaret(validPosition(position) ? new vscode.Position(position.line, position.character) : undefined);
+        if (!validPosition(position)) {
+            this.setCaret(undefined);
+            return;
+        }
+        const caret = new vscode.Position(position.line, position.character);
+        // A selection is taken only as the page means it: its active end the caret, its anchor elsewhere.
+        const anchor = selection !== null && typeof selection === 'object' && validPosition(selection.anchor) && validPosition(selection.active)
+            && caret.isEqual(new vscode.Position(selection.active.line, selection.active.character))
+            ? new vscode.Position(selection.anchor.line, selection.anchor.character)
+            : undefined;
+        this.setCaret(caret, anchor === undefined || anchor.isEqual(caret) ? undefined : new vscode.Selection(anchor, caret));
     }
 
-    private setCaret(caret: vscode.Position | undefined): void {
-        const same = caret === undefined ? this.caretPosition === undefined : this.caretPosition?.isEqual(caret) === true;
-        if (same) {
+    private setCaret(caret: vscode.Position | undefined, selection?: vscode.Selection): void {
+        const sameCaret = caret === undefined ? this.caretPosition === undefined : this.caretPosition?.isEqual(caret) === true;
+        const sameSelection = selection === undefined ? this.caretSelection === undefined : this.caretSelection?.isEqual(selection) === true;
+        if (sameCaret && sameSelection) {
             return;
         }
         this.caretPosition = caret;
+        this.caretSelection = caret === undefined ? undefined : selection;
         this.caretChanged.fire(caret);
     }
 

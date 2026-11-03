@@ -1,4 +1,4 @@
-import type { SourcePosition } from '../positions';
+import type { SourcePosition, SourceSelection } from '../positions';
 import type { WebviewMessage } from '../protocol';
 
 /** How long the selection is left to settle before its caret is reported. */
@@ -12,8 +12,8 @@ export interface CaretPort {
     editPending(): boolean;
     /** The text the host holds for the page: the one it sent, or the last one sent to it. */
     hostText(): string | undefined;
-    /** The page's text now and the caret in it (`caretOf`), or `undefined` without a document. */
-    measure(): { text: string; caret: SourcePosition | null } | undefined;
+    /** The page's text now, the caret in it (`caretOf`) and the selection (`selectionOf`), or `undefined` without a document. */
+    measure(): { text: string; caret: SourcePosition | null; selection?: SourceSelection | null } | undefined;
     post(message: Extract<WebviewMessage, { type: 'caret' }>): void;
 }
 
@@ -36,7 +36,7 @@ export class CaretReporter {
     private timer: ReturnType<typeof setTimeout> | undefined;
     /** A report held back for the pending edit. */
     private waiting = false;
-    /** What was last reported, as `version:line:character` (or `version:none`). */
+    /** What was last reported, as `version:line:character` (or `version:none`), then the selection's anchor if any. */
     private last: string | undefined;
 
     constructor(private readonly port: CaretPort, private readonly delayMs = CARET_DELAY_MS) { }
@@ -107,11 +107,14 @@ export class CaretReporter {
             return;
         }
         const { caret } = measured;
-        const key = caret === null ? `${version}:none` : `${version}:${caret.line}:${caret.character}`;
+        // No selection without a caret: its active end is the caret.
+        const selection = caret === null ? null : measured.selection ?? null;
+        const key = (caret === null ? `${version}:none` : `${version}:${caret.line}:${caret.character}`)
+            + (selection === null ? '' : `<${selection.anchor.line}:${selection.anchor.character}`);
         if (key === this.last) {
             return;
         }
         this.last = key;
-        this.port.post({ type: 'caret', baseVersion: version, position: caret });
+        this.port.post({ type: 'caret', baseVersion: version, position: caret, ...(selection === null ? {} : { selection }) });
     }
 }

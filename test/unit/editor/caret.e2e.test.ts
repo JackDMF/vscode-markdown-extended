@@ -131,4 +131,34 @@ suite('Editor caret (e2e)', () => {
         const text = (await (editor as EditorPage).edits()).pop()?.text ?? '';
         assert.ok(text.startsWith('Intro paragraph.\n\nNew.\n\nYXSecond'), `Enter split at the click, not at the caret before it: ${JSON.stringify(text)}`);
     });
+
+    test('a selection over two words is reported with the caret, its anchor where it began; collapsed, the caret alone', async function () {
+        this.timeout(20000);
+        await page.click('.ProseMirror > p');
+        await page.keyboard.press('Home');
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('End');
+        await page.keyboard.up('Shift');
+        await delay(250);
+        assert.deepStrictEqual(await lastCaret(), {
+            type: 'caret', baseVersion: 1,
+            position: { line: 0, character: 'Intro paragraph.'.length },
+            selection: { anchor: { line: 0, character: 0 }, active: { line: 0, character: 'Intro paragraph.'.length } },
+        });
+
+        // Across the emphasis: the page counts no `*`, the source does.
+        await page.click('.ProseMirror > p:nth-of-type(3)');
+        await page.keyboard.press('Home');
+        await page.keyboard.down('Shift');
+        for (let i = 0; i < 'YXSecond paragr'.length; i++) {
+            await page.keyboard.press('ArrowRight');
+        }
+        await page.keyboard.up('Shift');
+        await delay(250);
+        assert.deepStrictEqual((await lastCaret())?.selection, { anchor: { line: 4, character: 0 }, active: { line: 4, character: 'YXSecond *paragr'.length } });
+
+        await page.keyboard.press('ArrowRight');
+        await delay(250);
+        assert.deepStrictEqual(await lastCaret(), { type: 'caret', baseVersion: 1, position: { line: 4, character: 'YXSecond *paragr'.length } }, 'collapsed: no selection');
+    });
 });

@@ -1,7 +1,7 @@
 import type { ExportFormatName } from '../services/exporter/formats';
 import type { InlineEngineDefinition } from './inlineEngine';
 import type { ParsedDocumentJSON } from './parse';
-import type { MappedPagePosition, MappedSourcePosition, SourcePosition, SourceRange } from './positions';
+import type { MappedPagePosition, MappedSourcePosition, SourcePosition, SourceRange, SourceSelection } from './positions';
 
 /**
  * The messages between the rich editor's webview and the extension host.
@@ -405,9 +405,11 @@ export type WebviewMessage =
      * selection settles, and only while the host holds the page's text (after
      * the pending edit, never before it); the host drops one whose
      * `baseVersion` is not the document it last posted, or that arrives while
-     * the document holds another text.
+     * the document holds another text. `selection` (since 4.12.0) is the
+     * selection's two ends, `active` the caret, for a non-empty text selection
+     * whose ends both map exactly (`selectionOf`); absent otherwise.
      */
-    | { type: 'caret'; baseVersion: number; position: SourcePosition | null }
+    | { type: 'caret'; baseVersion: number; position: SourcePosition | null; selection?: SourceSelection }
     /**
      * The answer to `map`: one entry per position asked, in order, `null` for
      * one that is none. `baseVersion` is the document the page shows, `-1`

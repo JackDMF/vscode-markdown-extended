@@ -1592,6 +1592,36 @@ suite('Editor host: the caret and source positions', () => {
         assert.strictEqual(session.caret, undefined, 'a malformed position is none');
     });
 
+    test('a selection reported with its caret is taken, its active end the caret; one that is not is dropped, and it is forgotten with the caret', async function () {
+        this.timeout(10000);
+        const posted = lastDocument();
+        const events = carets.length;
+        webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 9 }, selection: { anchor: { line: 7, character: 2 }, active: { line: 7, character: 9 } } });
+        await session.settled();
+        assert.deepStrictEqual(caretNow(), [7, 9]);
+        const sel = session.selection;
+        assert.ok(sel);
+        assert.deepStrictEqual([sel.anchor.line, sel.anchor.character, sel.active.line, sel.active.character], [7, 2, 7, 9]);
+        assert.ok(sel.active.isEqual(session.caret as vscode.Position), 'selection.active equals caret');
+
+        webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 9 }, selection: { anchor: { line: 7, character: 4 }, active: { line: 7, character: 9 } } });
+        await session.settled();
+        assert.strictEqual(session.selection?.anchor.character, 4);
+        assert.strictEqual(carets.length, events + 2, 'another anchor at the same caret fires');
+
+        webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 9 }, selection: { anchor: { line: 7, character: 2 }, active: { line: 7, character: 5 } } });
+        await session.settled();
+        assert.strictEqual(session.selection, undefined, 'an active end that is not the caret: no selection');
+        assert.deepStrictEqual(caretNow(), [7, 9]);
+
+        webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 9 }, selection: { anchor: { line: 7, character: 2 }, active: { line: 7, character: 9 } } });
+        await session.settled();
+        assert.ok(session.selection);
+        webview.send({ type: 'caret', baseVersion: posted.version, position: null, selection: { anchor: { line: 7, character: 2 }, active: { line: 7, character: 9 } } });
+        await session.settled();
+        assert.strictEqual(session.selection, undefined, 'no caret, no selection');
+    });
+
     test('a caret behind the page\'s edit is in the edited text; another writer\'s change makes it unknown', async function () {
         this.timeout(10000);
         const posted = lastDocument();
@@ -1692,13 +1722,15 @@ class FakePanel implements TrackedPanel {
 /** A session stand-in for the tracker: its uri, and a caret the test moves. */
 class FakeEditor implements TrackedEditor {
     caret: vscode.Position | undefined;
+    selection: vscode.Selection | undefined;
     private readonly emitter = new vscode.EventEmitter<void>();
     readonly onDidChangeCaret = this.emitter.event;
 
     constructor(readonly uri: vscode.Uri) { }
 
-    move(caret: vscode.Position | undefined): void {
+    move(caret: vscode.Position | undefined, selection?: vscode.Selection): void {
         this.caret = caret;
+        this.selection = selection;
         this.emitter.fire();
     }
 }
@@ -1725,12 +1757,19 @@ suite('Editor host: the active Visual Editor', () => {
             b.move(new vscode.Position(9, 9));
             assert.strictEqual(describe(tracker.api.active()), '/a.md@3:4', 'only the active editor\'s caret is news');
 
+            assert.strictEqual(tracker.api.active()?.selection, undefined, 'no selection: the member is absent');
+            assert.ok(!('selection' in (tracker.api.active() as object)));
+            const selected = new vscode.Selection(3, 1, 3, 4);
+            a.move(new vscode.Position(3, 4), selected);
+            assert.strictEqual(tracker.api.active()?.selection, selected, 'API 2: the selection with the caret');
+            a.move(new vscode.Position(3, 4));
+
             panelA.set(false);
             panelB.set(true);
             assert.strictEqual(describe(tracker.api.active()), '/b.md@9:9');
             trackingB.dispose();
             assert.strictEqual(tracker.api.active(), undefined, 'a closed editor is not active');
-            assert.deepStrictEqual(events, ['/a.md', '/a.md@3:4', 'none', '/b.md@9:9', 'none']);
+            assert.deepStrictEqual(events, ['/a.md', '/a.md@3:4', '/a.md@3:4', '/a.md@3:4', 'none', '/b.md@9:9', 'none']);
             assert.deepStrictEqual(Object.keys(tracker.api).sort(), ['active', 'insertBlock', 'onDidChangeActive', 'version'], 'nothing of the tracker leaks');
         } finally {
             tracker.dispose();
