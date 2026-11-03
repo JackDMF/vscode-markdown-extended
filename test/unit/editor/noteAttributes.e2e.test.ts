@@ -63,6 +63,8 @@ async function barOf(page: puppeteer.Page) {
         title: bar.querySelector(':scope > .mep-object-label')?.textContent ?? null,
         verbs: Array.from(bar.querySelectorAll(':scope > button[data-verb]')).filter(b => !(b as HTMLElement).hidden).map(b => b.textContent),
         ids: Array.from(bar.querySelectorAll(':scope > button[data-verb]')).filter(b => !(b as HTMLElement).hidden).map(b => (b as HTMLElement).dataset.verb),
+        /** Every verb the bar holds, those given way to "…" too (a sidebar in a left margin has the room of the margin only). */
+        all: Array.from(bar.querySelectorAll(':scope > button[data-verb]')).map(b => (b as HTMLElement).dataset.verb),
     }));
 }
 
@@ -314,7 +316,8 @@ suite('Editor note attributes: the note bar (e2e)', () => {
         await page.waitForSelector(BAR, { visible: true, timeout: 2000 });
         const bar = await barOf(page);
         assert.strictEqual(bar.title, 'Left sidebar {.l}');
-        assert.deepStrictEqual(bar.verbs, ['Move to right', 'Attributes…', 'Edit source', 'Remove attributes, keep sidebar', 'Remove sidebar, keep text']);
+        // The bar of a sidebar in the left margin stands there, with text beside it: its verbs give way to "…" (`leftMargin.e2e.test.ts`), none is lost.
+        assert.deepStrictEqual(bar.all, ['convert-note', 'note-attributes', 'edit-source', 'remove-attributes', 'remove-note']);
     });
 
     test('crumbs: List item {.i} › Marginal note {.tipp}; Remove ▾ says "marginal note stays"', async function () {
@@ -620,7 +623,8 @@ suite('Editor note attributes: menu, bubble and refusals (e2e)', () => {
 
     test('R4 at the control: removing the literal that keeps a left sidebar apart from a digit says why at Remove', async function () {
         this.timeout(20000);
-        await b.show('Price $Status${.l}5 here.\n\nThe last paragraph.\n');
+        // On the last line: no text below, so the bar reaches into the column with every verb drawn (in the left margin alone the verb is in "…").
+        await b.show('The first line.\n\nPrice $Status${.l}5 here.\n', 'here');
         await caretIn('Status', 2);
         const verb = `${BAR} [data-verb="remove-attributes"]`;
         await page.waitForSelector(verb, { visible: true, timeout: 2000 });
