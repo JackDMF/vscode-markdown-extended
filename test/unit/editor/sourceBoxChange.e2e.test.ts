@@ -302,5 +302,159 @@ suite('Editor source box and a change from outside (e2e)', () => {
         await showDocument(saved.text);
         assert.notStrictEqual(await page.$('.mep-props-editor'), null, 'the host\'s parse of the save leaves the box open');
         assert.deepStrictEqual(await copied(), []);
+        // Saved and confirmed: a change to the YAML from outside now loses nothing of the person's.
+        await showDocument(saved.text.replace('tags: a', 'tags: b'));
+        assert.strictEqual(await page.$('.mep-props-editor'), null);
+        assert.deepStrictEqual(await copied(), []);
+        assert.strictEqual((await hint()).tone, 'neutral');
+    });
+
+    // -- review 1: a save the host dropped (M1), a source block inserted before the box's (M2) -----------
+
+    const save = async () => {
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('s');
+        await page.keyboard.up(MOD);
+        await delay(200);
+    };
+
+    /** Open the box of the `index`th source block. */
+    const openBoxAt = async (index: number) => {
+        const at = await page.evaluate((i: number) => {
+            const r = (document.querySelectorAll('.mep-raw-block .mep-atom-content')[i] as HTMLElement).getBoundingClientRect();
+            return { x: r.left + 10, y: r.top + r.height / 2 };
+        }, index);
+        await page.mouse.click(at.x, at.y, { clickCount: 2 });
+        await page.waitForSelector('.mep-raw-editor');
+        await delay(80);
+    };
+
+    /** The value of each source block's open box, `null` where none is open. */
+    const boxes = () => page.$$eval('.mep-raw-block', els => els.map(el => (el.querySelector('.mep-raw-editor') as HTMLTextAreaElement | null)?.value ?? null));
+
+    test('a save from the box the host dropped (the file changed meanwhile, elsewhere): the typing is on the clipboard, a refusal says so', async function () {
+        this.timeout(30000);
+        const text = 'First.\n\n<div>raw</div>\n\nLast.\n';
+        if (!await open(text)) {
+            this.skip();
+        }
+        await openBox();
+        await page.keyboard.type(' typed');
+        await save();
+        assert.strictEqual((await edits()).pop()?.text, 'First.\n\n<div>raw</div> typed\n\nLast.\n', 'the save carries the box');
+        // The host did not write it: the file had changed elsewhere, and that is what it posts.
+        await showDocument(text.replace('Last.', 'Last, changed outside.'));
+        assert.strictEqual(await boxOpen(), false);
+        assert.deepStrictEqual(await copied(), ['<div>raw</div> typed']);
+        const said = await hint();
+        assert.ok(said.shown && said.tone === 'refusal' && said.text.startsWith(NOT_APPLIED), said.text);
+    });
+
+    test('a block inserted for another extension with the box open, the host dropping the edit: the typing is on the clipboard', async function () {
+        this.timeout(30000);
+        const text = 'First.\n\n<div>raw</div>\n\nLast.\n';
+        if (!await open(text)) {
+            this.skip();
+        }
+        await openBox();
+        await page.keyboard.type(' typed');
+        await (editor as EditorPage).send({ type: 'insertBlock', requestId: 1, src: '> Quote', focus: false });
+        await settle();
+        assert.ok((await edits()).pop()?.text.includes('<div>raw</div> typed'), 'the box was committed before the block');
+        await showDocument(text.replace('First.', 'First, changed outside.'));
+        assert.deepStrictEqual(await copied(), ['<div>raw</div> typed']);
+    });
+
+    test('the front matter: a save from the box the host dropped, then a change elsewhere: the YAML typed is on the clipboard', async function () {
+        this.timeout(30000);
+        if (!await open(FRONT)) {
+            this.skip();
+        }
+        await page.click('.mep-properties .mep-props-source');
+        await page.waitForSelector('.mep-props-editor');
+        await page.keyboard.type('\nauthor: me');
+        await save();
+        await showDocument(FRONT.replace('Some text.', 'Some text, changed outside.'));
+        assert.deepStrictEqual(await copied(), ['title: Page\ntags: a\nauthor: me']);
+        const said = await hint();
+        assert.ok(said.shown && said.tone === 'refusal' && said.text.startsWith('Not applied — the front matter changed outside the editor.'), said.text);
+    });
+
+    test('a source block inserted right before the box\'s: the box stays open on its own block, its typing and the focus kept; Apply writes it there', async function () {
+        this.timeout(30000);
+        if (!await open('First.\n\n<div>raw</div>\n\nLast.\n')) {
+            this.skip();
+        }
+        await openBox();
+        await page.keyboard.type(' typed');
+        await showDocument('First.\n\n<div>new</div>\n\n<div>raw</div>\n\nLast.\n');
+        assert.deepStrictEqual(await boxes(), [null, '<div>raw</div> typed']);
+        assert.strictEqual(await page.evaluate(() => document.activeElement?.className), 'mep-raw-editor');
+        assert.deepStrictEqual(await copied(), []);
+        assert.strictEqual((await hint()).shown, false);
+        await apply();
+        assert.strictEqual((await edits()).pop()?.text, 'First.\n\n<div>new</div>\n\n<div>raw</div> typed\n\nLast.\n');
+    });
+
+    test('a source block before the box\'s removed, or changed, or blank lines added before it: the box stays open with its typing', async function () {
+        this.timeout(30000);
+        const text = 'First.\n\n<div>other</div>\n\n<div>raw</div>\n\nLast.\n';
+        if (!await open(text)) {
+            this.skip();
+        }
+        await openBoxAt(1);
+        await page.keyboard.type(' typed');
+        await showDocument(text.replace('other', 'other changed'));
+        assert.deepStrictEqual(await boxes(), [null, '<div>raw</div> typed'], 'the block before changed');
+        await showDocument('First.\n\n<div>raw</div>\n\nLast.\n');
+        assert.deepStrictEqual(await boxes(), ['<div>raw</div> typed'], 'the block before removed');
+        await showDocument('First.\n\n\n\n<div>raw</div>\n\nLast.\n');
+        assert.deepStrictEqual(await boxes(), ['<div>raw</div> typed'], 'blank lines added before it');
+        assert.deepStrictEqual(await copied(), []);
+        assert.strictEqual(await page.evaluate(() => document.activeElement?.className), 'mep-raw-editor');
+    });
+
+    test('nothing typed, the source block before the box\'s removed: the box stays open on its block', async function () {
+        this.timeout(30000);
+        if (!await open('First.\n\n<div>other</div>\n\n<div>raw</div>\n\nLast.\n')) {
+            this.skip();
+        }
+        await openBoxAt(1);
+        await showDocument('First.\n\n<div>raw</div>\n\nLast.\n');
+        assert.deepStrictEqual(await boxes(), ['<div>raw</div>']);
+        assert.deepStrictEqual(await copied(), []);
+    });
+
+    test('a CRLF file: a change elsewhere, a save from the box and its echo, another change elsewhere — the box stays open throughout', async function () {
+        this.timeout(30000);
+        const text = 'First.\r\n\r\n<div>\r\nraw\r\n</div>\r\n\r\nLast.\r\n';
+        if (!await open(text)) {
+            this.skip();
+        }
+        await openBox();
+        await page.keyboard.type(' typed');
+        await showDocument(text.replace('Last.', 'Last, changed.'));
+        assert.deepStrictEqual(await boxes(), ['<div>\nraw\n</div> typed']);
+        await save();
+        const saved = (await edits()).pop();
+        assert.strictEqual(saved?.text, 'First.\r\n\r\n<div>\r\nraw\r\n</div> typed\r\n\r\nLast, changed.\r\n');
+        await showDocument(saved.text);
+        await page.keyboard.type('!');
+        await showDocument(saved.text.replace('First.', 'First, changed.'));
+        assert.deepStrictEqual(await boxes(), ['<div>\nraw\n</div> typed!']);
+        assert.deepStrictEqual(await copied(), []);
+    });
+
+    test('the block turned into a paragraph outside, with typing: the typing on the clipboard', async function () {
+        this.timeout(30000);
+        if (!await open('First.\n\n<div>raw</div>\n\nLast.\n')) {
+            this.skip();
+        }
+        await openBox();
+        await page.keyboard.type(' typed');
+        await showDocument('First.\n\nraw\n\nLast.\n');
+        assert.strictEqual(await page.$('.mep-raw-block'), null);
+        assert.deepStrictEqual(await copied(), ['<div>raw</div> typed']);
+        assert.ok((await hint()).text.startsWith(NOT_APPLIED));
     });
 });

@@ -56,7 +56,10 @@ export interface EditorPort {
 export interface SourceChangedOutside {
     /** What changed, as the hint names it: `block`, `front matter`. */
     what: string;
-    /** What the box held, where it differs from the source it opened on — nothing was typed: `null`. */
+    /**
+     * What the box held that the document does not (`lostInBox`), which the
+     * page puts on the clipboard; `null` when nothing of the person's is lost.
+     */
     typed: string | null;
     /** Whether the box had the focus: the page then gives it to what the box stood on. */
     focused: boolean;
@@ -67,30 +70,39 @@ export interface SourceChangedOutside {
     /** The box that closed, as the page tracked it (`trackSourceEditor`): where it stood before the document came, the page knows. */
     editor: SourceEditor;
     /**
-     * A source block's box whose view the document replaced — ProseMirror may
-     * draw an untouched block anew when much around it changed: what it held,
-     * for the page to open again on the same block, should that be there
-     * unchanged (`reopenRawSourceAt`).
+     * A source block's box: what it held, for the page to open again on the
+     * same block, should that still be there unchanged (`reopenRawSourceAt`) —
+     * ProseMirror may draw an untouched block anew when much around it
+     * changed, and a source block inserted right before it can take its node
+     * (the re-sync matches source blocks by type alone).
      */
     reopen?: BoxText;
+    /** Draw the block as selected again where ProseMirror's selection still is it (an open box hid the outline). */
+    drawSelection?(): void;
 }
 
-/** What an open source box holds: the source it stands on, its text and selection. */
+/** What an open source box holds: the source it stands on, the one the host last held for it, its text and selection. */
 export interface BoxText {
     source: string;
+    confirmed: string;
     value: string;
     selectionStart: number;
     selectionEnd: number;
 }
 
 /**
- * What a source box closed by a change from outside the editor held, where it
- * is more than the source it opened on (`opened`): the typing, else `null` —
- * nothing of the person's is lost then. Line endings aside, as the box shows them.
+ * What a source box closed by a change from outside the editor held that is
+ * in no document: its text, unless that is the source the host last held for
+ * the block (`confirmed`: the box opened on it, or a document from the host
+ * has held it since) or what the block holds now (`now`; `null` when it is
+ * gone) — `null` then, nothing of the person's is lost. Not measured against
+ * what the box wrote itself: a save from the box that the host dropped (the
+ * file changed meanwhile) wrote it into the page alone. Line endings aside,
+ * as the box shows them.
  */
-export function typedInBox(value: string, opened: string): string | null {
-    const shown = opened.replace(/\r\n?/g, '\n').replace(/\n$/, '');
-    return value === shown ? null : value;
+export function lostInBox(value: string, confirmed: string, now: string | null): string | null {
+    const shown = (src: string) => src.replace(/\r\n?/g, '\n').replace(/\n$/, '');
+    return value === shown(confirmed) || (now !== null && value === shown(now)) ? null : value;
 }
 
 /** A raw block's open source editor, as the page sees it. */
@@ -99,6 +111,12 @@ export interface SourceEditor {
     commitSource(): void;
     /** Where the block it edits stands in the document, when the editor is a block's box. */
     position?(): number | undefined;
+    /**
+     * A document from the host was taken in and left the box open: the host
+     * holds what its block holds now — a save from the box has landed — which
+     * `lostInBox` measures against from here on.
+     */
+    hostShown?(): void;
 }
 
 type GetPos = () => number | undefined;
@@ -174,6 +192,8 @@ export class RawBlockView extends AtomView implements SourceEditor {
     private editor: HTMLTextAreaElement | null = null;
     /** The source the open box stands on: the block's when it opened, then each one the box wrote itself. */
     private boxSource = '';
+    /** The block's source as the host last held it while the box is open: what it opened on, then what a host document left (`hostShown`). */
+    private confirmedSource = '';
     /** The box is writing its text into the document (`commit`): the change that comes back is its own. */
     private writing = false;
     /** ProseMirror's selection is this block, whether or not its outline is drawn (not under an open box). */
@@ -339,6 +359,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
         this.dom.classList.remove('ProseMirror-selectednode');
         this.editor = area;
         this.boxSource = src;
+        this.confirmedSource = restore?.confirmed ?? src;
         this.actions = sourceActions(apply => this.stopEditing(apply));
         this.untrack = this.port.trackSourceEditor(this);
         this.dom.classList.add('mep-editing');
@@ -348,6 +369,12 @@ export class RawBlockView extends AtomView implements SourceEditor {
         // lines do not map to points of the rendering, so a double click cannot
         // say where in the source it meant.
         area.setSelectionRange(restore?.selectionStart ?? area.value.length, restore?.selectionEnd ?? area.value.length);
+    }
+
+    hostShown(): void {
+        if (this.editor) {
+            this.confirmedSource = this.node.attrs.src as string;
+        }
     }
 
     commitSource(): void {
@@ -384,20 +411,24 @@ export class RawBlockView extends AtomView implements SourceEditor {
             return;
         }
         const focused = area.ownerDocument.activeElement === area;
-        const typed = typedInBox(area.value, this.boxSource);
-        const held: BoxText = { source: this.boxSource, value: area.value, selectionStart: area.selectionStart, selectionEnd: area.selectionEnd };
+        const typed = lostInBox(area.value, this.confirmedSource, standing ? this.node.attrs.src as string : null);
+        const held: BoxText = {
+            source: this.boxSource, confirmed: this.confirmedSource, value: area.value, selectionStart: area.selectionStart, selectionEnd: area.selectionEnd,
+        };
         this.stopEditing(false);
-        // Still the selection (the click that opened the box made it): drawn again, as the keyboard comes back to it.
-        if (standing && this.selected) {
-            super.selectNode();
-        }
         this.port.sourceChangedOutside({
             what: 'block',
             typed,
             focused,
             pos: () => (standing ? this.getPos() : undefined),
             editor: this,
-            ...(standing ? {} : { reopen: held }),
+            reopen: held,
+            // Still the selection (the click that opened the box made it): drawn again, as the keyboard comes back to it.
+            drawSelection: () => {
+                if (standing && this.selected && !this.editor) {
+                    this.dom.classList.add('ProseMirror-selectednode');
+                }
+            },
         });
     }
 

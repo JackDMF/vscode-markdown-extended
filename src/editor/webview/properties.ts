@@ -34,7 +34,7 @@ import {
 import { CompletionListView } from './completionList';
 import { DeclaredControl, panelRole } from './focusPlace';
 import { undoHint } from './hint';
-import { EditorPort, SourceEditor, element, isUndoRedo, typedInBox } from './nodeViews';
+import { EditorPort, SourceEditor, element, isUndoRedo, lostInBox } from './nodeViews';
 
 type GetPos = () => number | undefined;
 
@@ -132,6 +132,8 @@ export class PropertiesView implements NodeView, SourceEditor {
     private untrackArea: (() => void) | null = null;
     /** The YAML the open box stands on: the body when it opened, then each one the panel wrote. */
     private areaSource = '';
+    /** The YAML as the host last held it while the box is open: what it opened on, then what a host document left (`hostShown`). */
+    private areaConfirmed = '';
     /** The panel is writing into the document (`write`): the change that comes back is its own. */
     private writing = false;
     /** The row (by index) of the list whose **+ Add** field is open. */
@@ -783,6 +785,7 @@ export class PropertiesView implements NodeView, SourceEditor {
         area.addEventListener('blur', () => this.closeSource(true, false));
         this.area = area;
         this.areaSource = body;
+        this.areaConfirmed = body;
         this.untrackArea = this.port.trackSourceEditor(this);
         this.render();
         this.content.hidden = false;
@@ -820,6 +823,13 @@ export class PropertiesView implements NodeView, SourceEditor {
         }
     }
 
+    /** A document from the host left the box open: the host holds the YAML the panel holds now (`lostInBox`). */
+    hostShown(): void {
+        if (this.area) {
+            this.areaConfirmed = this.parts.body;
+        }
+    }
+
     /** Close the box unapplied for a change from outside, and tell the page what it held; `standing`: the panel is still on the page. */
     private closeForChangeOutside(standing: boolean): void {
         const area = this.area;
@@ -827,7 +837,7 @@ export class PropertiesView implements NodeView, SourceEditor {
             return;
         }
         const focused = area.ownerDocument.activeElement === area;
-        const typed = typedInBox(area.value, this.areaSource);
+        const typed = lostInBox(area.value, this.areaConfirmed, standing ? this.parts.body : null);
         this.closeSource(false, false);
         this.port.sourceChangedOutside({
             what: 'front matter',

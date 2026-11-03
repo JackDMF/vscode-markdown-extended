@@ -1018,6 +1018,10 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
             takingHostDocument = false;
         }
         sayClosedSourceBoxes(shown, change => reopenBox(shown, change, before, boxesAt.get(change.editor), resync.mapping));
+        // What the boxes left open stand on, the host holds now: a save from one has landed.
+        for (const editor of openSourceEditors) {
+            editor.hostShown?.();
+        }
         if (insertedBlock !== undefined) {
             // The host's parse of blocks another extension inserted: the source block is now what its text is.
             const { end, focus } = insertedBlock;
@@ -1071,6 +1075,7 @@ function sayClosedSourceBoxes(shown: EditorView, reopen: (change: SourceChangedO
         shown.focus();
         if (pos !== undefined && shown.state.doc.nodeAt(pos)?.isAtom) {
             shown.dispatch(shown.state.tr.setSelection(NodeSelection.create(shown.state.doc, pos)).setMeta('addToHistory', false));
+            change.drawSelection?.();
         }
     }
     const said = typed[0] ?? closed[0];
@@ -1083,14 +1088,17 @@ function sayClosedSourceBoxes(shown: EditorView, reopen: (change: SourceChangedO
 }
 
 /**
- * A source block's box whose view a document from the host replaced
- * (`SourceChangedOutside.reopen`) opens again on the same block, as it was,
- * when that block is there unchanged: ProseMirror draws an untouched block
- * anew when much around it changed. The same block is the one with the box's
- * source, in the run the document replaced (between where the box's old place
- * maps to on either side), at the same place among the blocks of that very
- * source — counted in the whole document, before and after, which must hold
- * as many of them; anything less certain closes the box as a change does.
+ * A source block's box a document from the host closed opens again on the
+ * same block, as it was (`SourceChangedOutside.reopen`), when that block is
+ * there unchanged: ProseMirror draws an untouched block anew when much
+ * around it changed, and a source block inserted right before it takes its
+ * node — the re-sync matches source blocks by type alone and gives the kept
+ * node the new one's source. The same block is the one with the box's
+ * source, between where the start and the end of its old place map to (the
+ * run the document replaced, or the insertion beside it), at the same place
+ * among the blocks of that very source — counted in the whole document,
+ * before and after, which must hold as many of them; anything less certain
+ * closes the box as a change does. The selection goes to that block.
  */
 function reopenBox(shown: EditorView, change: SourceChangedOutside, before: Node, oldPos: number | undefined, mapping: Mappable): boolean {
     const text = change.reopen;
@@ -1110,9 +1118,11 @@ function reopenBox(shown: EditorView, change: SourceChangedOutside, before: Node
     const now = same(shown.state.doc);
     const index = was.indexOf(oldPos);
     const pos = now[index];
-    if (index < 0 || was.length !== now.length || pos < mapping.map(oldPos, -1) || pos > mapping.map(oldPos, 1)) {
+    const size = before.nodeAt(oldPos)?.nodeSize ?? 1;
+    if (index < 0 || was.length !== now.length || pos < mapping.map(oldPos, -1) || pos > mapping.map(oldPos + size, 1)) {
         return false;
     }
+    shown.dispatch(shown.state.tr.setSelection(NodeSelection.create(shown.state.doc, pos)).setMeta('addToHistory', false));
     return reopenRawSourceAt(shown, pos, text);
 }
 

@@ -1557,17 +1557,27 @@ box's reparse — is not one) is taken in with `takingHostDocument` set, and a n
 box stands on a block it changes (`update`: `src` other than the box's `boxSource`, which the
 box's own commits move along) or removes (`destroy`) closes the box unapplied and reports it
 (`sourceChangedOutside`). Once the document is shown the page puts what the box held on the
-clipboard through the host (`copyText`; only where it differs from the source the box opened
-on), says so at the block — a refusal, *Not applied — the block changed outside the editor.
-Your text is on the clipboard.*, or a neutral *Source closed — …* where nothing was typed —
-and gives a box that had the focus back to its block, selected (the properties' box: to
-**Edit as source**). A change elsewhere in the file leaves the box open, with its typing and
-the focus — also where ProseMirror draws the untouched block anew because much around it
-changed: the box's view is destroyed then, and the page opens the box again as it was (text,
-selection, focus; `reopenBox`) on the block of the same source in the replaced run, at the same
-place among the blocks of that source — only when the document holds as many of them before
-and after; anything less certain closes it as a change does. A page verb that removes the block
-(Delete block) is the person's own and says nothing.
+clipboard through the host (`copyText`) where it is in no document (`lostInBox`): not the
+source the host last held for the block — what the box opened on, or what a host document has
+left it standing on since (`hostShown`, so a save from the box counts once the host's parse of
+it comes back) — and not what the block holds now. A save from the box, or a block inserted
+for another extension with the box committed first, that the host dropped because the file
+changed meanwhile counts as typing: it was in the page alone. The page says so at the block —
+a refusal, *Not applied — the block changed outside the editor. Your text is on the
+clipboard.*, or a neutral *Source closed — …* where nothing is lost — and gives a box that had
+the focus back to its block, selected (the properties' box: to **Edit as source**). A change
+elsewhere in the file leaves the box open, with its typing and the focus. Two re-sync
+behaviours would close it there all the same, and are undone at the box (`reopenBox`), not in
+`resyncTransaction`: ProseMirror may draw an untouched block anew when much around it changed
+(the view is destroyed), and a source block inserted right before the box's takes the box's
+node, since the re-sync matches source blocks by type alone and sets the kept node's `src` to
+the new one's. The page then opens the box again as it was (text, selection, focus, the
+selection on that block) on the block of the box's source between where the start and the end
+of its old place map to, at the same place among the blocks of that source — only when the
+document holds as many of them before and after; anything less certain closes it as a change
+does. A page verb that removes the block (Delete block) is the person's own and says nothing.
+A format-on-save that rewrites the block closes an open box as a change from outside would
+(accepted).
 
 ### Where fidelity is enforced
 
