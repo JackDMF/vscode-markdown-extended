@@ -38,9 +38,8 @@ import { AttributesTarget, EditorObject, currentTarget, isBlockObject, isBlockPl
 export const GAP = 4;
 /** A layer grown past the text column stops this short of the editor's right edge. */
 export const LAYER_GUTTER = 16;
-/** How far from its subject, and in what steps, a layer in the left margin looks for a height the column has no text at. */
-const LEFT_SEARCH = 400;
-const LEFT_STEP = 8;
+/** The steps a layer in the left margin looks for a height the column has no text at, within a line's height of its subject. */
+const LEFT_STEP = 4;
 /** The rest that shows a layer: the caret's in an object, a keyboard selection's, the typing re-arm. */
 export const REST_MS = 400;
 /** A layer that appeared or moved ignores the pointer this long. */
@@ -1380,7 +1379,12 @@ export class LayerSlot {
         };
         const reach = (e: number): number => Math.max(e - least, claim.kind === 'field' ? fieldFloor(el) : 0);
         // Notes and other floated content in the margin, around the subject: kept off like an open layer.
-        const others = probe(() => marginItemRects(this.view, { left: least, right: frame.columnLeft, top: box.top - 90, bottom: box.bottom + 90 }, box));
+        // The one place a layer may be moved to is within a line's height of its subject's box (Daniel, 2026-11-03).
+        const lineHeight = parseFloat(getComputedStyle(this.view.dom).lineHeight) || (parseFloat(getComputedStyle(this.view.dom).fontSize) || 14) * 1.5;
+        const reachY = Math.ceil(lineHeight) + el.offsetHeight + GAP;
+        const lo = Math.max(frame.ceiling, box.top - reachY);
+        const hi = Math.min(frame.floor, box.bottom + reachY);
+        const others = probe(() => marginItemRects(this.view, { left: least, right: frame.columnLeft, top: lo, bottom: hi }, box));
         const avoid = [...avoidOpen, ...others];
         // A scroll: the edge it was kept to last time first, so the wide fit is not measured again.
         let edge = prev !== null && prev.limited !== null ? prev.limited : wide.layerEdge;
@@ -1407,8 +1411,6 @@ export class LayerSlot {
         const right = least + width;
         const caret = caretBand(this.view, frame);
         // The column's occupied heights over the width the layer needs, probed once for every candidate.
-        const lo = Math.max(frame.ceiling, box.top - LEFT_SEARCH - height - GAP);
-        const hi = Math.min(frame.floor, box.bottom + LEFT_SEARCH + height + GAP);
         const occupied = probe(() => contentRows(this.view, frame.columnLeft, right + GAP, lo, hi));
         const free = (y: number): boolean => {
             if (y < frame.ceiling + GAP || y + height > frame.floor) {
@@ -1418,11 +1420,18 @@ export class LayerSlot {
             if ((caret !== null && overlaps(rect, caret)) || overlaps(rect, box) || avoid.some(r => overlaps(rect, r))) {
                 return false;
             }
-            return !occupied.some(row => row >= y - GAP && row <= y + height + GAP);
+            // Nothing between the layer and its subject either: no line of text, no other note.
+            const from = y >= box.bottom ? box.bottom : y + height;
+            const to = y >= box.bottom ? y : box.top;
+            const between = { left: least, top: from, right: frame.columnLeft, bottom: to };
+            if (to > from && avoid.some(r => overlaps(between, r))) {
+                return false;
+            }
+            return !occupied.some(row => (row >= y - GAP && row <= y + height + GAP) || (to > from && row >= from && row <= to));
         };
         const below = box.bottom + GAP;
         const above = box.top - GAP - height;
-        for (let d = 0; d <= LEFT_SEARCH; d += LEFT_STEP) {
+        for (let d = 0; GAP + d <= lineHeight; d += LEFT_STEP) {
             for (const [y, side] of [[below + d, 'below'], [above - d, 'above']] as const) {
                 if (free(y)) {
                     const found: Placement = { x: least, y, side };

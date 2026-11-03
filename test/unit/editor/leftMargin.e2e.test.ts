@@ -167,8 +167,15 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
+    /** The box of the sidebar holding `needle`, and the page's line height. */
+    const sidebarOf = (needle: string) => page.evaluate(n => {
+        const el = Array.from(document.querySelectorAll('.ProseMirror .left-sidebar')).find(e => (e.textContent ?? '').includes(n)) as HTMLElement;
+        const r = el.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom, line: parseFloat(getComputedStyle(document.querySelector('.ProseMirror') as HTMLElement).lineHeight) || 24 };
+    }, needle);
+
     for (const width of [1280, 800]) {
-        test(`with the archive sheet's time margin at ${width}: the narrowest bar does not fit the margin — it is never cut and never over text; a list item's sidebar is the same`, async function () {
+        test(`with the archive sheet's time margin at ${width}: the narrowest bar does not fit the margin — never cut; within a line's height of its sidebar with no text between, else in the column under the block (Daniel, 2026-11-03)`, async function () {
             this.timeout(90000);
             await closeEditorPage(this, editor);
             editor = await openEditorPage({ width, height: 900, styles: ['markdown-extended.css'], userStyles: [TIME_MARGIN] });
@@ -177,12 +184,26 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
             }
             page = (editor as EditorPage).page;
             const lines = Array.from({ length: 4 }, (_, k) => `Zeile ${k} mit etwas Text, der bis an den Rand der Spalte läuft und weitergeht und weitergeht.`).join('\n\n');
-            const doc = `${lines}\n\nMitte $Uhrzeit\${class=living} und ein ruhiger Satz.\n\n- Punkt $Listenzeit$ mit Text, der weitergeht.\n- Zweiter Punkt mit Text.\n\n${lines}\n\nThe last paragraph.\n`;
+            const middle = `${lines}\n\nMitte $Uhrzeit\${class=living} und ein ruhiger Satz.\n\n- Punkt $Listenzeit$ mit Text, der weitergeht.\n- Zweiter Punkt mit Text.\n\n${lines}\n\nThe last paragraph.\n`;
+            // Text above and below: no height within a line of the sidebar is free of it — the column, as before.
             for (const needle of ['Uhrzeit', 'Listenzeit']) {
-                const m = await barAt(doc, needle, `time-margin-${needle === 'Uhrzeit' ? 'paragraph' : 'list'}`);
-                assert.ok(!m.bar.cut, `never cut: ${JSON.stringify(m.bar)}`);
+                const m = await barAt(middle, needle, `time-margin-${needle === 'Uhrzeit' ? 'paragraph' : 'list'}`);
+                assert.ok(!m.bar.cut, `${needle}: never cut: ${JSON.stringify(m.bar)}`);
+                // The paragraph's sidebar: the column. A list item's text starts a rem in: the margin may do, then off every text.
+                assert.ok(m.bar.left >= m.column - 1 || (needle === 'Listenzeit' && overText(m).length === 0), `${needle}: in the column under the block, or off the text: ${JSON.stringify(m)}`);
+            }
+            // Nothing below it: the bar stands right under its sidebar, in the margin, at the edge + 16 px.
+            for (const [needle, doc] of [
+                ['Ende', `${lines}\n\nThe last paragraph $Ende$ und ein Rest.\n`],
+                ['Letzte', `${lines}\n\n- Punkt, der weitergeht.\n- The last paragraph $Letzte$ mit Text.\n`],
+            ]) {
+                const m = await barAt(doc, needle, `time-margin-end-${needle}`);
+                const side = await sidebarOf(needle);
+                assert.ok(!m.bar.cut, `${needle}: never cut: ${JSON.stringify(m.bar)}`);
                 assert.deepStrictEqual(overText(m), [], `${needle}: no text under the bar: ${JSON.stringify(m)}`);
-                assert.ok(Math.abs(m.bar.left - 16) < 1, `${needle}: at the window's left edge + 16 px: ${JSON.stringify(m.bar)}`);
+                assert.ok(Math.abs(m.bar.left - 16) < 1, `${needle}: at the edge + 16 px: ${JSON.stringify(m.bar)}`);
+                const gap = m.bar.top >= side.bottom ? m.bar.top - side.bottom : side.top - m.bar.bottom;
+                assert.ok(gap <= side.line, `${needle}: within a line's height of its sidebar: ${JSON.stringify({ gap, side })}`);
             }
         });
     }
