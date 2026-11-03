@@ -1939,6 +1939,44 @@ suite('Editor host: one file in two Visual Editors (live)', () => {
     });
 });
 
+suite('Editor host: what a source box held, on the clipboard', () => {
+    test('copyText puts the text on the clipboard, and writes nothing to the document; a failing clipboard is a logged warning', async function () {
+        this.timeout(10000);
+        const uri = tempMarkdown(SOURCE);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const webview = new FakeWebview();
+        const written: string[] = [];
+        const logged: string[] = [];
+        let fails = false;
+        const session = new VisualEditorSession(document, webview, {
+            engine: () => buildEditorEngine(EXTENSION_ID, () => undefined),
+            onDidChangeEngine: engineChanged.event,
+            log: line => logged.push(line),
+            clipboard: {
+                writeText: text => (fails ? Promise.reject(new Error('denied')) : Promise.resolve(void written.push(text))),
+            },
+        });
+        try {
+            webview.send({ type: 'ready' });
+            await session.settled();
+            webview.send({ type: 'copyText', text: '<div>raw block</div> typed' });
+            await delay(50);
+            assert.deepStrictEqual(written, ['<div>raw block</div> typed']);
+            assert.strictEqual(document.getText(), SOURCE);
+            assert.strictEqual(document.isDirty, false);
+            fails = true;
+            webview.send({ type: 'copyText', text: 'again' });
+            await delay(50);
+            assert.ok(logged.some(line => line.startsWith('[WARN]') && line.includes('clipboard')), logged.join('\n'));
+        } finally {
+            session.dispose();
+            engineChanged.dispose();
+            fs.rmSync(uri.fsPath, { force: true });
+        }
+    });
+});
+
 type InsertBlockMessage = Extract<HostMessage, { type: 'insertBlock' }>;
 
 /**

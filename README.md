@@ -1011,6 +1011,10 @@ rather than a second heading, so the id and the anchor are never written twice.
   editor beside it, another extension, a save that trims whitespace) is dropped, and the
   editor shows the file as the change left it. Everything sent before stays, and so does
   its undo history.
+- An open **Edit source** box — a source block's, or the properties' YAML — closes when its
+  block changes outside the editor: what you typed in it is not applied over the change but
+  put on the clipboard, and a hint at the block says so. A change elsewhere in the file
+  leaves the box open.
 - `Ctrl+S` in the editor sends the last keystrokes and saves once they are written — also
   from a source block's open **Edit source** box, which stays open; a save started
   elsewhere (the File menu, auto-save) saves what has been sent.

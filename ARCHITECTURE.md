@@ -1547,6 +1547,24 @@ undoable; a whole-document replace would have deleted every position those steps
 An edit still waiting in the page's 250 ms delay at that moment was computed against the
 superseded text and is dropped.
 
+**An open source box under a change from outside** (#23). A source block's box and the
+properties' YAML box hold their text outside the document until they apply, and a re-sync
+leaves an open box alone (`render` returns early) — so the box, applied or merely left (its
+blur applies), wrote the text it opened with over whatever changed the block meanwhile:
+Find/Replace in the text editor, another extension, Claude. Now a host document whose text
+differs from the page's (`changesText`; the host's parse of the page's own edit — a save, a
+box's reparse — is not one) is taken in with `takingHostDocument` set, and a node view whose
+box stands on a block it changes (`update`: `src` other than the box's `boxSource`, which the
+box's own commits move along) or removes (`destroy`) closes the box unapplied and reports it
+(`sourceChangedOutside`). Once the document is shown the page puts what the box held on the
+clipboard through the host (`copyText`; only where it differs from the source the box opened
+on), says so at the block — a refusal, *Not applied — the block changed outside the editor.
+Your text is on the clipboard.*, or a neutral *Source closed — …* where nothing was typed —
+and gives a box that had the focus back to its block, selected (the properties' box: to
+**Edit as source**). A change elsewhere in the file leaves the box open, with its typing and
+the focus. A page verb that removes the block (Delete block) is the person's own and says
+nothing.
+
 ### Where fidelity is enforced
 
 - **`parse.ts`** — refuses a document whose blocks do not rebuild it.

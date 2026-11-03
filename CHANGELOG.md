@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- An open Edit source box (a source block's or the properties' YAML) no longer writes its old text over a change made outside the editor to its block: it closes unapplied, your typing goes to the clipboard, and a hint says so.
 - With a file open in the Visual Editor twice (split, or beside a diff), inserting blocks, Sort Footnotes and following a link go to the editor you used last, and the other one keeps working when one closes.
 
 ## v4.12.0 — Other Extensions Write Where You Work

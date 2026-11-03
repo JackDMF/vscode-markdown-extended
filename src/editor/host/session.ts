@@ -59,6 +59,8 @@ export interface SessionHost {
     exportDocument?(uri: vscode.Uri, format: ExportFormat): Thenable<unknown>;
     /** Bring the page's panel to the front with the keyboard (`WebviewPanel.reveal`), for `insertBlock` with `focus`; nothing without it. */
     reveal?(): void;
+    /** VS Code's clipboard (`vscode.env.clipboard`, the default), for the page's `copyText`; a test keeps its own, not the machine's. */
+    clipboard?: { writeText(text: string): Thenable<void> };
 }
 
 /** The part of a `vscode.Webview` a session talks to. */
@@ -580,6 +582,13 @@ export class VisualEditorSession implements vscode.Disposable {
                 });
                 break;
             }
+            case 'copyText':
+                if (typeof msg.text === 'string') {
+                    void Promise.resolve((this.host.clipboard ?? vscode.env.clipboard).writeText(msg.text)).catch(error => {
+                        this.host.log(`[WARN] Visual Editor: the clipboard could not be written: ${message(error)}`);
+                    });
+                }
+                break;
             case 'exportSettings':
                 void Promise.resolve(this.execute('workbench.action.openSettings', 'markdownExtended.export')).catch(error => {
                     this.host.log(`[WARN] Visual Editor: the export settings could not be shown: ${message(error)}`);

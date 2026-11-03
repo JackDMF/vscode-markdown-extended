@@ -33,7 +33,7 @@ import { SOURCE_VERB_META } from './sourceBlock';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
 import { DROP_LOCK, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLockReason } from './objects';
 import { pendingRangePlugin } from './pendingRange';
-import { EditorPort, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
+import { EditorPort, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceChangedOutside, SourceEditor } from './nodeViews';
 import { PropertiesView } from './properties';
 import { lensPlugin, lensVerbsAt, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
@@ -77,6 +77,10 @@ let reparseWanted = false;
 let committingForSave = false;
 /** The raw blocks whose source is open in a textarea, and not yet in the document. */
 const openSourceEditors = new Set<SourceEditor>();
+/** A document from the host with another text than the page's is being taken in (`showDocument`, `EditorPort.takingHostDocument`). */
+let takingHostDocument = false;
+/** The source boxes that document closed unapplied (`EditorPort.sourceChangedOutside`), said once it is shown. */
+const closedByChange: SourceChangedOutside[] = [];
 
 function post(message: WebviewMessage): void {
     vscodeApi.postMessage(message);
@@ -265,6 +269,10 @@ const port: EditorPort = {
         return () => {
             openSourceEditors.delete(editor);
         };
+    },
+    takingHostDocument: () => takingHostDocument,
+    sourceChangedOutside: change => {
+        closedByChange.push(change);
     },
     commitFrontMatter: (pos, src) => {
         if (!view) {
@@ -997,7 +1005,15 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
             dismissRefusal(shown);
         }
         const resync = resyncTransaction(shown.state, doc);
-        keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
+        // Only another text is a change from outside: the host's parse of the page's own edit (a save, a
+        // source box's reparse) closes no box.
+        takingHostDocument = changesText;
+        try {
+            keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
+        } finally {
+            takingHostDocument = false;
+        }
+        sayClosedSourceBoxes(shown);
         if (insertedBlock !== undefined) {
             // The host's parse of blocks another extension inserted: the source block is now what its text is.
             const { end, focus } = insertedBlock;
@@ -1022,6 +1038,43 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     // A property's field taking or giving back the focus changes what the caret is (none while in one).
     view.dom.addEventListener('focusin', () => caretReporter.selectionMoved());
     view.dom.addEventListener('focusout', () => caretReporter.selectionMoved());
+}
+
+/**
+ * The source boxes a change from outside the editor closed unapplied (#23):
+ * applied, or merely left, they would have written the text they opened with
+ * over that change. What was typed in them goes to the clipboard (through the
+ * host), and a hint at the block says so — a refusal, since the person's edit
+ * was not applied; a neutral word where nothing was typed. A box that had the
+ * focus gives it to its block, selected, so the keyboard is still in the page.
+ */
+function sayClosedSourceBoxes(shown: EditorView): void {
+    const closed = closedByChange.splice(0);
+    if (closed.length === 0) {
+        return;
+    }
+    const typed = closed.filter(c => c.typed !== null);
+    if (typed.length > 0) {
+        post({ type: 'copyText', text: typed.map(c => c.typed).join('\n\n') });
+    }
+    for (const change of closed.filter(c => c.focused)) {
+        if (change.refocus) {
+            change.refocus();
+            continue;
+        }
+        const pos = change.pos();
+        shown.focus();
+        if (pos !== undefined && shown.state.doc.nodeAt(pos)?.isAtom) {
+            shown.dispatch(shown.state.tr.setSelection(NodeSelection.create(shown.state.doc, pos)).setMeta('addToHistory', false));
+        }
+    }
+    const said = typed[0] ?? closed[0];
+    const pos = said.pos();
+    const near = pos === undefined ? undefined : shown.nodeDOM(pos);
+    showHint(shown, said.typed !== null
+        ? `Not applied — the ${said.what} changed outside the editor. Your text is on the clipboard.`
+        : `Source closed — the ${said.what} changed outside the editor.`,
+    said.typed !== null ? 'refusal' : 'neutral', near instanceof Element ? near : undefined);
 }
 
 /**
