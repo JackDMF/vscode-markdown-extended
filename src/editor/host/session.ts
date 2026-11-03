@@ -8,7 +8,7 @@ import { escapeHtml } from '../../services/exporter/shared';
 import { inlineEngineDefinition } from '../inlineEngine';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
 import { MappedPagePosition, SourcePosition, SourceSelection, validPosition, validRange } from '../positions';
-import { HostMessage, WebviewMessage } from '../protocol';
+import { HostMessage, InsertRefusal, WebviewMessage } from '../protocol';
 import type { InsertBlockOptions, InsertBlockResult } from './activeEditor';
 import { CodeActionController } from './codeActions';
 import { engineEnvironment } from './engineHost';
@@ -42,8 +42,10 @@ export interface SessionHost {
     linkFiles?: FileLister;
     /** VS Code's open dialog (the default) for **Insert → Image…**; a test answers for the person. */
     openDialog?(options: vscode.OpenDialogOptions): Thenable<vscode.Uri[] | undefined>;
-    /** How long `toSource`/`toPage` wait for the page's answer (`MAP_TIMEOUT_MS`, the default). */
+    /** How long `toSource`/`toPage` wait for the page's answer, and `insertBlock` before it is withdrawn (`MAP_TIMEOUT_MS`, the default). */
     mapTimeoutMs?: number;
+    /** How long `insertBlock` waits for the page's word at all before it says `unconfirmed` (`INSERT_UNCONFIRMED_MS`, the default). */
+    insertUnconfirmedMs?: number;
     /**
      * `vscode.commands.executeCommand` (the default), through which completion,
      * hover, quick fixes and code actions ask VS Code; a test answers for it.
@@ -70,8 +72,15 @@ export interface SessionWebview {
 /** How long a burst of changes from another writer (typing in the text editor) is left to settle before re-parsing. */
 const RESYNC_DELAY_MS = 100;
 
-/** How long a `map` request waits for the page's answer before it answers `undefined`. */
+/** How long a `map` request waits for the page's answer before it answers `undefined`; and an `insertBlock` before it is withdrawn. */
 export const MAP_TIMEOUT_MS = 2000;
+
+/**
+ * How long an `insertBlock` waits for the page's word at all: past it the
+ * extension is told `unconfirmed` — the block may or may not be in the
+ * document. A page that does not answer a withdrawal within this is hung.
+ */
+export const INSERT_UNCONFIRMED_MS = 30000;
 
 type MappedMessage = Extract<WebviewMessage, { type: 'mapped' }>;
 
@@ -84,6 +93,14 @@ export interface Reveal {
 /** Where a link's fragment lands in the file it names: a `Reveal`, and whether a heading carries the fragment. */
 interface Landing extends Reveal {
     heading: boolean;
+}
+
+/** An `insertBlock` waiting for the page's `blockInserted` (`VisualEditorSession.pendingInserts`). */
+interface PendingInsert {
+    settle(result: InsertBlockResult): void;
+    /** The page has answered; it is settled in the queue, behind the edit before the answer. */
+    answered: boolean;
+    stopTimers(): void;
 }
 
 /** The open sessions by document uri, so a link followed from one page can land in another. */
@@ -176,9 +193,16 @@ export class VisualEditorSession implements vscode.Disposable {
     private readonly execute: <T>(command: string, ...args: unknown[]) => Thenable<T>;
     /** The format of an export the page asked for that is running, from its request until `exportDone`; another is dropped meanwhile. */
     private exporting: ExportFormat | null = null;
-    /** The `insertBlock` requests waiting for the page's `blockInserted`, by id: how to answer the extension, and the timer that gives up. */
-    private readonly pendingInserts = new Map<number, { settle: (result: InsertBlockResult) => void; timer: ReturnType<typeof setTimeout> }>();
+    /**
+     * The `insertBlock` requests waiting for the page's `blockInserted`, by
+     * id: how to answer the extension, whether the page's answer has come (it
+     * is then settled in the queue, behind the edit it follows), and the
+     * timers that withdraw the request and, much later, give up on it.
+     */
+    private readonly pendingInserts = new Map<number, PendingInsert>();
     private insertSeq = 0;
+    /** The last `insertBlock` asked: the next one is posted only once it is settled, so it is written into the page's parse of it. */
+    private insertChain: Promise<unknown> = Promise.resolve();
     /** Whether the last edit the page sent was written to the document — read for the `blockInserted` behind it. */
     private lastEditLanded = false;
     private disposed = false;
@@ -373,7 +397,9 @@ export class VisualEditorSession implements vscode.Disposable {
         if (this.resyncTimer !== undefined) {
             clearTimeout(this.resyncTimer);
         }
-        [...this.pendingInserts.values()].forEach(pending => pending.settle({ inserted: false, reason: 'closed' }));
+        // Only those the page has not answered: an answered one is settled in the queue once its edit
+        // is applied — which it still is — and says what the document holds.
+        [...this.pendingInserts.values()].filter(pending => !pending.answered).forEach(pending => pending.settle({ inserted: false, reason: 'closed' }));
         if (sessions.get(this.document.uri.toString()) === this) {
             sessions.delete(this.document.uri.toString());
         }
@@ -457,18 +483,18 @@ export class VisualEditorSession implements vscode.Disposable {
                 this.enqueue(async () => this.takeMapped(msg));
                 break;
             case 'blockInserted': {
-                // In time: the answer came, so the timer stops here, not in the
-                // queue — the edit before it may take a while to apply there.
                 const pending = this.pendingInserts.get(msg.requestId);
-                if (pending === undefined) {
-                    // Given up on already (`timeout`), or never asked: the page
-                    // checked `expires` and wrote nothing for a late request.
+                if (pending === undefined || pending.answered) {
+                    // Given up on (`unconfirmed`), or never asked.
                     break;
                 }
-                clearTimeout(pending.timer);
+                // The page's word: the timers stop here, not in the queue — the
+                // edit before it may take a while to apply there.
+                pending.answered = true;
+                pending.stopTimers();
                 // Answered in the queue, behind the edit that carries the block:
-                // the extension hears of it once the document holds it.
-                this.enqueue(async () => pending.settle(this.insertedResult(msg.inserted)));
+                // the extension hears of it once the edit is applied.
+                this.enqueue(async () => pending.settle(this.insertedResult(msg.inserted, msg.reason)));
                 break;
             }
             case 'quickFixesFor':
@@ -533,15 +559,22 @@ export class VisualEditorSession implements vscode.Disposable {
      * `visualEditor.insertBlock` (`host/activeEditor.ts`): the page inserts
      * `markdown` after the block its selection ends in, as one step of its
      * history, in one edit with typing still in its delay, and the host parses
-     * it with every plugin (`reparse`). Asked in the queue, behind the edits
-     * received before, and not waited for there: the page's edit and its
-     * `blockInserted` come in behind it. Resolves once that edit has landed,
-     * or with why nothing was written: `empty`, `error-state` (the document
-     * cannot be shown, or the page shows none), `closed`, `timeout` (no answer
-     * in `MAP_TIMEOUT_MS`; the page writes nothing for a request it reaches
-     * after its `expires`, half that time), or `changed` (the file changed
-     * elsewhere as the edit arrived, and the edit was dropped). With `focus`,
-     * the panel comes to the front first, and the page takes the keyboard.
+     * it with every plugin (`reparse`). One at a time: a request is posted once
+     * the one before is settled, so it lands in the page's parse of that one.
+     * Asked in the queue, behind the edits received before, and not waited for
+     * there: the page's edit and its `blockInserted` come in behind it.
+     *
+     * Only the page's word settles it — no clock is compared. Resolves once
+     * the edit is applied, or with why nothing was written: `empty`,
+     * `error-state` (the document cannot be shown, the page shows none, or
+     * would not take the block), `closed` (the panel closed before the page
+     * answered), `timeout` (no answer within `MAP_TIMEOUT_MS`: the request was
+     * withdrawn — `insertBlockCancel` — and the page confirmed it wrote
+     * nothing), or `changed` (the file changed elsewhere as the edit arrived,
+     * and the edit was dropped). `unconfirmed` is not one of them: the page
+     * said nothing at all within `INSERT_UNCONFIRMED_MS`, and the block may be
+     * in the document or not. With `focus`, the panel comes to the front
+     * first, and the page takes the keyboard.
      */
     insertBlock(markdown: string, options: InsertBlockOptions = {}): Promise<InsertBlockResult> {
         if (typeof markdown !== 'string' || markdown.trim() === '') {
@@ -551,6 +584,13 @@ export class VisualEditorSession implements vscode.Disposable {
         if (focus && !this.disposed) {
             this.host.reveal?.();
         }
+        const result = this.insertChain.then(() => this.askToInsert(markdown, focus));
+        this.insertChain = result;
+        return result;
+    }
+
+    /** One `insertBlock`, asked in the queue; never rejects. */
+    private askToInsert(markdown: string, focus: boolean): Promise<InsertBlockResult> {
         return new Promise(resolve => {
             this.enqueue(async () => {
                 if (this.disposed) {
@@ -562,32 +602,46 @@ export class VisualEditorSession implements vscode.Disposable {
                     return;
                 }
                 const requestId = ++this.insertSeq;
-                const timeout = this.host.mapTimeoutMs ?? MAP_TIMEOUT_MS;
-                const settle = (result: InsertBlockResult) => {
-                    clearTimeout(timer);
+                const settle = (answer: InsertBlockResult) => {
+                    pending.stopTimers();
                     this.pendingInserts.delete(requestId);
-                    resolve(result);
+                    resolve(answer);
                 };
-                const timer = setTimeout(() => settle({ inserted: false, reason: 'timeout' }), timeout);
-                this.pendingInserts.set(requestId, { settle, timer });
-                // The page writes nothing after half the wait: its answer has the other half to come back.
-                const expires = Date.now() + Math.floor(timeout / 2);
-                Promise.resolve(this.webview.postMessage({ type: 'insertBlock', requestId, src: markdown, focus, expires })).then(
+                // Unanswered in time: withdrawn, and the page's answer to that decides.
+                const withdraw = setTimeout(() => {
+                    void this.postQuietly({ type: 'insertBlockCancel', requestId });
+                }, this.host.mapTimeoutMs ?? MAP_TIMEOUT_MS);
+                // No word at all: the page is hung, and nobody can say what the document holds.
+                const giveUp = setTimeout(() => settle({ inserted: false, reason: 'unconfirmed' }), this.host.insertUnconfirmedMs ?? INSERT_UNCONFIRMED_MS);
+                const pending: PendingInsert = {
+                    settle,
+                    answered: false,
+                    stopTimers: () => {
+                        clearTimeout(withdraw);
+                        clearTimeout(giveUp);
+                    },
+                };
+                this.pendingInserts.set(requestId, pending);
+                Promise.resolve(this.webview.postMessage({ type: 'insertBlock', requestId, src: markdown, focus })).then(
                     delivered => {
-                        if (!delivered) {
+                        if (!delivered && !pending.answered) {
                             settle({ inserted: false, reason: 'closed' });
                         }
                     },
-                    () => settle({ inserted: false, reason: 'closed' }),
+                    () => {
+                        if (!pending.answered) {
+                            settle({ inserted: false, reason: 'closed' });
+                        }
+                    },
                 );
             });
         });
     }
 
     /** What the extension is told for the page's `blockInserted`, read behind the edit that carried the block. */
-    private insertedResult(inserted: boolean): InsertBlockResult {
+    private insertedResult(inserted: boolean, refusal: InsertRefusal | undefined): InsertBlockResult {
         if (!inserted) {
-            return { inserted: false, reason: 'error-state' };
+            return { inserted: false, reason: refusal === 'cancelled' ? 'timeout' : 'error-state' };
         }
         return this.lastEditLanded ? { inserted: true } : { inserted: false, reason: 'changed' };
     }

@@ -18,7 +18,7 @@ import { EditorState, NodeSelection, Selection, TextSelection, Transaction } fro
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap, selectionOf } from '../positions';
-import type { CodeActionItem, ExportFormatName, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import type { CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
@@ -508,33 +508,62 @@ function applyInclude(requestId: number, insert: string | undefined): void {
 let insertedBlock: { end: number; focus: boolean } | undefined;
 
 /**
- * The host's `insertBlock`: the blocks written after the block the selection
- * ends in (`insertBlockTransaction`, one history step) and sent at once with
+ * The `insertBlock` requests this page has answered, or that the host withdrew
+ * before the page saw them (`insertBlockCancel`), by id: each is answered once,
+ * and a withdrawn one is never written.
+ */
+const answeredInserts = new Set<number>();
+
+/**
+ * The host's `insertBlock`: the open source boxes committed first (their
+ * text is a history step before the block's, as a save commits them), the
+ * blocks written after the block the selection ends in
+ * (`insertBlockTransaction`, one history step) and sent at once with
  * `reparse` — in one edit with whatever typing still waits in the delay, so
  * no keystroke is lost to it — then `blockInserted`, which the host takes
  * behind that edit. Answered without the block when the page shows no
- * document, the request comes after its `expires` (the host stopped waiting),
- * or the block was not taken. The caret is put after the blocks once the
- * host's parse shows them (`showDocument`).
+ * document or the block was not taken; a request the host withdrew already
+ * is not written and not answered again. The caret is put after the blocks
+ * once the host's parse shows them (`showDocument`).
  */
 function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
-    const answer = (inserted: boolean) => post({ type: 'blockInserted', requestId: msg.requestId, inserted });
-    if (!view || !current || Date.now() > msg.expires) {
-        answer(false);
+    if (answeredInserts.has(msg.requestId)) {
         return;
     }
+    answeredInserts.add(msg.requestId);
+    const refuse = (reason: InsertRefusal) => post({ type: 'blockInserted', requestId: msg.requestId, inserted: false, reason });
+    if (!view || !current) {
+        refuse('no-document');
+        return;
+    }
+    // A box open meanwhile is committed now, in the edit below: the focus leaving it would commit it after the block.
+    commitForSending();
     const before = view.state.doc;
     const inserted = insertBlockTransaction(view.state, msg.src, current.eol);
     if (inserted !== null) {
         view.dispatch(inserted.tr);
     }
     if (inserted === null || view.state.doc === before) {
-        answer(false);
+        flush();
+        refuse('refused');
         return;
     }
     insertedBlock = { end: inserted.end, focus: msg.focus };
     flush(false, true);
-    answer(true);
+    post({ type: 'blockInserted', requestId: msg.requestId, inserted: true });
+}
+
+/**
+ * The host withdrew `insertBlock` `requestId` after waiting for it. Answered
+ * already: nothing — that answer is on its way and counts. Not seen yet (a
+ * page loaded again since): answered `cancelled`, and never written.
+ */
+function cancelInsert(requestId: number): void {
+    if (answeredInserts.has(requestId)) {
+        return;
+    }
+    answeredInserts.add(requestId);
+    post({ type: 'blockInserted', requestId, inserted: false, reason: 'cancelled' });
 }
 
 /**
@@ -1146,6 +1175,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'insertBlock':
             insertBlock(msg);
+            break;
+        case 'insertBlockCancel':
+            cancelInsert(msg.requestId);
             break;
         case 'linkChoicesResult':
             applyLinkChoices(msg.requestId, msg.items);

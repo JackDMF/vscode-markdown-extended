@@ -45,20 +45,31 @@ export interface ActiveVisualEditor {
     selection?: vscode.Selection;
 }
 
-/** How `insertBlock` went: written, or why nothing was. */
+/**
+ * How `insertBlock` went. `inserted: true`: the document holds the blocks.
+ * `inserted: false` means *not confirmed*: with every reason but
+ * `unconfirmed` nothing was written; with `unconfirmed` nobody can say.
+ */
 export type InsertBlockResult =
     | { inserted: true }
     | { inserted: false; reason: InsertBlockRefusal };
 
 /**
- * Why `insertBlock` wrote nothing: no Visual Editor is open over the uri
- * (`no-editor`, and always in the web build); it shows the error state, or no
- * document yet (`error-state`); the Markdown is only whitespace (`empty`); its
- * page did not answer within 2 s (`timeout`); its panel was closed meanwhile
+ * Why `insertBlock` reports no insertion. Nothing was written for: no Visual
+ * Editor open over the uri (`no-editor`, and always in the web build); it
+ * shows the error state, no document yet, or would not take the block
+ * (`error-state`); Markdown of whitespace only (`empty`); its page did not
+ * answer within 2 s, so the request was withdrawn and the page confirmed it
+ * wrote nothing (`timeout`); its panel closed before the page answered
  * (`closed`); the file changed elsewhere as the page's edit arrived, which was
  * dropped for it (`changed`).
+ *
+ * `unconfirmed` is the exception: the page gave no word at all within 30 s
+ * (it is hung), and the blocks **may be in the document or not**. A caller
+ * must not take it as "not inserted" — not insert the blocks a second time
+ * elsewhere, but say that it is unknown and let the person look.
  */
-export type InsertBlockRefusal = 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed';
+export type InsertBlockRefusal = 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'unconfirmed';
 
 export interface InsertBlockOptions {
     /** Bring the Visual Editor to the front, the keyboard in its page. */
@@ -84,7 +95,9 @@ export interface VisualEditorApi {
      * Afterwards the caret is right after the inserted blocks and they are
      * scrolled into view. With `focus`, the panel is revealed and the page
      * takes the keyboard. Works on a Visual Editor in a background tab too.
-     * Resolves once the document holds the blocks, or with the reason it does not.
+     * Requests to one editor are taken one after the other. Resolves once the
+     * document holds the blocks, or with the reason it does not — or, with
+     * `unconfirmed`, that it cannot say.
      */
     insertBlock(uri: vscode.Uri, markdown: string, options?: InsertBlockOptions): Promise<InsertBlockResult>;
 }

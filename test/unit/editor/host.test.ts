@@ -1826,6 +1826,8 @@ type InsertBlockMessage = Extract<HostMessage, { type: 'insertBlock' }>;
 suite('Editor host: insertBlock', () => {
     const QUOTE = '> ## Römer 12:2 {.nwtsty}\n> Text';
     const TIMEOUT = 300;
+    const UNCONFIRMED = 1500;
+    type CancelMessage = Extract<HostMessage, { type: 'insertBlockCancel' }>;
 
     /** A session over a fresh copy of SOURCE, its first document posted; `reveals` counts the panel's reveals. */
     async function open(engine: () => Promise<MarkdownIt> = () => buildEditorEngine(EXTENSION_ID, () => undefined)) {
@@ -1839,6 +1841,7 @@ suite('Editor host: insertBlock', () => {
             onDidChangeEngine: engineChanged.event,
             log: () => undefined,
             mapTimeoutMs: TIMEOUT,
+            insertUnconfirmedMs: UNCONFIRMED,
             reveal: () => {
                 reveals++;
             },
@@ -1846,10 +1849,17 @@ suite('Editor host: insertBlock', () => {
         webview.send({ type: 'ready' });
         await session.settled();
         const requests = () => webview.posted.filter((m): m is InsertBlockMessage => m.type === 'insertBlock');
+        const cancels = () => webview.posted.filter((m): m is CancelMessage => m.type === 'insertBlockCancel');
+        const posted = () => webview.documents().pop() as Extract<HostMessage, { type: 'document' }>;
         return {
-            uri, document, webview, session, requests,
+            uri, document, webview, session, requests, cancels, posted,
             reveals: () => reveals,
-            posted: () => webview.documents().pop() as Extract<HostMessage, { type: 'document' }>,
+            /** The page's half: the block after the paragraph, sent with `reparse`, then the answer. */
+            answer: (request: InsertBlockMessage, text = document.getText().replace('wrapped as it was written.\n', `wrapped as it was written.\n\n${QUOTE}\n`)) => {
+                webview.send({ type: 'edit', text, baseVersion: posted().version, reparse: true });
+                webview.send({ type: 'blockInserted', requestId: request.requestId, inserted: true });
+                return text;
+            },
             close: () => {
                 session.dispose();
                 engineChanged.dispose();
@@ -1877,64 +1887,93 @@ suite('Editor host: insertBlock', () => {
             assert.deepStrictEqual(await insertBlockIn(s.uri, '\n \n'), { inserted: false, reason: 'empty' });
             assert.strictEqual(s.requests().length, 0, 'nothing is asked for whitespace');
 
-            const started = Date.now();
             const result = insertBlockIn(s.uri, QUOTE, { focus: true });
             const asked = await until(() => s.requests()[0], 2000);
             assert.ok(asked);
+            assert.deepStrictEqual(Object.keys(asked).sort(), ['focus', 'requestId', 'src', 'type'], 'no clock in the request');
             assert.strictEqual(asked.src, QUOTE, 'as given: the page writes it in the document\'s line ending');
             assert.strictEqual(asked.focus, true);
             assert.strictEqual(s.reveals(), 1);
-            assert.ok(asked.expires >= started + TIMEOUT / 2 - 5 && asked.expires <= Date.now() + TIMEOUT / 2, 'the page stops inserting at half the wait');
 
-            const text = s.document.getText().replace('wrapped as it was written.\n', `wrapped as it was written.\n\n${QUOTE}\n`);
             let held: boolean | undefined;
+            const text = s.answer(asked);
             void result.then(() => {
                 held = s.document.getText() === text;
             });
-            s.webview.send({ type: 'edit', text, baseVersion: s.posted().version, reparse: true });
-            s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: true });
             assert.deepStrictEqual(await result, { inserted: true });
             assert.strictEqual(held, true, 'the document held the block when the extension heard of it');
             assert.ok(s.posted().version === s.document.version, 'and the page got the host\'s parse of it');
-
-            void insertBlockIn(s.uri, QUOTE);
-            await until(() => s.requests()[1], 2000);
-            assert.strictEqual(s.reveals(), 1, 'without focus the panel stays where it is');
+            assert.strictEqual(s.cancels().length, 0, 'answered in time: nothing withdrawn');
         } finally {
             s.close();
         }
     });
 
-    test('no answer within the wait: timeout, and the document is unchanged; a late answer is dropped', async function () {
+    test('an answer after the wait still counts: the request is withdrawn, but the page had inserted, and the extension hears inserted (P1)', async function () {
+        this.timeout(10000);
+        const s = await open();
+        try {
+            const result = insertBlockIn(s.uri, QUOTE);
+            const asked = await until(() => s.requests()[0], 2000);
+            assert.ok(asked);
+            const cancel = await until(() => s.cancels()[0], 2000);
+            assert.deepStrictEqual(cancel, { type: 'insertBlockCancel', requestId: asked.requestId }, 'withdrawn after the wait');
+            let settledEarly = false;
+            void result.then(() => {
+                settledEarly = true;
+            });
+            await delay(100);
+            assert.strictEqual(settledEarly, false, 'the withdrawal itself settles nothing: the page decides');
+            // A busy page that inserted before it read the withdrawal, and answers now.
+            const text = s.answer(asked);
+            assert.deepStrictEqual(await result, { inserted: true });
+            assert.strictEqual(s.document.getText(), text);
+        } finally {
+            s.close();
+        }
+    });
+
+    test('a withdrawn request the page never wrote: timeout, the document unchanged; no word at all: unconfirmed', async function () {
         this.timeout(10000);
         const s = await open();
         try {
             const before = s.document.getText();
+            const result = insertBlockIn(s.uri, QUOTE);
+            const asked = await until(() => s.requests()[0], 2000);
+            assert.ok(asked);
+            await until(() => s.cancels()[0], 2000);
+            // A page loaded again since, which never got the request.
+            s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: false, reason: 'cancelled' });
+            assert.deepStrictEqual(await result, { inserted: false, reason: 'timeout' });
+            assert.strictEqual(s.document.getText(), before);
+
             const started = Date.now();
-            assert.deepStrictEqual(await insertBlockIn(s.uri, QUOTE), { inserted: false, reason: 'timeout' });
-            assert.ok(Date.now() - started >= TIMEOUT - 20);
-            assert.strictEqual(s.document.getText(), before);
-            const asked = s.requests()[0];
-            s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: false });
+            assert.deepStrictEqual(await insertBlockIn(s.uri, QUOTE), { inserted: false, reason: 'unconfirmed' });
+            assert.ok(Date.now() - started >= UNCONFIRMED - 50);
+            const late = s.requests()[1];
+            s.webview.send({ type: 'blockInserted', requestId: late.requestId, inserted: false, reason: 'cancelled' });
             await s.session.settled();
-            assert.strictEqual(s.document.getText(), before);
         } finally {
             s.close();
         }
     });
 
-    test('the page could not insert: error-state; its edit dropped as the file changed elsewhere: changed', async function () {
+    test('the page\'s reason is kept: no document and refused are error-state; its edit dropped as the file changed elsewhere: changed', async function () {
         this.timeout(10000);
         const s = await open();
         try {
-            const refused = insertBlockIn(s.uri, QUOTE);
-            const first = await until(() => s.requests()[0], 2000);
-            assert.ok(first);
-            s.webview.send({ type: 'blockInserted', requestId: first.requestId, inserted: false });
-            assert.deepStrictEqual(await refused, { inserted: false, reason: 'error-state' });
+            for (const reason of ['no-document', 'refused'] as const) {
+                const count = s.requests().length;
+                const refused = insertBlockIn(s.uri, QUOTE);
+                const asked = await until(() => s.requests()[count], 2000);
+                assert.ok(asked);
+                s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: false, reason });
+                assert.deepStrictEqual(await refused, { inserted: false, reason: 'error-state' }, reason);
+            }
 
+            const count = s.requests().length;
             const dropped = insertBlockIn(s.uri, QUOTE);
-            const second = await until(() => s.requests()[1], 2000);
+            const second = await until(() => s.requests()[count], 2000);
             assert.ok(second);
             const stale = s.posted().version;
             const other = new vscode.WorkspaceEdit();
@@ -1950,7 +1989,31 @@ suite('Editor host: insertBlock', () => {
         }
     });
 
-    test('a document that cannot be shown: error-state; the panel closed while waiting: closed', async function () {
+    test('two at once are asked one after the other: the second goes once the first is settled, and both are written', async function () {
+        this.timeout(10000);
+        const s = await open();
+        try {
+            const first = insertBlockIn(s.uri, `${QUOTE} one`);
+            const second = insertBlockIn(s.uri, `${QUOTE} two`);
+            const asked = await until(() => s.requests()[0], 2000);
+            assert.ok(asked);
+            await delay(100);
+            assert.strictEqual(s.requests().length, 1, 'the second waits for the first');
+            s.answer(asked, s.document.getText().replace('written.\n', `written.\n\n${QUOTE} one\n`));
+            assert.deepStrictEqual(await first, { inserted: true });
+            const next = await until(() => s.requests()[1], 2000);
+            assert.ok(next);
+            assert.strictEqual(next.src, `${QUOTE} two`);
+            // The page answers on the parse of the first — the document it now has.
+            s.answer(next, s.document.getText().replace(`${QUOTE} one\n`, `${QUOTE} one\n\n${QUOTE} two\n`));
+            assert.deepStrictEqual(await second, { inserted: true });
+            assert.ok(s.document.getText().includes(`${QUOTE} one\n\n${QUOTE} two\n`), s.document.getText());
+        } finally {
+            s.close();
+        }
+    });
+
+    test('a document that cannot be shown: error-state; the panel closed before the page answered: closed; closed after it answered: inserted, the edit applied (P3)', async function () {
         this.timeout(10000);
         const broken = await open(() => Promise.reject(new Error('no engine')));
         try {
@@ -1964,6 +2027,21 @@ suite('Editor host: insertBlock', () => {
         await until(() => s.requests()[0], 2000);
         s.close();
         assert.deepStrictEqual(await waiting, { inserted: false, reason: 'closed' });
+
+        const t = await open();
+        const document = t.document;
+        const answered = insertBlockIn(t.uri, QUOTE);
+        const asked = await until(() => t.requests()[0], 2000);
+        assert.ok(asked);
+        const text = t.answer(asked);
+        // Closed right after the answer came, before the queue applied its edit.
+        t.session.dispose();
+        try {
+            assert.deepStrictEqual(await answered, { inserted: true });
+            assert.strictEqual(document.getText(), text, 'the edit was applied, and the extension was told so');
+        } finally {
+            t.close();
+        }
     });
 });
 

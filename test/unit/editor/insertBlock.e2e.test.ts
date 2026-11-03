@@ -42,9 +42,9 @@ suite('Editor insertBlock (e2e)', () => {
     };
 
     /** The host's `insertBlock`, as the session posts it; the page's answer. */
-    const insert = async (src: string, focus = false, expires = Date.now() + 1000): Promise<BlockInserted> => {
+    const insert = async (src: string, focus = false): Promise<BlockInserted> => {
         const requestId = ++requestSeq;
-        await (editor as EditorPage).send({ type: 'insertBlock', requestId, src, focus, expires });
+        await (editor as EditorPage).send({ type: 'insertBlock', requestId, src, focus });
         await page.waitForFunction(id => (window as unknown as { posted: { type: string; requestId?: number }[] }).posted
             .some(m => m.type === 'blockInserted' && m.requestId === id), { timeout: 2000 }, requestId);
         return (await posted()).find((m): m is BlockInserted => m.type === 'blockInserted' && m.requestId === requestId) as BlockInserted;
@@ -216,14 +216,78 @@ suite('Editor insertBlock (e2e)', () => {
         assert.ok(where.wide, 'no horizontal scroll');
     });
 
-    test('a request the page reaches after it expired is answered without the block, and nothing is sent', async function () {
+    test('a withdrawal the page has not seen the request for is answered cancelled, once, and the request never written; one after the insertion is ignored', async function () {
         this.timeout(20000);
         await clickText(page, 'Second');
-        const answer = await insert(QUOTE, false, Date.now() - 1);
-        assert.strictEqual(answer.inserted, false);
+        const answers = async (id: number) => (await posted()).filter((m): m is BlockInserted => m.type === 'blockInserted' && m.requestId === id);
+        // A page loaded again since: the withdrawal comes, the request never did.
+        await (editor as EditorPage).send({ type: 'insertBlockCancel', requestId: 900 });
+        await delay(100);
+        assert.deepStrictEqual(await answers(900), [{ type: 'blockInserted', requestId: 900, inserted: false, reason: 'cancelled' }]);
+        await (editor as EditorPage).send({ type: 'insertBlock', requestId: 900, src: QUOTE, focus: false });
         await settle();
-        assert.strictEqual((await (editor as EditorPage).edits()).length, 0);
-        assert.strictEqual(await page.$('.ProseMirror > .mep-raw-block'), null);
+        assert.strictEqual((await answers(900)).length, 1, 'answered once');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, 0, 'nothing written for it');
+
+        // A busy page inserted first, and reads the withdrawal after: its answer stands.
+        const answer = await insert(QUOTE);
+        assert.strictEqual(answer.inserted, true);
+        await (editor as EditorPage).send({ type: 'insertBlockCancel', requestId: answer.requestId });
+        await delay(100);
+        assert.strictEqual((await answers(answer.requestId)).length, 1, 'no second answer');
+        assert.strictEqual(await hostReparses(), WITH_QUOTE);
+    });
+
+    test('at the end of a file without a final line break: the block goes after it, the file still ends without one, and Ctrl+Z after the host\'s parse gives back the bytes', async function () {
+        this.timeout(20000);
+        const open = SOURCE.replace(/\n$/, '');
+        await showDocument(open);
+        await clickText(page, 'Last');
+        await insert(QUOTE);
+        assert.strictEqual(await hostReparses(), `${open}\n\n${QUOTE}`);
+        await page.waitForSelector('.ProseMirror > blockquote');
+        await undoKey();
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, open, 'no line break left behind');
+        await redoKey();
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, `${open}\n\n${QUOTE}`);
+    });
+
+    test('an open source box is committed before the block, with focus: Ctrl+Z takes the block, then the box\'s text', async function () {
+        this.timeout(30000);
+        const table = '| a | b |\n| = | = |\n| 1 | 2 |\n';
+        const withTable = `Intro paragraph.\n\n${table}\nLast paragraph.\n`;
+        await showDocument(withTable);
+        const cell = await page.waitForSelector('.mep-raw-block .mep-atom-content table');
+        const box = await cell?.boundingBox();
+        assert.ok(box);
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await delay(80);
+        const button = await page.waitForSelector('.mep-object-toolbar[data-trigger="selection"][data-object="raw_block"]:not([hidden]) [data-verb="edit-source"]', { visible: true });
+        const at = await button?.boundingBox();
+        assert.ok(at);
+        await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
+        await page.waitForSelector('.mep-raw-editor');
+        await page.keyboard.type('\n| 3 | 4 |');
+        const committed = withTable.replace('| 1 | 2 |\n', '| 1 | 2 |\n| 3 | 4 |\n');
+
+        const answer = await insert(QUOTE, true);
+        assert.strictEqual(answer.inserted, true);
+        const edits = await (editor as EditorPage).edits();
+        assert.strictEqual(edits.length, 1, 'one edit carries the box\'s text and the block');
+        assert.strictEqual(await hostReparses(), committed.replace('| 3 | 4 |\n', `| 3 | 4 |\n\n${QUOTE}\n`));
+        await page.waitForFunction(() => document.activeElement?.classList.contains('ProseMirror'), { timeout: 2000 });
+        await settle();
+        assert.strictEqual((await (editor as EditorPage).edits()).length, 1, 'the focus leaving the box commits nothing more');
+
+        await undoKey();
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, committed, 'first undo: the block');
+        await undoKey();
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, withTable, 'second undo: the box\'s text');
     });
 
     test('Cmd+Z sent with the browser\'s own Undo command (macOS) is still the page\'s history: the block goes, nothing else', async function () {
