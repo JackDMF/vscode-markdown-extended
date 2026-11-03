@@ -2850,7 +2850,7 @@ visualEditor: {
     onDidChangeActive: vscode.Event<{ uri: vscode.Uri; caret: vscode.Position | undefined; selection?: vscode.Selection } | undefined>;
     /** API 2: Markdown blocks inserted by the page (below, "Inserting blocks for another extension"). */
     insertBlock(uri: vscode.Uri, markdown: string, options?: { focus?: boolean }): Promise<
-        { inserted: true } | { inserted: false; reason: 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' }>;
+        { inserted: true } | { inserted: false; reason: 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'unconfirmed' }>;
 }
 ```
 
@@ -2894,11 +2894,16 @@ markdown, { focus })`.
 
 - **Host.** `insertBlockIn` (`session.ts`) finds the session over `uri` — one per document,
   since the provider does not set `supportsMultipleEditorsPerDocument` — else `no-editor`;
-  Markdown that is only whitespace is `empty`. The session asks in its queue, behind the edits
-  received before, and does not wait there: it posts `insertBlock { requestId, src, focus,
-  expires }` and returns. With `focus` it first reveals the panel (`SessionHost.reveal`,
-  `panel.reveal(undefined, false)`), which works for an editor in a background tab too.
-- **Page.** `insertBlockTransaction` (`toolbar/commands.ts`, the sister of
+  Markdown that is only whitespace is `empty`. Requests to one session are chained: the next is
+  posted once the one before is settled, so it lands in the page's parse of that one (two at
+  once would otherwise race — the second edit based on the document before the first parse,
+  and dropped). The session asks in its queue, behind the edits received before, and does not
+  wait there: it posts `insertBlock { requestId, src, focus }` and returns. With `focus` it
+  first reveals the panel (`SessionHost.reveal`, `panel.reveal(undefined, false)`), which works
+  for an editor in a background tab too.
+- **Page.** A source box open meanwhile is committed first, as a save commits it — its text is
+  a history step before the block's and goes in the same edit; the focus leaving it later
+  commits nothing more. Then `insertBlockTransaction` (`toolbar/commands.ts`, the sister of
   `insertLineTransaction`) puts a source block holding the text as given — its line breaks the
   document's, those at its end dropped (`blockSource`) — at `insertionPoint`: after the
   top-level block the selection ends in, never before the first block or the front matter,
@@ -2908,16 +2913,23 @@ markdown, { focus })`.
   arbitrary inserted text a tight line could be read as its lazy continuation. The transaction
   sets that gap itself and carries `PRESERVE_SOURCE_META` (the fidelity plugin would clear the
   gap of any block whose predecessor changed) and `closeHistory`: a history step of its own,
-  never merged with typing just before it. `archiveInsertBlock.test.ts` (gated,
+  never merged with typing just before it. After the last line of a file without a final line
+  break the block is written without one, so the file still ends so, and the line before it
+  gains its line break in the same step — the host's parse gives it that `src` anyway, outside
+  the history, so an undo after the parse would otherwise leave the line break behind.
+  `archiveInsertBlock.test.ts` (gated,
   `MEP_ARCHIVE_ROOT`) inserts a Bible quote block into every file of Daniel's archive at the
-  seams that matter and holds that each differs by added lines only. The page then flushes
+  seams that matter and holds that each differs by added lines only, and that one undo gives
+  the file's bytes before the host's parse and after it. The page then flushes
   with `reparse` — one edit that carries the pending typing with the block, so no keystroke is
-  lost — and posts `blockInserted { requestId, inserted }` right behind it. Typing *after* the
+  lost — and posts `blockInserted { requestId, inserted, reason? }` right behind it. Typing *after* the
   insertion and before the host's parse arrives (a round trip, milliseconds) is dropped by that
   document, as after any reparse (Includes, a source box's commit).
-- **Back on the host**, `blockInserted` stops the timer as it arrives and is settled in the
-  queue behind that edit, so the promise resolves once the document holds the block — or with
-  `changed` when the edit was dropped because the file changed elsewhere at that moment. The
+- **Back on the host**, `blockInserted` stops the timers as it arrives and is settled in the
+  queue behind that edit, so the promise resolves once the edit is applied — or with `changed`
+  when the edit was dropped because the file changed elsewhere at that moment. A panel closed
+  after the answer came does not change that: the queue still applies the edit, and the
+  extension hears `inserted`; only a request the page had not answered is `closed`. The
   host's parse of the text (every markdown-it plugin) comes back as the document the edit asked
   for, and the re-sync replaces the source block with what the text is, a quote here.
 - **Undo after the parse.** The re-sync is outside the history, but prosemirror-history maps
@@ -2930,12 +2942,18 @@ markdown, { focus })`.
   there (`Selection.near`, forward first — the start of the next block; after the last block,
   the end of the quote), scrolled into view, the history closed so typing next is undone on
   its own; with `focus` the editor takes the keyboard.
-- **Waiting.** No answer within `MAP_TIMEOUT_MS` (2 s) is `timeout`, and then nothing may be
-  written: the page inserts only until `expires`, half that time after the request, and
-  answers a request it reaches later with `inserted: false`. The other half is for the answer
-  to come back; only an answer delayed past it would arrive after the extension was told
-  `timeout`. A panel closed meanwhile is `closed`; a page with no document, or one that would
-  not take the block, is `error-state`.
+- **Waiting, without a clock.** Only the page's word settles a request; host and page do not
+  compare times (they may run on different machines — Remote, WSL). With no answer within
+  `MAP_TIMEOUT_MS` (2 s) the host withdraws it: `insertBlockCancel { requestId }`. Messages
+  arrive in order, so a page that got the request has answered it before it reads the
+  withdrawal, and ignores the withdrawal — its answer is on the way and counts, even after the
+  2 s. A page that never got the request (loaded again since) answers the withdrawal
+  `cancelled` and writes nothing should the request still come: the extension hears
+  `timeout`, and nothing was written. Each id is answered once. Only when the page gives no
+  word at all within `INSERT_UNCONFIRMED_MS` (30 s) — it is hung — does the host stop waiting,
+  with `unconfirmed`: the block may be in the document or not, and the caller must not take it
+  as not inserted. The page's other reasons: no document (`error-state`), would not take the
+  block (`refused`, also `error-state`).
 
 ### Styles
 
