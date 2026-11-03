@@ -9,7 +9,7 @@ import { currentInlineEngine } from '../inlineEngine';
 import { editorSchema, footnoteSpelling } from '../schema';
 import { Said, said, value } from '../tips';
 import { VERB, quotedVerb } from '../verbs';
-import { announceHint, macKeys, showChangeHint, showHint, showRefusal, undoKey } from './hint';
+import { announceHint, deleteKey, macKeys, showChangeHint, showHint, showRefusal, undoKey } from './hint';
 import { noteRefusal } from './notes';
 import { inTableCell } from './objects';
 
@@ -856,7 +856,7 @@ function referenceBeside(state: EditorState, dir: -1 | 1): { pos: number; node: 
  * press deletes it, aimed (`deleteFootnoteRefTransaction`) — the rhythm a note
  * and a source block have.
  */
-function deleteBeside(dir: -1 | 1, key: string): Command {
+function deleteBeside(dir: -1 | 1, key: 'Backspace' | 'Delete'): Command {
     return (state, dispatch, view) => {
         const sel = state.selection;
         if (sel instanceof NodeSelection && sel.node.type === editorSchema.nodes.footnote_ref) {
@@ -881,7 +881,7 @@ function deleteBeside(dir: -1 | 1, key: string): Command {
         if (dispatch) {
             dispatch(state.tr.setSelection(NodeSelection.create(state.doc, beside.pos)).scrollIntoView());
             if (view) {
-                showHint(view, deletePreview(view.state, beside.pos, key), 'neutral');
+                showHint(view, deletePreview(view.state, beside.pos, deleteKey(key)), 'neutral');
             }
         }
         return true;
