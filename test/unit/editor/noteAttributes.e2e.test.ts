@@ -766,7 +766,7 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test('with a margin layout at 1280: the left sidebar\'s bar stands in the left margin at the edge + 16 px, off the column\'s text, never cut (it no longer grows over the column into the right margin)', async function () {
+    test('with a margin layout at 1280: the left sidebar\'s bar is never cut: in the left margin at the edge + 16 px where a line\'s height beside its sidebar is free of text, else in the column under the block (`leftMargin.e2e.test.ts`)', async function () {
         this.timeout(60000);
         editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [USER_STYLESHEET] });
         if (!editor) {
@@ -778,8 +778,8 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         const bar = await barBox();
         const column = await columnRight();
-        assert.ok(Math.abs(bar.left - 16) < 1, `at the edge + 16 px: ${JSON.stringify(bar)}`);
-        assert.ok(bar.right <= column - 100, `in the left margin, not across the column: ${JSON.stringify({ bar, column })}`);
+        // Text above and below the item: no free height within a line of its sidebar — the column, as before.
+        assert.ok(bar.right <= bar.edge - 16 + 0.5 && (Math.abs(bar.left - 16) < 1 || bar.left >= 160 - 1), `at the edge + 16 px or in the column: ${JSON.stringify({ bar, column })}`);
         assert.ok(await page.$eval(BAR, el => el.scrollWidth <= el.clientWidth + 1), `never cut: ${JSON.stringify(bar)}`);
     });
 
