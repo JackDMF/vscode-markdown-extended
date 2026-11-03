@@ -134,6 +134,10 @@ suite('Editor caret (e2e)', () => {
 
     test('a selection over two words is reported with the caret, its anchor where it began; collapsed, the caret alone', async function () {
         this.timeout(20000);
+        // A document of its own, whatever the tests before left on the page.
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, 'Intro paragraph.\n\nSecond *paragraph* here.\n', {})), version: 2, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.startsWith('Intro paragraph.Second paragraph here.'));
         await page.click('.ProseMirror > p');
         await page.keyboard.press('Home');
         await page.keyboard.down('Shift');
@@ -141,24 +145,24 @@ suite('Editor caret (e2e)', () => {
         await page.keyboard.up('Shift');
         await delay(250);
         assert.deepStrictEqual(await lastCaret(), {
-            type: 'caret', baseVersion: 1,
+            type: 'caret', baseVersion: 2,
             position: { line: 0, character: 'Intro paragraph.'.length },
             selection: { anchor: { line: 0, character: 0 }, active: { line: 0, character: 'Intro paragraph.'.length } },
         });
 
         // Across the emphasis: the page counts no `*`, the source does.
-        await page.click('.ProseMirror > p:nth-of-type(3)');
+        await page.click('.ProseMirror > p:nth-of-type(2)');
         await page.keyboard.press('Home');
         await page.keyboard.down('Shift');
-        for (let i = 0; i < 'YXSecond paragr'.length; i++) {
+        for (let i = 0; i < 'Second paragr'.length; i++) {
             await page.keyboard.press('ArrowRight');
         }
         await page.keyboard.up('Shift');
         await delay(250);
-        assert.deepStrictEqual((await lastCaret())?.selection, { anchor: { line: 4, character: 0 }, active: { line: 4, character: 'YXSecond *paragr'.length } });
+        assert.deepStrictEqual((await lastCaret())?.selection, { anchor: { line: 2, character: 0 }, active: { line: 2, character: 'Second *paragr'.length } });
 
         await page.keyboard.press('ArrowRight');
         await delay(250);
-        assert.deepStrictEqual(await lastCaret(), { type: 'caret', baseVersion: 1, position: { line: 4, character: 'YXSecond *paragr'.length } }, 'collapsed: no selection');
+        assert.deepStrictEqual(await lastCaret(), { type: 'caret', baseVersion: 2, position: { line: 2, character: 'Second *paragr'.length } }, 'collapsed: no selection');
     });
 });
