@@ -11,7 +11,7 @@ import {
     IncludeController, IncludePickItem, IncludePicker, IncludeProvider, NO_INCLUDES_MESSAGE, collectIncludeProviders,
 } from '../../../src/editor/host/includes';
 import { blockIndexForLine, hidesLens, lensHintOf, lensRows } from '../../../src/editor/host/lenses';
-import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
+import { VISUAL_EDITOR_VIEW_TYPE, followPanel } from '../../../src/editor/host/provider';
 import { SessionHost, SessionWebview, VisualEditorSession, insertBlockIn, revealInVisualEditor, sortFootnotesIn } from '../../../src/editor/host/session';
 import { fillDestination } from '../../../src/editor/host/images';
 import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
@@ -1829,6 +1829,109 @@ function customTabs(uri: vscode.Uri): vscode.Tab[] {
  * neither takes the other's place.
  */
 suite('Editor host: one file in two Visual Editors (live)', () => {
+    /** Two sessions over one fresh document, their pages given it; `columns` say which group each panel is in. */
+    async function twoOverOne(columns: (vscode.ViewColumn | undefined)[] = [undefined, undefined]) {
+        const uri = tempMarkdown(SOURCE);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const engine = buildEditorEngine(EXTENSION_ID, () => undefined);
+        const open = (column: vscode.ViewColumn | undefined) => {
+            const webview = new FakeWebview();
+            const session = new VisualEditorSession(document, webview, {
+                engine: () => engine, onDidChangeEngine: engineChanged.event, log: () => undefined, viewColumn: () => column,
+            });
+            webview.send({ type: 'ready' });
+            return { webview, session };
+        };
+        const a = open(columns[0]);
+        const b = open(columns[1]);
+        await Promise.all([a.session.settled(), b.session.settled()]);
+        return {
+            uri, document, a, b,
+            close: async () => {
+                a.session.dispose();
+                b.session.dispose();
+                engineChanged.dispose();
+                await document.save();
+                fs.rmSync(uri.fsPath, { force: true });
+            },
+        };
+    }
+
+    test('two insertions at once into one file through its two editors are taken one after the other: the second page is shown the first block before it is asked, and both are written (review 1, N1)', async function () {
+        this.timeout(20000);
+        const t = await twoOverOne();
+        try {
+            t.a.session.activated();
+            const one = insertBlockIn(t.uri, '> One');
+            t.b.session.activated();
+            const two = insertBlockIn(t.uri, '> Two');
+            const ra = await until(() => t.a.webview.posted.find((m): m is InsertBlockMessage => m.type === 'insertBlock'), 2000);
+            assert.ok(ra, 'the first editor is asked for the first');
+            await delay(100);
+            assert.strictEqual(t.b.webview.posted.filter(m => m.type === 'insertBlock').length, 0, 'the second waits for the first');
+            const withOne = t.document.getText().replace('wrapped as it was written.\n', 'wrapped as it was written.\n\n> One\n');
+            t.a.webview.send({ type: 'edit', text: withOne, baseVersion: (t.a.webview.documents().pop() as { version: number }).version, reparse: true });
+            t.a.webview.send({ type: 'blockInserted', requestId: ra.requestId, inserted: true });
+            assert.deepStrictEqual(await one, { inserted: true });
+
+            const rb = await until(() => t.b.webview.posted.find((m): m is InsertBlockMessage => m.type === 'insertBlock'), 2000);
+            assert.ok(rb, 'then the second editor is asked');
+            const shown = t.b.webview.posted.slice(0, t.b.webview.posted.indexOf(rb)).filter((m): m is Extract<HostMessage, { type: 'document' }> => m.type === 'document').pop();
+            assert.ok(shown && shown.version === t.document.version, 'its page was shown the document with the first block before the request');
+            const withBoth = withOne.replace('> One\n', '> One\n\n> Two\n');
+            t.b.webview.send({ type: 'edit', text: withBoth, baseVersion: shown.version, reparse: true });
+            t.b.webview.send({ type: 'blockInserted', requestId: rb.requestId, inserted: true });
+            assert.deepStrictEqual(await two, { inserted: true });
+            assert.strictEqual(t.document.getText(), withBoth);
+        } finally {
+            await t.close();
+        }
+    });
+
+    test('a reader answering onDidChangeActive with insertBlock reaches the editor that just became active (review 1, N2)', async function () {
+        this.timeout(20000);
+        const t = await twoOverOne();
+        const tracker = new ActiveVisualEditorTracker(insertBlockIn);
+        const panelA = new FakePanel();
+        const panelB = new FakePanel();
+        const following = [followPanel(panelA, t.a.session, tracker), followPanel(panelB, t.b.session, tracker)];
+        try {
+            panelA.set(true);
+            let asked: Promise<InsertBlockResult> | undefined;
+            tracker.api.onDidChangeActive(active => {
+                if (active !== undefined && asked === undefined) {
+                    asked = tracker.api.insertBlock(active.uri, '> Probe');
+                }
+            });
+            panelA.set(false);
+            panelB.set(true);
+            assert.ok(await until(() => t.b.webview.posted.find(m => m.type === 'insertBlock'), 2000), 'the page of the editor now active is asked');
+            assert.strictEqual(t.a.webview.posted.filter(m => m.type === 'insertBlock').length, 0);
+        } finally {
+            following.forEach(f => f.dispose());
+            tracker.dispose();
+            await t.close();
+        }
+    });
+
+    test('a link\'s reveal goes to the editor in the group whose tab shows the file, though another was active last (review 1, N3)', async function () {
+        this.timeout(20000);
+        const t = await twoOverOne([vscode.ViewColumn.One, vscode.ViewColumn.Two]);
+        const reveals = (w: FakeWebview) => w.posted.filter(m => m.type === 'revealAnchor').length;
+        try {
+            t.a.session.activated();
+            revealInVisualEditor(t.uri, { anchor: 'x', line: null }, vscode.ViewColumn.Two);
+            await Promise.all([t.a.session.settled(), t.b.session.settled()]);
+            assert.deepStrictEqual([reveals(t.a.webview), reveals(t.b.webview)], [0, 1]);
+            revealInVisualEditor(t.uri, { anchor: 'x', line: null });
+            await Promise.all([t.a.session.settled(), t.b.session.settled()]);
+            assert.deepStrictEqual([reveals(t.a.webview), reveals(t.b.webview)], [1, 1], 'without a group: the one active last');
+        } finally {
+            await t.close();
+        }
+    });
+
     test('requests by uri go to the session active last — insertBlock, Sort Footnotes, a reveal; neither replaces the other, and closing one leaves the other', async function () {
         this.timeout(20000);
         const uri = tempMarkdown(SOURCE);

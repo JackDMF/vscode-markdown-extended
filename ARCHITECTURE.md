@@ -2921,9 +2921,13 @@ applies only to the other kind of custom editor. Each panel has its page and its
 each session is to the others what the text editor beside is: another writer, whose change
 reaches its page as a re-sync. What is addressed by uri — a link's reveal, **Sort Footnotes**,
 `insertBlock` — goes to one of them (`sessionFor`): the sessions over a uri are kept in the
-order they were last active (the provider calls `activated` when a panel becomes the active
-editor, from `onDidChangeViewState`), so a request goes to the one active, else the one active
-last. A session closing takes only itself out; through 4.12.0 the second panel's session replaced
+order they were last active (`followPanel` calls `activated` when a panel becomes the active
+editor, from `onDidChangeViewState` — before it tells the tracker, so a reader that answers
+`onDidChangeActive` with `insertBlock` at once reaches the editor that just became active), so a
+request goes to the one active, else the one active last. A link followed into the file names
+the group whose tab shows it (`activeTabGroup.viewColumn`), and the reveal goes to the editor in
+that group, which VS Code may not yet have said is active. `insertBlock` requests are chained per
+file, not per editor (below). A session closing takes only itself out; through 4.12.0 the second panel's session replaced
 the first's, which was then out of reach (`no-editor`) once the second closed (#22).
 
 ### Inserting blocks for another extension
@@ -2940,10 +2944,12 @@ markdown, { focus })`.
 - **Host.** `insertBlockIn` (`session.ts`) finds the session over `uri` — with the file open
   in the Visual Editor twice, the one active, else the one active last (below, "One file in two
   Visual Editors") — else `no-editor`;
-  Markdown that is only whitespace is `empty`. Requests to one session are chained: the next is
-  posted once the one before is settled, so it lands in the page's parse of that one (two at
-  once would otherwise race — the second edit based on the document before the first parse,
-  and dropped). The session asks in its queue, behind the edits received before, and does not
+  Markdown that is only whitespace is `empty`. Requests for one file are chained (`insertChains`,
+  by uri — also across two Visual Editors over it): the next is posted once the one before is
+  settled, so it lands in the page's parse of that one (two at once would otherwise race — the
+  second edit based on the document before the first parse, and dropped); a page not yet shown
+  the document as it stands (another editor's insertion still in the re-sync's delay) is shown it
+  before it is asked. The session asks in its queue, behind the edits received before, and does not
   wait there: it posts `insertBlock { requestId, src, focus }` and returns. With `focus` it
   first reveals the panel in its own column (`SessionHost.reveal`, `panel.reveal(panel.viewColumn,
   false)`), which works for an editor in a background tab too. The column is named: without it
