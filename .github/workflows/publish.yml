@@ -1,0 +1,87 @@
+# Veröffentlicht die Erweiterung auf dem Visual Studio Marketplace per
+# Trusted Publishing (OIDC) — ohne Personal Access Token.
+#
+# Auslöser:
+#   - Push eines Tags v*  (setzt `npm run release:publish` am Ende des Guards)
+#   - Von Hand: Actions → Publish → Run workflow, Eingabe `tag` (z. B. v4.12.0),
+#     um einen vorhandenen Tag nachträglich zu veröffentlichen.
+#
+# Einmalige Einrichtung auf dem Marketplace: siehe ARCHITECTURE.md, „Releasing".
+# Der Dateiname dieser Datei (publish.yml) steht dort in der Trusted-Publishing-
+# Richtlinie — beim Umbenennen die Richtlinie mitändern.
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish, e.g. v4.12.0'
+        required: true
+        type: string
+
+concurrency:
+  group: publish-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # --oidc gibt es ab @vscode/vsce 4.x; braucht Node >= 22.
+  VSCE: '@vscode/vsce@4.1.0'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # GitHub-Release mit dem VSIX anlegen
+      id-token: write   # OIDC-Token für den Marketplace
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Tag matches package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v${version}" != "${TAG}" ]; then
+            echo "::error::Tag ${TAG} does not match package.json version ${version}"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      # `vsce package` runs vscode:prepublish (esbuild --production).
+      - name: Package
+        run: npx --yes "$VSCE" package --no-dependencies --out extension.vsix
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ env.TAG }}
+          path: extension.vsix
+
+      # Exactly the packaged file, as in scripts/release.mjs.
+      - name: Publish to the Marketplace
+        run: npx --yes "$VSCE" publish --oidc --packagePath extension.vsix
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" extension.vsix --clobber
+          else
+            gh release create "$TAG" extension.vsix --verify-tag --title "$TAG" \
+              --notes "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md)."
+          fi
