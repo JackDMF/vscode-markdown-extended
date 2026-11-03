@@ -16,7 +16,8 @@
  *   4. CHANGELOG has this version    — the release is described before it ships
  *   5. tag free                      — this version was not released before
  *   6. lint and the full test suite
- *   7. package ONCE (the tests saw exactly this file)
+ *   7. package locally — a smoke test of the packaging; the file that goes to the
+ *      Marketplace is built again by the workflow from the tag (build job)
  *
  * Publishing is done by GitHub Actions (.github/workflows/publish.yml, Trusted
  * Publishing / OIDC — no token): pushing the tag v<version> starts it. The
@@ -25,10 +26,11 @@
  *
  * Usage:
  *   npm run release                 checks + lint + tests + package (nothing leaves the machine)
- *   npm run release:publish         the same, then tag and push — Actions publishes the tag
- *   npm run release:local-publish   the same, but publishes from this machine with `vsce publish`
- *                                   (needs a valid PAT) before tag and push. The Actions run
- *                                   that the tag then starts fails with "already exists" — harmless.
+ *   npm run release:publish         the same, then tag and push — that starts the Actions run, which
+ *                                   waits for approval (environment `marketplace`) before publishing
+ *   npm run release:local-publish   the same, but publishes the local .vsix from this machine with `vsce publish`
+ *                                   (needs a valid PAT) before tag and push. Reject the
+ *                                   Actions run that the tag then starts (or let it fail).
  */
 
 import { execFileSync } from 'node:child_process';
@@ -159,7 +161,7 @@ const aktionen = git('remote', 'get-url', 'origin')
   .replace(/\.git$/, '') + '/actions/workflows/publish.yml';
 if (lokalVeroeffentlichen) {
   console.log(`\n[32m✔ ${publisher}.${name} ${marke} veröffentlicht (lokal).[0m`);
-  console.log(`  Der Actions-Lauf zum Tag scheitert an „already exists" — ${aktionen}`);
+  console.log(`  Den Actions-Lauf zum Tag ablehnen (er würde „already exists" melden) — ${aktionen}`);
 } else {
-  console.log(`\n[32m✔ GitHub Actions veröffentlicht ${marke} — ${aktionen}[0m`);
+  console.log(`\n[32m✔ GitHub Actions hat die Veröffentlichung von ${marke} gestartet (wartet auf deine Freigabe) — ${aktionen}[0m`);
 }

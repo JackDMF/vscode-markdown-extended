@@ -6,9 +6,15 @@
 #   - Von Hand: Actions → Publish → Run workflow, Eingabe `tag` (z. B. v4.12.0),
 #     um einen vorhandenen Tag nachträglich zu veröffentlichen.
 #
-# Einmalige Einrichtung auf dem Marketplace: siehe ARCHITECTURE.md, „Releasing".
-# Der Dateiname dieser Datei (publish.yml) steht dort in der Trusted-Publishing-
-# Richtlinie — beim Umbenennen die Richtlinie mitändern.
+# Drei Jobs, damit das Marketplace-Recht (id-token) nie neben fremdem Code liegt:
+#   build    — baut das VSIX; führt npm-Skripte aus, hat aber kein id-token
+#   publish  — Environment `marketplace` (Freigabe durch JackDMF); lädt nur das
+#              VSIX und das Werkzeug (npm ci --ignore-scripts), baut nichts
+#   release  — hängt das VSIX an ein GitHub-Release
+#
+# Einmalige Einrichtung (GitHub-Environment, Tag-Ruleset, Marketplace-Richtlinie):
+# siehe ARCHITECTURE.md, „Releasing". Der Dateiname (publish.yml) und der
+# Environment-Name (marketplace) stehen in der Marketplace-Richtlinie.
 name: Publish
 
 on:
@@ -25,63 +31,110 @@ concurrency:
   group: publish-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-permissions:
-  contents: read
+permissions: {}
 
 env:
-  # --oidc gibt es ab @vscode/vsce 4.x; braucht Node >= 22.
-  VSCE: '@vscode/vsce@4.1.0'
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # GitHub-Release mit dem VSIX anlegen
-      id-token: write   # OIDC-Token für den Marketplace
-    env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
-          cache: npm
+          node-version-file: .nvmrc
 
       - name: Tag matches package.json
+        id: version
         run: |
           version="$(node -p "require('./package.json').version")"
           if [ "v${version}" != "${TAG}" ]; then
             echo "::error::Tag ${TAG} does not match package.json version ${version}"
             exit 1
           fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
 
       - run: npm run lint
 
       # `vsce package` runs vscode:prepublish (esbuild --production).
       - name: Package
-        run: npx --yes "$VSCE" package --no-dependencies --out extension.vsix
+        run: npx vsce package --no-dependencies --out "markdown-extended-pro-${{ steps.version.outputs.version }}.vsix"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vsix-${{ env.TAG }}
-          path: extension.vsix
+          name: markdown-extended-pro-${{ steps.version.outputs.version }}.vsix
+          path: markdown-extended-pro-${{ steps.version.outputs.version }}.vsix
+          if-no-files-found: error
 
-      # Exactly the packaged file, as in scripts/release.mjs.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: marketplace   # wartet auf die Freigabe
+    permissions:
+      contents: read
+      id-token: write          # OIDC-Token für den Marketplace
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      # Nur package.json + Lockfile werden gebraucht (vsce 4.1.0 aus dem Lockfile).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      # --ignore-scripts: in diesem Job mit id-token läuft kein Lifecycle-Skript
+      # eines Pakets. vsce braucht keines zum Veröffentlichen.
+      - run: npm ci --ignore-scripts
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: markdown-extended-pro-${{ env.VERSION }}.vsix
+          path: vsix
+
+      # Genau das gebaute Paket, nicht neu gepackt.
       - name: Publish to the Marketplace
-        run: npx --yes "$VSCE" publish --oidc --packagePath extension.vsix
+        run: npx vsce publish --oidc --packagePath "vsix/markdown-extended-pro-${VERSION}.vsix"
+
+  release:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: markdown-extended-pro-${{ env.VERSION }}.vsix
+          path: vsix
 
       - name: GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
+          file="vsix/markdown-extended-pro-${VERSION}.vsix"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" extension.vsix --clobber
+            gh release upload "$TAG" "$file" --clobber
           else
-            gh release create "$TAG" extension.vsix --verify-tag --title "$TAG" \
-              --notes "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md)."
+            gh release create "$TAG" "$file" --verify-tag --title "$TAG" \
+              --notes "See [CHANGELOG.md](https://github.com/${GH_REPO}/blob/${TAG}/CHANGELOG.md)."
           fi

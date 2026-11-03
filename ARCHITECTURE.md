@@ -3334,18 +3334,43 @@ had never been committed — `package.json` said 3.0.0 while the Marketplace ser
 The Marketplace upload is not done by the script but by GitHub Actions
 (`.github/workflows/publish.yml`) using **Trusted Publishing** (OIDC,
 `vsce publish --oidc`) — no Personal Access Token exists any more (global Azure
-DevOps PATs are retired on 2026-12-01). Pushing the tag `vX.Y.Z` starts the
-workflow; it checks out the tag, verifies that `package.json` says the same
-version, lints, packages, uploads the `.vsix` as a workflow artefact, publishes
-exactly that file (`--packagePath`: `vsce publish` would otherwise repackage and
-ship a different artefact) and attaches it to a GitHub release. The tests run in
-the local guard only (the e2e suite needs a display). The workflow pins
-`@vscode/vsce@4.1.0` — `--oidc` needs vsce 4.x and Node 22+.
+DevOps PATs are retired on 2026-12-01). The local `npm run release` build is
+only a smoke test; the file that ships is built again from the tag. Pushing the
+tag `vX.Y.Z` starts the workflow, which has three jobs:
 
-### One-time Marketplace setup
+1. **build** (`contents: read`, no `id-token`) — checks out the tag, verifies that
+   `package.json` says the same version, `npm ci`, lint, `vsce package`, uploads
+   `markdown-extended-pro-<version>.vsix` as an artefact. Runs the packages' install
+   scripts, which is why it holds no publishing right.
+2. **publish** (`environment: marketplace`, `id-token: write`) — waits for an approval.
+   Then `npm ci --ignore-scripts` (vsce 4.1.0 from the lockfile, integrity-checked;
+   no lifecycle script of any package runs in the job that holds the token),
+   downloads the artefact, `vsce publish --oidc --packagePath` — exactly that file.
+3. **release** (`contents: write`) — attaches the `.vsix` to a GitHub release.
 
-On <https://marketplace.visualstudio.com/manage> → publisher `jackdmf` →
-**Trusted Publishing** → **Create**:
+Actions are pinned by commit SHA (version in the comment). `--oidc` needs
+`@vscode/vsce` 4.1.0 or newer (devDependency, pinned exactly) and Node 22+
+(`.nvmrc`, `engines`). The tests run in the local guard only (the e2e suite needs a
+display).
+
+### One-time setup (Daniel)
+
+The repository is a fork: on GitHub → **Actions** tab, enable workflows if GitHub
+asks to.
+
+**GitHub** (Settings of `JackDMF/vscode-markdown-extended`):
+
+1. *Environments* → **New environment** → name `marketplace` →
+   *Deployment branches and tags*: **Selected branches and tags** → add a **tag**
+   rule `v*` **and a branch rule `master`** (a manual "Run workflow" runs on the
+   branch `master`, not on the tag; without the branch rule the publish job is
+   rejected) → *Required reviewers*: `JackDMF` → Save.
+2. *Rules* → *Rulesets* → **New tag ruleset** → target pattern `v*` → enforcement
+   Active → restrict creations, updates and deletions (bypass: yourself), so that
+   only you can create a tag that starts a release.
+
+**Marketplace** (<https://marketplace.visualstudio.com/manage> → publisher
+`jackdmf` → **Trusted Publishing** → **Create**):
 
 | Field | Value |
 |-------|-------|
@@ -3353,19 +3378,32 @@ On <https://marketplace.visualstudio.com/manage> → publisher `jackdmf` →
 | Repository owner | `JackDMF` |
 | Repository | `vscode-markdown-extended` |
 | Workflow | `publish.yml` |
-| Environment | leave empty (the workflow uses none) |
+| Environment | `marketplace` |
 
-The policy is permanent after the first successful token exchange. The workflow
-file has to be on `master` for "Run workflow" to appear.
+The first successful token exchange activates the policy; revoke it on the same
+page if the repository or workflow changes hands.
 
-### Publishing an existing tag afterwards
+### Publishing an existing tag afterwards (4.12.0)
 
-GitHub → Actions → **Publish** → **Run workflow** → branch `master`, `tag` =
-`v4.12.0` (the tag is checked out; the workflow file itself comes from the
-chosen branch). The same works for any tag whose tag-push run failed.
+After the branch with the workflow is merged to `master` and pushed (the file
+must be on `master` for "Run workflow" to show up): GitHub → Actions → **Publish**
+→ **Run workflow** → branch `master`, `tag` = `v4.12.0`. The tag is checked out; the
+workflow file itself comes from `master`. The run stops at *publish* and waits for
+approval. **Before approving**, compare the file list of the built artefact with
+the local tree: download the artefact from the run, then
+
+```bash
+npx vsce ls --no-dependencies > /tmp/lokal.txt                  # in a checkout of v4.12.0
+unzip -Z1 markdown-extended-pro-4.12.0.vsix | sed 's|^extension/||' | sort > /tmp/artefakt.txt
+diff <(sort /tmp/lokal.txt) /tmp/artefakt.txt                    # only vsix metadata may differ
+```
+
+then approve in the run ("Review deployments" → `marketplace` → Approve). The same
+works for any tag whose run failed.
 
 ### Fallback until 2026-12-01
 
-`npm run release:local-publish` publishes from the machine with a valid PAT
-(`vsce publish --packagePath`) before tagging and pushing. The Actions run the
-tag then starts fails with "already exists" — ignore it.
+`npm run release:local-publish` publishes the local `.vsix` from the machine with a
+valid PAT (`vsce publish --packagePath`, no `--skip-duplicate`) before tagging and
+pushing. Reject the Actions run the tag then starts (it would report "already
+exists").
