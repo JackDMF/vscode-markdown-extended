@@ -2474,10 +2474,18 @@ question asked again for an incomplete list holds it through `ask` as any questi
 Ctrl+S during a question lets go first (`completionBeforeSave`). What the short hold cannot
 rule out — a document the host parsed from a text with the space in it, another writer's
 change landing while the question was on its way — reads that block as untouched, its `src`
-holding the space: the page then finds the textblock again by its text without the space, in a
-block with a `src` whose text has a space right after its end, the one nearest `asked`, and
-marks the block edited (`src` cleared, `dropSentSpace`), so the next edit writes it by rule and
-drops the space. A save VS Code starts in the few milliseconds a question is on its way can
+holding the space. So while a sent space may still be in the host's text (`spaceSent`: until a
+document comes, the caret leaves that textblock or something is typed there), the page notes
+where that textblock stands just before a document replaces the page's (`beforeDocument`: its
+top-level index from the start and from the end, and its path inside), and afterwards looks
+**only there** (`dropSentSpace`): a textblock with the text it had without the space, in a block
+with a `src` whose text has spaces right after its end. That block is marked edited (`src`
+cleared, so the next edit writes it by rule) only when the page then writes the text with
+those spaces taken out and nothing else changed — never a rewrite of a list or a quote beyond
+the space. An untouched block elsewhere that reads alike keeps its spaces (review 2, S1–S5).
+Over the archive (5,002 files), 169 untouched textblocks have spaces after their end; for 112
+of them writing the block by rule would change more than the spaces, and the guard refuses.
+A save VS Code starts in the few milliseconds a question is on its way can
 still write the space; the next edit takes it out. An answer is shown only while the caret is
 still in the textblock it was asked in and not before that place: "1. " and a quick Enter no
 longer open the list on the new line.

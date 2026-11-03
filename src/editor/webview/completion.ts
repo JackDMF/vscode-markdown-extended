@@ -148,6 +148,22 @@ export interface CompletionPort {
     acceptOnEnter(): AcceptOnEnter;
     /** The page's text changed with no transaction — a held space let go (`holding`): send it now. */
     textChanged(): void;
+    /** The text `doc` writes, as the page writes it (`pageMap`). */
+    textOf(doc: Node): string;
+}
+
+/** The offset of a 0-based line and character in `text`, lines broken as VS Code breaks them; `-1` past its lines. */
+function offsetAt(text: string, line: number, character: number): number {
+    const re = /\r\n|\r|\n/g;
+    let start = 0;
+    for (let k = 0; k < line; k++) {
+        const m = re.exec(text);
+        if (!m) {
+            return -1;
+        }
+        start = m.index + m[0].length;
+    }
+    return start + character;
 }
 
 /**
@@ -197,8 +213,15 @@ class CaretCompletion implements PluginView {
     private awaitingApply: number | null = null;
     /** The textblock at `asked` keeps its closing spaces (`afterClosingSpace`): a question asked there, or an item accepted there, on its way. */
     private holding = false;
-    /** A held space went to the host — the held textblock's text without it — and no document has come back since: one that comes may hold it (`dropSentSpace`). */
+    /**
+     * A held space went to the host — the held textblock's text without it —
+     * and since then no document came back, the caret stayed in that
+     * textblock and nothing was typed there: a document that comes may hold it
+     * (`dropSentSpace`).
+     */
     private spaceSent: string | null = null;
+    /** Where the textblock at `asked` stood just before a document came (`beforeDocument`), by index: what a resync that replaced its block keeps. */
+    private sentPlace: { top: number; fromEnd: number; path: number[] } | null = null;
     private seq = 0;
     private readonly mount: HTMLElement;
     private readonly onBeforeInput = (e: Event) => this.input(e as InputEvent);
@@ -244,6 +267,44 @@ class CaretCompletion implements PluginView {
         if (this.open) {
             this.refilter();
         }
+        this.forgetSentSpace();
+    }
+
+    /** The caret left the textblock a space was sent for, or something was typed there: no document can hold that space any more for it. */
+    private forgetSentSpace(): void {
+        // The resync a document makes is no move of the person's (`beforeDocument` to `documentShown`).
+        if (this.spaceSent === null || this.sentPlace !== null || this.holding || this.inFlight || this.awaitingApply !== null) {
+            return;
+        }
+        const state = this.view.state;
+        const asked = placesKey.getState(state)?.asked;
+        const selection = state.selection;
+        const $asked = asked == null ? null : state.doc.resolve(Math.min(asked, state.doc.content.size));
+        if ($asked === null || !(selection instanceof TextSelection) || selection.$head.start() !== $asked.start()
+            || $asked.parent.textContent.replace(/ +$/, '') !== this.spaceSent) {
+            this.spaceSent = null;
+        }
+    }
+
+    /** A document from the host is about to replace the page's: where the textblock a space was sent for stands, by index. */
+    beforeDocument(): void {
+        this.sentPlace = null;
+        const state = this.view.state;
+        const asked = placesKey.getState(state)?.asked;
+        if (this.spaceSent === null || asked == null) {
+            this.spaceSent = null;
+            return;
+        }
+        const $pos = state.doc.resolve(Math.min(asked, state.doc.content.size));
+        if ($pos.depth < 1 || !$pos.parent.isTextblock) {
+            this.spaceSent = null;
+            return;
+        }
+        const path: number[] = [];
+        for (let d = 1; d < $pos.depth; d++) {
+            path.push($pos.index(d));
+        }
+        this.sentPlace = { top: $pos.index(0), fromEnd: state.doc.childCount - 1 - $pos.index(0), path };
     }
 
     destroy(): void {
@@ -368,47 +429,67 @@ class CaretCompletion implements PluginView {
         if (this.spaceSent !== null) {
             this.dropSentSpace();
         }
+        this.sentPlace = null;
     }
 
     /**
      * A document the host parsed from a text with a held space in it reads
      * that block as untouched, its `src` holding the space, which the save
-     * would then write. The textblock is found again by its text — the held
-     * one without its closing spaces — in a block with a `src` whose text has
-     * a space right after the textblock's end, the one nearest `asked` (which
-     * the resync may have moved off it); that block is marked edited (`src`
-     * cleared), so the next edit writes it by rule and drops the space.
+     * would then write. Only the textblock the space was sent for is looked
+     * at: at the place it stood (`beforeDocument`) — counted from the start,
+     * or from the end where a change before it moved it — with the text it
+     * had without the space, the host's text holding spaces right after its
+     * end. Its block is marked edited (`src` cleared) only when the page then
+     * writes the text with those spaces taken out and nothing else changed;
+     * the next edit carries that.
      */
     private dropSentSpace(): void {
         const sent = this.spaceSent;
+        const place = this.sentPlace;
         this.spaceSent = null;
-        const state = this.view.state;
+        this.sentPlace = null;
+        const doc = this.view.state.doc;
         const map = this.port.map();
-        if (sent === null || !map) {
+        if (sent === null || place === null || !map) {
             return;
         }
-        const lines = map.text.split(/\r\n|\r|\n/);
-        const asked = placesKey.getState(state)?.asked ?? 0;
-        const doc = state.doc;
-        let best = -1;
-        doc.descendants((node, pos) => {
-            if (!node.isTextblock) {
-                return true;
+        for (const top of new Set([place.top, doc.childCount - 1 - place.fromEnd])) {
+            if (top < 0 || top >= doc.childCount) {
+                continue;
             }
-            if (node.textContent !== sent) {
-                return false;
+            const block = doc.child(top);
+            const blockPos = doc.resolve(0).posAtIndex(top, 0);
+            if ((block.attrs.src ?? null) === null) {
+                continue;
             }
-            const index = doc.resolve(pos).index(0);
-            const top = doc.resolve(pos).posAtIndex(index, 0);
-            const at = (doc.child(index).attrs.src ?? null) === null ? null : map.sourcePositionOf(pos + node.nodeSize - 1);
-            if (at && !at.approximate && lines[at.line]?.charAt(at.character) === ' ' && (best < 0 || Math.abs(top - asked) < Math.abs(best - asked))) {
-                best = top;
+            let node = block;
+            let pos = blockPos;
+            for (const index of place.path) {
+                if (index >= node.childCount) {
+                    break;
+                }
+                let at = pos + 1;
+                for (let k = 0; k < index; k++) {
+                    at += node.child(k).nodeSize;
+                }
+                node = node.child(index);
+                pos = at;
             }
-            return false;
-        });
-        const block = best < 0 ? null : doc.nodeAt(best);
-        if (block !== null) {
-            this.view.dispatch(state.tr.setNodeMarkup(best, undefined, { ...block.attrs, src: null }).setMeta('addToHistory', false));
+            if (!node.isTextblock || node.textContent !== sent) {
+                continue;
+            }
+            const end = map.sourcePositionOf(pos + node.nodeSize - 1);
+            const offset = end && !end.approximate ? offsetAt(map.text, end.line, end.character) : -1;
+            const spaces = offset < 0 ? '' : / *(?=\r|\n|$)/y.exec(map.text.slice(offset))?.[0] ?? '';
+            if (spaces === '' || !map.text.startsWith(spaces, offset)) {
+                continue;
+            }
+            const edited = doc.copy(doc.content.replaceChild(top, block.type.create({ ...block.attrs, src: null }, block.content, block.marks)));
+            if (this.port.textOf(edited) !== map.text.slice(0, offset) + map.text.slice(offset + spaces.length)) {
+                continue;
+            }
+            this.view.dispatch(this.view.state.tr.setNodeMarkup(blockPos, undefined, { ...block.attrs, src: null }).setMeta('addToHistory', false));
+            return;
         }
     }
 
@@ -631,6 +712,11 @@ export function completionSettingsChanged(view: EditorView): void {
 /** The textblock whose closing spaces the page writes now (`keepTrailingSpace`), `null` for none. */
 export function completionHeld(view: EditorView): Node | null {
     return instances.get(view)?.held ?? null;
+}
+
+/** A document from the host is about to replace the page's (`resync.ts`): see `dropSentSpace`. */
+export function completionBeforeDocument(view: EditorView): void {
+    instances.get(view)?.beforeDocument();
 }
 
 /** A save is about to write the page's text: a space held for the list goes first. */

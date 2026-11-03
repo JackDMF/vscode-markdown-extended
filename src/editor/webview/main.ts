@@ -23,7 +23,7 @@ import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
-import { completionBeforeSave, completionDocumentShown, completionHeld, completionMessage, completionPlugin, completionSettingsChanged } from './completion';
+import { completionBeforeDocument, completionBeforeSave, completionDocumentShown, completionHeld, completionMessage, completionPlugin, completionSettingsChanged } from './completion';
 import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
@@ -877,6 +877,7 @@ const languagePort = {
     post,
     acceptOnEnter: () => acceptOnEnter,
     textChanged: () => flush(),
+    textOf: (doc: Node) => serialize(doc),
 };
 
 /**
@@ -1009,6 +1010,8 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         if (changesText) {
             dismissRefusal(shown);
         }
+        // Before the resync replaces it: where a textblock a held space was sent for stands.
+        completionBeforeDocument(shown);
         const resync = resyncTransaction(shown.state, doc);
         keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
         if (insertedBlock !== undefined) {
