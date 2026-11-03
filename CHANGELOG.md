@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- A bar (or bubble, or field) for a left sidebar stands in the left margin, at the window's edge + 16 px, and reaches into the text column only where the column has no text at its height — it no longer covers the first words of the lines beside it. Where the margin is narrow its verbs give way to "…" first, as at the right margin.
+- On a Mac the hints and tooltips name the key as its cap reads: *Delete* for the key above Return (Backspace elsewhere), *Fn+Delete* for the forward one (Delete elsewhere) — in the footnote reference's "…again deletes" hint and the wiki embed's tooltip.
+
 ## v4.12.0 — Other Extensions Write Where You Work
 
 - Other extensions can insert Markdown blocks into the Visual Editor after the caret's block, undoable with Ctrl+Z (Cmd+Z) and without losing what you were typing (`visualEditor.insertBlock`).

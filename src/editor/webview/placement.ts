@@ -27,7 +27,7 @@
  */
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { PROBING_CLASS, contentIn, contentRight, firstLineTop, lineAt, marginContentLeft, rowCeiling, textLines } from './clearance';
+import { PROBING_CLASS, contentIn, contentLeft, contentRight, firstLineTop, lineAt, marginContentLeft, rowCeiling, textLines } from './clearance';
 import { focusPlace } from './focusPlace';
 import { rightLaneEdge } from './lane';
 import { AttributesTarget, EditorObject, currentTarget, isBlockObject, isBlockPlaced, isMarkObject, objectOfNode } from './objects';
@@ -38,6 +38,8 @@ import { AttributesTarget, EditorObject, currentTarget, isBlockObject, isBlockPl
 export const GAP = 4;
 /** A layer grown past the text column stops this short of the editor's right edge. */
 export const LAYER_GUTTER = 16;
+/** The notes and sidebars of the page, as the stylesheet may set them out of their line into a margin. */
+const NOTE_BODIES = '.sidenote, .mnote, .left-sidebar, .right-sidebar';
 /** The rest that shows a layer: the caret's in an object, a keyboard selection's, the typing re-arm. */
 export const REST_MS = 400;
 /** A layer that appeared or moved ignores the pointer this long. */
@@ -66,6 +68,8 @@ export interface Frame {
     columnRight?: number;
     /** The window's right edge less the gutter: a layer wider than the room (a field's floor) is kept left of it. Absent: no such clamp. */
     windowRight?: number;
+    /** The window's left edge plus the gutter: the least x of a layer at an anchor left of the column (a left sidebar floated into the left margin), which may stand there and reach into the column only where the column has no text (`placeAtLeftMargin`). Absent: `columnLeft` for every layer. */
+    windowLeft?: number;
 }
 
 /** The right edge a layer of `width` may reach in `frame`: the column's when it fits the column, else the layer edge. */
@@ -134,7 +138,9 @@ export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Contex
     // A layer wider than the room was fitted to it before (`ObjectBar.fit`): this clamps, never shrinks.
     // The bubble over a selection in the margin (a note's body there) stands at it, up to the layer edge (#9, #15).
     const inMargin = ctx.atAnchor === true && frame.columnRight !== undefined && anchor.left >= frame.columnRight;
-    const clamped = Math.max(frame.columnLeft, Math.min(anchor.left, (inMargin ? frame.layerEdge : rightEdge(size.width, frame)) - size.width));
+    // Mirrored at the left: an anchor wholly left of the column stands at it, down to the window's left edge + the gutter.
+    const inLeftMargin = ctx.atAnchor === true && frame.windowLeft !== undefined && anchor.right <= frame.columnLeft + 0.5;
+    const clamped = Math.max(inLeftMargin ? frame.windowLeft as number : frame.columnLeft, Math.min(anchor.left, (inMargin ? frame.layerEdge : rightEdge(size.width, frame)) - size.width));
     // Wider than the column allows (a field's floor, `fieldFloor`): kept inside the window, left of the column if it must.
     const x = frame.windowRight !== undefined && clamped + size.width > frame.windowRight ? Math.max(LAYER_GUTTER, frame.windowRight - size.width) : clamped;
     const below = anchor.bottom + GAP;
@@ -1228,6 +1234,11 @@ export class LayerSlot {
         }
         const margin = claim.inMargin?.() === true;
         const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, avoid, prefer: claim.prefer?.(), atAnchor: claim.kind === 'bubble' || margin };
+        // An anchor wholly left of the column is a note or sidebar floated into the left margin, whatever claims the layer.
+        if (frame.columnRight !== undefined && anchor.right <= frame.columnLeft + 0.5) {
+            this.placeAtLeftMargin(claim, anchor, frame, wide, opts, appeared);
+            return;
+        }
         if (again && prev.limited !== null && this.written?.el === claim.el && sameSize(prev.anchor, anchor)
             && Math.abs(prev.width - width) < 0.5 && Math.abs(prev.height - height) < 0.5 && sameFrame(prev.frame, frame)) {
             // A scroll: the layer kept short of margin content last time, its anchor only moved. Placed in that
@@ -1281,6 +1292,57 @@ export class LayerSlot {
             p = placeLayer(claim.el, anchor, { ...opts, frame: narrow });
         }
         this.write(claim, p, anchor, frame, avoid, limited, reach, appeared);
+    }
+
+    /**
+     * A layer at an anchor in the left margin (a left sidebar floated there):
+     * the mirror of the right margin's rule (#15). It stands at its anchor,
+     * never left of the window's edge + `LAYER_GUTTER`, and reaches into the
+     * column only where the column has no text at its height; where it has,
+     * the layer is fitted to the margin (its verbs drop their nouns first,
+     * `ObjectBar.fit`). Other notes in the margin are kept off like any layer.
+     * Fitted and placed up to three times: the side it stands on decides
+     * whether text is at its height, and the text decides its width.
+     */
+    private placeAtLeftMargin(claim: LayerClaim, anchor: Rect, frame: Frame, wide: Frame, opts: PlaceOptions, appeared: boolean): void {
+        const avoid = [...(opts.avoid ?? []), ...this.leftMarginNotes(frame, anchor)];
+        const least = LAYER_GUTTER;
+        let edge = wide.layerEdge;
+        let p: Placement;
+        let tries = 0;
+        for (;;) {
+            const f: Frame = { ...frame, layerEdge: edge, windowLeft: least };
+            const room = Math.max(edge - least, claim.kind === 'field' ? fieldFloor(claim.el) : 0);
+            claim.fit?.(room, false);
+            p = placeLayer(claim.el, anchor, { ...opts, avoid, frame: f, atAnchor: true });
+            // Text at the layer's height, whatever its width: the column's left edge (probed across the whole room).
+            const band = { left: frame.columnLeft, right: wide.layerEdge, top: p.y - GAP, bottom: p.y + claim.el.offsetHeight + GAP };
+            this.mount.classList.add(PROBING_CLASS);
+            let text: number | null;
+            try {
+                text = contentLeft(this.view, band);
+            } finally {
+                this.mount.classList.remove(PROBING_CLASS);
+            }
+            const next = text === null ? wide.layerEdge : Math.max(least, text - GAP);
+            if (Math.abs(next - edge) < 0.5 || ++tries >= 3) {
+                break;
+            }
+            edge = next;
+        }
+        this.write(claim, p, anchor, frame, [...(opts.avoid ?? [])], null, null, appeared);
+    }
+
+    /** The rects of the notes and sidebars set into the left margin, but the layer's own subject (what overlaps `anchor`): a layer keeps off them. */
+    private leftMarginNotes(frame: Frame, anchor: Rect): Rect[] {
+        const out: Rect[] = [];
+        for (const el of Array.from(this.view.dom.querySelectorAll(NOTE_BODIES))) {
+            const r = rectOf(el.getBoundingClientRect());
+            if (r.right <= frame.columnLeft + 0.5 && r.right > r.left && r.bottom > frame.ceiling && r.top < frame.floor && !overlaps(r, anchor)) {
+                out.push(r);
+            }
+        }
+        return out;
     }
 
     /**

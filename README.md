@@ -816,7 +816,7 @@ where the file writes it, numbered and with a `↩` per reference, so no list is
 and nothing moves in the file. Numbers follow the references as they move; labels change
 only by **Label…**. A footnote's text nothing refers to says *not referenced* (preview and
 export leave it out), and a `[^x]` written as text whose label no footnote has is dotted.
-Backspace or Delete beside a reference selects it; pressed again it deletes it — with its
+Backspace or Delete beside a reference (on a Mac: Delete or Fn+Delete) selects it; pressed again it deletes it — with its
 text when it was the last reference. A cut or a deleted sentence leaves the text, and the
 reference pasted back finds it again. In a footnote's text `Shift+Enter` breaks the line as
 the file does (two spaces, then the next line), `Enter` on an empty last line leaves it.

@@ -169,7 +169,7 @@ suite('Editor footnotes (e2e)', () => {
         await page.keyboard.press('Backspace');
         await delay(200);
         assert.ok(await page.$('.ProseMirror .mep-fn-ref.ProseMirror-selectednode'), 'selected');
-        assert.deepStrictEqual(await hint(), { text: 'Backspace again deletes footnote drittes with its text', tone: 'neutral', shown: true });
+        assert.deepStrictEqual(await hint(), { text: `${process.platform === 'darwin' ? 'Delete' : 'Backspace'} again deletes footnote drittes with its text`, tone: 'neutral', shown: true });
         await page.keyboard.press('Backspace');
         await settle();
         const after = await lastText();
@@ -177,6 +177,46 @@ suite('Editor footnotes (e2e)', () => {
         assert.deepStrictEqual(await hint(), { text: `Footnote drittes deleted with its text — ${UNDO}`, tone: 'neutral', shown: true });
         await press('z');
         assert.strictEqual(await lastText(), COTK, 'one undo, byte for byte');
+    });
+
+    test('the first press names the key as the platform\'s keyboard does: Backspace and Delete on Windows and Linux, Delete and Fn+Delete on a Mac (the key cap)', async function () {
+        this.timeout(30000);
+        const platform = (value: string | null) => page.evaluate(v => {
+            if (v === null) {
+                delete (navigator as unknown as { platform?: string }).platform;
+            } else {
+                Object.defineProperty(navigator, 'platform', { value: v, configurable: true });
+            }
+        }, value);
+        /** The hint as it stands, in both themes (when shots are asked for). */
+        const shotsOf = async (name: string) => {
+            for (const [theme, label] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as const) {
+                await applyTheme(page, theme);
+                await delay(150);
+                await shot(page, `${name}-1280-${label}.png`);
+            }
+            await applyTheme(page, LIGHT_MODERN);
+        };
+        try {
+            for (const [name, back, forward] of [['Win32', 'Backspace', 'Delete'], ['MacIntel', 'Delete', 'Fn+Delete']]) {
+                await platform(name);
+                await show(COTK.replace('Mal[^drittes] fragte', 'Mal[^drittes] und liebst[^liebst] fragte'));
+                await caretAt(' fragte, wurde');
+                await page.keyboard.press('Backspace');
+                await delay(200);
+                assert.ok((await hint()).text?.startsWith(`${back} again deletes`), `${name} backward: ${JSON.stringify(await hint())}`);
+                await shotsOf(`keys-${name === 'MacIntel' ? 'mac' : 'win'}-backward`);
+                await caretAt('liebst', 5);
+                await page.keyboard.press('ArrowRight');
+                await delay(80);
+                await page.keyboard.press('Delete');
+                await delay(200);
+                assert.ok((await hint()).text?.startsWith(`${forward} again deletes`), `${name} forward: ${JSON.stringify(await hint())}`);
+                await shotsOf(`keys-${name === 'MacIntel' ? 'mac' : 'win'}-forward`);
+            }
+        } finally {
+            await platform(null);
+        }
     });
 
     test('Delete before a repeated reference deletes only it: footnote keeps its text, the hint says how many are left', async function () {

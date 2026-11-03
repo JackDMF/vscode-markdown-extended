@@ -132,6 +132,28 @@ export function contentRight(view: EditorView, band: Band): number | null {
 }
 
 /**
+ * The left edge of the content in `band` — a part of the text column — or
+ * `null` where it holds none (`contentIn`'s fact): `contentRight`'s mirror,
+ * probed from the band's left edge rightwards, at half `contentIn`'s step, up
+ * to one step before the content found. How far a layer at a note in the left
+ * margin may reach into the column (the mirror of #15: only where the column
+ * has no text at its height).
+ */
+export function contentLeft(view: EditorView, band: Band): number | null {
+    if (band.right <= band.left || band.bottom <= band.top) {
+        return null;
+    }
+    const step = PROBE_STEP / 2;
+    const rows = [band.top + 2, (band.top + band.bottom) / 2, band.bottom - 2];
+    for (let x = band.left + 2; x <= band.right - 2; x += step) {
+        if (rows.some(y => contentAt(view, x, y))) {
+            return Math.max(band.left, x - step);
+        }
+    }
+    return null;
+}
+
+/**
  * The top and bottom of the line of text in `root` that runs through the
  * height `y` — its text's line boxes there, a floated note body left out
  * (`textRects`) — or `null` where no text does.

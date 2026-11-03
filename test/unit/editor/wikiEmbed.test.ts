@@ -834,6 +834,25 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         })();
     });
 
+    test('the embed\'s tooltip names the key cap of the platform: Backspace, and on a Mac Delete', () => {
+        const titleOn = (platform: string | undefined) => {
+            const before = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+            Object.defineProperty(globalThis, 'navigator', { value: platform === undefined ? undefined : { platform }, configurable: true, writable: true });
+            try {
+                return (DOMSerializer.fromSchema(schema).serializeNode(embed('![[x]]'), { document: fakeDocument as unknown as Document }) as unknown as FakeNode).html();
+            } finally {
+                if (before) {
+                    Object.defineProperty(globalThis, 'navigator', before);
+                } else {
+                    delete (globalThis as { navigator?: unknown }).navigator;
+                }
+            }
+        };
+        assert.ok(titleOn('Win32').includes('Backspace right after typing'), titleOn('Win32'));
+        assert.ok(titleOn('MacIntel').includes('Delete right after typing') && !titleOn('MacIntel').includes('Backspace'), titleOn('MacIntel'));
+        assert.ok(titleOn(undefined).includes('Backspace right after typing'), 'the host has no navigator: the plain names');
+    });
+
     test('a copied embed carries the plain title "Wiki embed", not the editor\'s how-to tooltip', () => {
         const html = copiedHtml(plugin(), inline(text('see '), embed('![[x]]')));
         assert.ok(html.includes('title="Wiki embed"'), html);

@@ -2077,6 +2077,23 @@ cannot supply another — VS Code's `undo` does not reach the page, and no exten
 command's keybinding. The hint is the one the notes plugin shows a refusal in; one element, two tones
 (`data-tone`), so the page has one place beside the caret where it speaks.
 
+The deleting keys are named the same way: `deleteKeyName` (`keys.ts`; `deleteKey` in
+`hint.ts` for the page) says *Backspace* / *Delete* off a Mac and, as the keyboard prints
+them, *Delete* (the key above Return) / *Fn+Delete* (forward) on one. Modifiers are spelled as
+words on every surface (*Cmd+Z*, not ⌘Z), so the key caps are words too, not ⌫ / ⌦ — a glyph
+would be the only one on the page. Every string that names a deleting key goes through it (the
+footnote reference's first-press hint, the wiki embed's tooltip); `isMacPlatform` (`keys.ts`)
+is the one platform test, false in the host, which has no `navigator`.
+
+**A layer at an anchor left of the column** (a left sidebar floated into the left margin;
+`placeAtLeftMargin` in `webview/placement.ts`) mirrors the right margin's rule (#15): it
+stands at its anchor, never left of the window's edge + 16 px (`Frame.windowLeft`), and reaches
+into the column only where the column has no text at its height (`contentLeft` in
+`clearance.ts`, probed across the whole room, so the width does not decide it); where it has,
+the layer is fitted to the margin and its verbs drop their nouns first (`ObjectBar.fit`).
+Notes in the margin are kept off like any layer. Fitted and placed up to three times: the side
+decides whether text is at its height, the text decides the width. Bar, bubble and field alike.
+
 **The inline field** (`webview/inlineField.ts`) is one reusable component for every place a
 value is asked for where it is used — the verbs' fields, and the toolbar's **Span with
 class**, which opens the attributes field (empty between its fixed braces, `adorn`) in a
