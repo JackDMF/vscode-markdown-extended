@@ -16,11 +16,21 @@
  *   4. CHANGELOG has this version    — the release is described before it ships
  *   5. tag free                      — this version was not released before
  *   6. lint and the full test suite
- *   7. package ONCE, then publish exactly that file
+ *   7. package locally — a smoke test of the packaging; the file that goes to the
+ *      Marketplace is built again by the workflow from the tag (build job)
+ *
+ * Publishing is done by GitHub Actions (.github/workflows/publish.yml, Trusted
+ * Publishing / OIDC — no token): pushing the tag v<version> starts it. The
+ * Marketplace PAT is gone for good on 2026-12-01; --local-publish is the way
+ * out until then, should Actions be unavailable.
  *
  * Usage:
- *   npm run release            checks + lint + tests + package (nothing leaves the machine)
- *   npm run release:publish    the same, then tag, push and publish that very .vsix
+ *   npm run release                 checks + lint + tests + package (nothing leaves the machine)
+ *   npm run release:publish         the same, then tag and push — that starts the Actions run, which
+ *                                   waits for approval (environment `marketplace`) before publishing
+ *   npm run release:local-publish   the same, but publishes the local .vsix from this machine with `vsce publish`
+ *                                   (needs a valid PAT) before tag and push. Reject the
+ *                                   Actions run that the tag then starts (or let it fail).
  */
 
 import { execFileSync } from 'node:child_process';
@@ -28,7 +38,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const wurzel = resolve(import.meta.dirname, '..');
-const veroeffentlichen = process.argv.includes('--publish');
+const lokalVeroeffentlichen = process.argv.includes('--local-publish');
+const veroeffentlichen = process.argv.includes('--publish') || lokalVeroeffentlichen;
 
 const lauf = (befehl, argumente, still = false) =>
   execFileSync(befehl, argumente, {
@@ -130,14 +141,27 @@ if (!veroeffentlichen) {
 }
 
 // ---------------------------------------------------------------- Ausliefern
+if (lokalVeroeffentlichen) {
+  schritt('Lokal veröffentlichen (Notweg, PAT)');
+  // Genau das geprüfte Artefakt — ohne --packagePath würde vsce neu packen und
+  // etwas anderes ausliefern, als die Tests gesehen haben.
+  lauf('npx', ['vsce', 'publish', '--packagePath', vsix]);
+  gut(`${publisher}.${name} ${marke} auf dem Marketplace`);
+}
+
 schritt('Tag setzen und schieben');
 lauf('git', ['tag', '-a', marke, '-m', `${marke}\n\nSiehe CHANGELOG.md.`], true);
 lauf('git', ['push', 'origin', zweig], true);
 lauf('git', ['push', 'origin', marke], true);
 gut(`${marke} getaggt und geschoben`);
 
-schritt('Veröffentlichen');
-// Genau das geprüfte Artefakt — ohne --packagePath würde vsce neu packen und
-// etwas anderes ausliefern, als die Tests gesehen haben.
-lauf('npx', ['vsce', 'publish', '--packagePath', vsix]);
-console.log(`\n[32m✔ ${publisher}.${name} ${marke} veröffentlicht.[0m`);
+// Der Tag-Push startet den Workflow; er veröffentlicht das Paket per OIDC.
+const aktionen = git('remote', 'get-url', 'origin')
+  .replace(/^git@github\.com:/, 'https://github.com/')
+  .replace(/\.git$/, '') + '/actions/workflows/publish.yml';
+if (lokalVeroeffentlichen) {
+  console.log(`\n[32m✔ ${publisher}.${name} ${marke} veröffentlicht (lokal).[0m`);
+  console.log(`  Den Actions-Lauf zum Tag ablehnen (er würde „already exists" melden) — ${aktionen}`);
+} else {
+  console.log(`\n[32m✔ GitHub Actions hat die Veröffentlichung von ${marke} gestartet (wartet auf deine Freigabe) — ${aktionen}[0m`);
+}

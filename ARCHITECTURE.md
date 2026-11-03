@@ -3317,7 +3317,7 @@ For questions or suggestions, please open an issue on GitHub.
 
 ```bash
 npm run release          # checks + lint + tests + .vsix, nothing leaves the machine
-npm run release:publish  # the same, then tag, push, and publish that .vsix
+npm run release:publish  # the same, then tag and push — GitHub Actions publishes the tag
 ```
 
 `scripts/release.mjs` checks, in this order: working tree clean · branch not behind
@@ -3331,5 +3331,95 @@ released in v3.0.1 silently vanished from the artefact; and v3.0.1's version bum
 had never been committed — `package.json` said 3.0.0 while the Marketplace served
 3.0.1, which is what made building from a stale base so easy.
 
-Publishing uses `--packagePath` deliberately: `vsce publish` would otherwise
-repackage and ship a different artefact than the one the tests ran against.
+The Marketplace upload is not done by the script but by GitHub Actions
+(`.github/workflows/publish.yml`) using **Trusted Publishing** (OIDC,
+`vsce publish --oidc`) — no Personal Access Token exists any more (global Azure
+DevOps PATs are retired on 2026-12-01). The local `npm run release` build is
+only a smoke test; the file that ships is built again from the tag. Pushing the
+tag `vX.Y.Z` starts the workflow, which has three jobs:
+
+1. **build** (`contents: read`, no `id-token`) — checks out the tag, verifies that
+   `package.json` says the same version, `npm ci`, lint, `vsce package`, uploads
+   `markdown-extended-pro-<version>.vsix` as an artefact. Runs the packages' install
+   scripts, which is why it holds no publishing right.
+2. **publish** (`environment: marketplace`, `id-token: write`) — waits for an approval.
+   Then `npm ci --ignore-scripts` (vsce 4.1.0 from the lockfile, integrity-checked;
+   no lifecycle script of any package runs in the job that holds the token),
+   downloads the artefact, `vsce publish --oidc --packagePath` — exactly that file.
+3. **release** (`contents: write`) — attaches the `.vsix` to a GitHub release.
+
+Actions are pinned by commit SHA (version in the comment). `--oidc` needs
+`@vscode/vsce` 4.1.0 or newer (devDependency, pinned exactly) and Node 22+
+(`.nvmrc`, `engines`). The tests run in the local guard only (the e2e suite needs a
+display).
+
+### One-time setup (Daniel)
+
+The repository is a fork: on GitHub → **Actions** tab, enable workflows if GitHub
+asks to.
+
+**GitHub** (Settings of `JackDMF/vscode-markdown-extended`):
+
+1. *Environments* → **New environment** → name `marketplace` →
+   *Deployment branches and tags*: **Selected branches and tags** → add a **tag**
+   rule `v*` **and a branch rule `master`** (a manual "Run workflow" runs on the
+   branch `master`, not on the tag; without the branch rule the publish job is
+   rejected) → *Required reviewers*: `JackDMF` (leave *Prevent self-review* off — otherwise the one
+   reviewer cannot approve the runs he starts) → Save.
+2. *Rules* → *Rulesets* → **New tag ruleset** → target pattern `v*` → enforcement
+   Active → restrict creations, updates and deletions (bypass: role **Repository admin** — the personal account is the admin), so that
+   only you can create a tag that starts a release. Create it **after** moving the
+   `v4.12.0` tag (see below), or give yourself the bypass.
+
+**Marketplace** (<https://marketplace.visualstudio.com/manage> → publisher
+`jackdmf` → **Trusted Publishing** → **Create**):
+
+| Field | Value |
+|-------|-------|
+| Policy name | `GitHub Actions publish` (any label) |
+| Repository owner | `JackDMF` |
+| Repository | `vscode-markdown-extended` |
+| Workflow | `publish.yml` |
+| Environment | `marketplace` |
+
+The first successful token exchange activates the policy; revoke it on the same
+page if the repository or workflow changes hands.
+
+### Publishing 4.12.0 (the tag has to move)
+
+"Run workflow" with a `tag` input only works for tags that already contain this
+workflow's prerequisites (`.nvmrc`, the `@vscode/vsce` devDependency); the build
+job stops with a clear message otherwise. `v4.12.0` (c40f1ff) predates them and
+4.12.0 never reached the Marketplace, so the tag is moved onto the merge commit.
+In this order:
+
+1. Set up the GitHub environment and the Marketplace policy (above).
+2. Merge `ci/trusted-publishing` into `master` and push it. Then, once, `npm ci`
+   locally so that `release.mjs` uses vsce 4.1.0 instead of the global 3.9.2.
+3. Move the tag **before** the tag ruleset is active (or with bypass):
+   ```bash
+   git tag -f -a v4.12.0 -m "v4.12.0" <merge-commit>
+   git push --force origin refs/tags/v4.12.0
+   ```
+   The tag push starts the run.
+4. The run stops at *publish*. Download the artefact `markdown-extended-pro-4.12.0.vsix`
+   and compare its file list with the tree (in a checkout of the tag):
+   ```bash
+   npm ci && npm run package          # dist/ is gitignored
+   npx vsce ls --no-dependencies | sort > /tmp/lokal.txt
+   unzip -Z1 markdown-extended-pro-4.12.0.vsix | grep '^extension/' \
+     | sed 's|^extension/||' | sort > /tmp/artefakt.txt
+   diff /tmp/lokal.txt /tmp/artefakt.txt   # ignores [Content_Types].xml, extension.vsixmanifest;
+   # expected: README.md/CHANGELOG.md appear as readme.md/changelog.md in the VSIX (vsce renames them)
+   ```
+5. Approve in the run: "Review deployments" → `marketplace` → Approve.
+
+For later versions `npm run release:publish` does tag and push itself. "Run workflow"
+remains for a re-run of a tag that already contains the workflow state.
+
+### Fallback until 2026-12-01
+
+`npm run release:local-publish` publishes the local `.vsix` from the machine with a
+valid PAT (`vsce publish --packagePath`, no `--skip-duplicate`) before tagging and
+pushing. Reject the Actions run the tag then starts (it would report "already
+exists").
