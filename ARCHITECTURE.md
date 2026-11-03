@@ -2954,6 +2954,13 @@ markdown, { focus })`.
   with `unconfirmed`: the block may be in the document or not, and the caller must not take it
   as not inserted. The page's other reasons: no document (`error-state`), would not take the
   block (`refused`, also `error-state`).
+- **Known limit: an open source box with unfinished text.** The box is committed before the
+  block, as a save would commit it. If its text leaves a construct open — a code fence typed
+  but not closed — the host's parse reads the block (and what follows) as part of it: the
+  extension still hears `inserted`, and undo no longer reaches the insertion, because the
+  re-sync replaces a range wider than the block. Nothing is lost (the file holds what was typed
+  plus the block), and it needs an insert from outside in the middle of typing a fence; it is
+  accepted, not guarded (review 2, 03.11.2026).
 
 ### Styles
 
