@@ -299,6 +299,46 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
         assert.ok(back.right <= n1.left, `still off the note: ${JSON.stringify({ back, note: n1 })}`);
     });
 
+    // Text above the sidebar grows while its bar is up, with no scroll (the host's lens rows; a late image, an outside edit
+    // alike): the sidebar moves down, the page does not — the bar follows its sidebar, it is not kept where it stood (H-2).
+    for (const [label, sheet, width] of [['in the margin', MARGIN_LAYOUT, 1280], ['fallen back into the column', TIME_MARGIN, 800]] as const) {
+        test(`a bar ${label}: rows of lenses drawn above its sidebar while it is up move it with the sidebar, within a line's height of it (review round 5, H-2)`, async function () {
+            await closeEditorPage(this, editor);
+            this.timeout(90000);
+            editor = await openEditorPage({ width, height: 600, styles: ['markdown-extended.css'], userStyles: [sheet] });
+            if (!editor) {
+                this.skip();
+            }
+            page = (editor as EditorPage).page;
+            const lines = Array.from({ length: 4 }, (_, k) => `Zeile ${k} mit etwas Text, der bis an den Rand der Spalte läuft.`);
+            const blocks = [...lines, 'Mitte $Uhrzeit${class=living} und ein ruhiger Satz, der weitergeht.', ...lines, 'The last paragraph.'];
+            const m = await barAt(`${blocks.join('\n\n')}\n`, 'Uhrzeit');
+            const gapOf = async () => {
+                const bar = (await measure()).bar;
+                const side = await sidebarOf('Uhrzeit');
+                return { gap: bar.top >= side.bottom ? bar.top - side.bottom : side.top - bar.bottom, bar, side };
+            };
+            const before = await gapOf();
+            assert.ok(before.gap >= 0 && before.gap <= before.side.line, `under its sidebar to start with: ${JSON.stringify(before)}`);
+            if (sheet === TIME_MARGIN) {
+                assert.ok(m.bar.left >= m.column - 1, `fallen back into the column: ${JSON.stringify(m.bar)}`);
+            } else {
+                assert.ok(Math.abs(m.bar.left - 16) < 1, `in the margin: ${JSON.stringify(m.bar)}`);
+            }
+            // A version no document of the page reaches: the rows are for the document shown.
+            await (editor as EditorPage).send({ type: 'lenses', version: 1_000_000, blocks: blocks.length, rows: [
+                { blockIndex: 0, items: [{ id: 'a', title: 'Lens above the first block' }] },
+                { blockIndex: 1, items: [{ id: 'b', title: 'Lens above the second block' }] },
+            ] });
+            await page.waitForFunction(() => document.querySelectorAll('.ProseMirror > .mep-lens-row').length === 2);
+            await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            await delay(200);
+            const after = await gapOf();
+            assert.ok(after.side.bottom > before.side.bottom + 10, `the rows moved the sidebar down: ${JSON.stringify({ before: before.side, after: after.side })}`);
+            assert.ok(after.gap >= 0 && after.gap <= after.side.line, `the bar moved with its sidebar: ${JSON.stringify({ before, after })}`);
+        });
+    }
+
     // The user's own stylesheet, read in place (`MEP_USER_STYLESHEET`; skipped without it): the rule's invariants, wherever its
     // geometry puts the bar — never cut; in the margin at the edge + 16 px off every text and within a line's height of its
     // sidebar, or in the column off every note in the right margin.

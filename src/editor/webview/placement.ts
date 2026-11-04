@@ -869,6 +869,8 @@ interface Placed {
     limited: number | null;
     /** How far into the column a layer at the margin was let reach (`columnReach`), or `null`: as far as its anchor. */
     reach: number | null;
+    /** The mount's top in the viewport when it was placed: a scroll moves it with the anchor, a change in the page above the anchor does not. */
+    mountTop: number;
 }
 
 /** Where an element was last written, in its own space: what `moved` compares. */
@@ -1373,11 +1375,14 @@ export class LayerSlot {
             // it is still in the window — measured again only when it is not, or when something else changed. And only where it was
             // in the window before the scroll too: what was placed out of sight was probed where nothing answers (`elementFromPoint`
             // is null there — no note, no text), so it is measured again once it comes back (review round 4, H-1).
+            // And only a scroll: the page moved as far as the subject did. Content grown above the subject with no scroll (the
+            // host's lens rows, a late image, an outside edit) moves the subject, not the page — measured again (review round 5, H-2).
             const dy = anchor.top - prev.anchor.top;
             const base = this.mount.getBoundingClientRect();
             const at = { x: this.written.at.x + base.left, y: this.written.at.y + base.top, side: this.written.at.side };
             const inWindow = (y: number): boolean => y >= frame.ceiling + GAP && y + el.offsetHeight <= frame.floor;
-            if (prev.avoid.every((r, i) => sameRect({ ...r, top: r.top + dy, bottom: r.bottom + dy }, avoidOpen[i])) && anchor.left === prev.anchor.left
+            if (Math.abs(base.top - prev.mountTop - dy) < 0.5
+                && prev.avoid.every((r, i) => sameRect({ ...r, top: r.top + dy, bottom: r.bottom + dy }, avoidOpen[i])) && anchor.left === prev.anchor.left
                 && (dy === 0 || (inWindow(at.y - dy) && inWindow(at.y)))) {
                 if (dy !== 0) {
                     this.write(claim, at, anchor, frame, avoidOpen, prev.limited, null, appeared);
@@ -1502,7 +1507,7 @@ export class LayerSlot {
         const at: Placement = { x: p.x - base.left, y: p.y - base.top, side: p.side };
         const before = this.written?.el === claim.el ? this.written.at : null;
         this.written = { el: claim.el, at };
-        this.placed = { key: claim.key, anchor, width: claim.el.offsetWidth, height: claim.el.offsetHeight, frame, avoid, limited, reach };
+        this.placed = { key: claim.key, anchor, width: claim.el.offsetWidth, height: claim.el.offsetHeight, frame, avoid, limited, reach, mountTop: base.top };
         // Standing above what it is about: a tooltip of its controls goes above it too, off its anchor (`tooltip.ts`).
         claim.el.toggleAttribute('data-flipped', p.y + claim.el.offsetHeight <= anchor.top + 0.5);
         const shifted = appeared || moved(before, at);
