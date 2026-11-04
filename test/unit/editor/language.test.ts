@@ -3,7 +3,7 @@ import { Node } from 'prosemirror-model';
 import { parseDocument } from '../../../src/editor/parse';
 import { PositionMap, SourceRange, createPositionMap } from '../../../src/editor/positions';
 import type { CompletionEntry, DiagnosticEntry } from '../../../src/editor/protocol';
-import { filterCompletions, isWordCharacter, listKeyAction } from '../../../src/editor/webview/completion';
+import { CARET_COMPLETION_KEYS, CARET_COMPLETION_KEYS_TAB, caretCompletionKeys, enterAccepts, filterCompletions, isWordCharacter, listKeyAction } from '../../../src/editor/webview/completion';
 import { DiagnosticMark, diagnosticCounts, diagnosticMarks, worse } from '../../../src/editor/webview/diagnostics';
 import { hostEngine } from './helpers';
 
@@ -135,6 +135,30 @@ suite('Editor completion: filtering and keys', () => {
         assert.deepStrictEqual(listKeyAction('Tab', 3, 1), { kind: 'accept', chosen: 1 });
         assert.deepStrictEqual(listKeyAction('Enter', 3, -1), { kind: 'accept', chosen: 0 }, 'nothing chosen: the first row');
         assert.deepStrictEqual(listKeyAction('Escape', 3, 1), { kind: 'close' });
+    });
+
+    test('Enter that does not accept closes the list and is the text\'s; Tab accepts all the same', () => {
+        assert.deepStrictEqual(listKeyAction('Enter', 3, 1, {}, false), { kind: 'dismiss' });
+        assert.deepStrictEqual(listKeyAction('Tab', 3, 1, {}, false), { kind: 'accept', chosen: 1 });
+        assert.strictEqual(listKeyAction('Enter', 3, 1, { ctrl: true }, false), null, 'a modifier still leaves it to the text, list open');
+    });
+
+    test('acceptSuggestionOnEnter: on accepts, off never, smart only where accepting changes the text', () => {
+        const book: CompletionEntry = { label: '1. Mose', insertText: '1. Mose' };
+        assert.strictEqual(enterAccepts('on', book, '1. Mose', false), true);
+        assert.strictEqual(enterAccepts('off', book, '1. M', true), false);
+        assert.strictEqual(enterAccepts('smart', book, '1. M', false), true, 'the insertion differs from what was typed');
+        assert.strictEqual(enterAccepts('smart', book, '1. Mose', false), false, 'typed out in full: Enter is the new line');
+        assert.strictEqual(enterAccepts('smart', book, '1. mose', false), true, 'case counts, as in VS Code');
+        assert.strictEqual(enterAccepts('smart', book, '1. Mose', true), true, 'a list asked for with Ctrl+Space');
+        assert.strictEqual(enterAccepts('smart', { ...book, snippetOrEdits: true }, '1. Mose', false), true, 'a snippet or additional edits');
+    });
+
+    test('the footer names Enter only where it may accept', () => {
+        assert.strictEqual(caretCompletionKeys('on'), CARET_COMPLETION_KEYS);
+        assert.strictEqual(caretCompletionKeys('smart'), CARET_COMPLETION_KEYS);
+        assert.strictEqual(caretCompletionKeys('off'), CARET_COMPLETION_KEYS_TAB);
+        assert.strictEqual(CARET_COMPLETION_KEYS_TAB, '↹ accept · Esc close');
     });
 
     test('any other key, and a key with a modifier, is the text\'s', () => {

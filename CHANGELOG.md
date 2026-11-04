@@ -5,6 +5,9 @@
 - An open Edit source box (a source block's or the properties' YAML) no longer writes its old text over a change made outside the editor to its block: it closes unapplied, your typing goes to the clipboard, and a hint says so.
 - With a file open in the Visual Editor twice (split, or beside a diff), inserting blocks, Sort Footnotes and following a link go to the editor you used last, and the other one keeps working when one closes.
 - An extension inserting blocks with focus brings the Visual Editor to the front where it is, instead of opening a second one in the group you were working in.
+- In the Visual Editor's completion list, Enter follows VS Code's `editor.acceptSuggestionOnEnter` for Markdown: with `off` it closes the list and starts a new line (Tab accepts), with `smart` it accepts only where that changes the text; the list's footer names Enter only where it accepts.
+- A completion provider that triggers on a space is asked at the end of a paragraph too, with the space in the text: the Studienhilfe's books after "1. " now show there, and accepting replaces "1. M" with the book. The space is in the file only while the providers are asked and while the accepted book is written; it goes again as soon as the list opens, so saving, closing or another extension's change while the list is open finds the paragraph's end as before.
+- A completion list answered after the caret left its line (a quick Enter) no longer opens there.
 
 ## v4.12.0 — Other Extensions Write Where You Work
 

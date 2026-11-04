@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { HostMessage, WebviewMessage } from '../protocol';
-import { CompletionController } from './completion';
+import { CompletionController, acceptOnEnterFor } from './completion';
 import { DiagnosticsController } from './diagnostics';
 import { message } from './errors';
 import { HoverController } from './hover';
@@ -39,20 +39,37 @@ export class LanguageFeatures implements vscode.Disposable {
     private readonly completion: CompletionController;
     private readonly hover: HoverController;
     private readonly diagnostics: DiagnosticsController;
+    private readonly configuration: vscode.Disposable;
 
     constructor(private readonly host: LanguageHost) {
         this.completion = new CompletionController(host);
         this.hover = new HoverController(host);
         this.diagnostics = new DiagnosticsController(host);
+        this.configuration = vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('editor.acceptSuggestionOnEnter', { uri: this.host.port.document.uri, languageId: 'markdown' })) {
+                void this.sendSettings();
+            }
+        });
     }
 
     dispose(): void {
         this.diagnostics.dispose();
+        this.configuration.dispose();
     }
 
-    /** The session posted a document: the page's diagnostics are drawn afresh on it. */
+    /**
+     * The session posted a document: the page's diagnostics are drawn afresh
+     * on it, and the list's settings follow it — a page loaded again starts
+     * from VS Code's defaults.
+     */
     documentPosted(): void {
         this.diagnostics.schedule();
+        void this.sendSettings();
+    }
+
+    /** VS Code's settings for the caret's list, as they are for this document now. */
+    private sendSettings(): Promise<void> {
+        return this.host.send({ type: 'completionSettings', acceptSuggestionOnEnter: acceptOnEnterFor(this.host.port.document.uri) });
     }
 
     receive(msg: WebviewMessage): void {

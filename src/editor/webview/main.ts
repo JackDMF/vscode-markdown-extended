@@ -19,12 +19,12 @@ import type { Mappable } from 'prosemirror-transform';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap, selectionOf } from '../positions';
-import type { CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import type { AcceptOnEnter, CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
-import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
+import { completionBeforeDocument, completionBeforeSave, completionDocumentShown, completionHeld, completionMessage, completionPlugin, completionSettingsChanged } from './completion';
 import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
@@ -93,16 +93,24 @@ function post(message: WebviewMessage): void {
  * host's `map` requests and every serialization read the same one, so a block
  * edited since the host's parse is serialized once per state, not per question.
  */
-const pageMaps = new WeakMap<Node, { meta: Current; map: PositionMap }>();
+const pageMaps = new WeakMap<Node, { meta: Current; held: Node | null; map: PositionMap }>();
 
+/**
+ * The map of `doc`, and the text it writes. The editor's own document writes
+ * the closing spaces of the textblock the completion list holds
+ * (`completionHeld`), so the host sees a space typed at a paragraph's end
+ * while the list is asked for or open; every other document — the host's,
+ * just parsed — writes as the save does.
+ */
 function pageMap(doc: Node): PositionMap {
     const meta = current as Current;
+    const held = view !== undefined && doc === view.state.doc ? completionHeld(view) : null;
     const known = pageMaps.get(doc);
-    if (known && known.meta === meta) {
+    if (known && known.meta === meta && known.held === held) {
         return known.map;
     }
-    const map = createPositionMap({ doc, eol: meta.eol, tail: meta.tail }, { defaultWrap: meta.defaultWrap });
-    pageMaps.set(doc, { meta, map });
+    const map = createPositionMap({ doc, eol: meta.eol, tail: meta.tail }, { defaultWrap: meta.defaultWrap, keepTrailingSpace: held });
+    pageMaps.set(doc, { meta, held, map });
     return map;
 }
 
@@ -863,6 +871,9 @@ const sourceContext = () => ({
     documentText: view ? serialize(view.state.doc) : '',
 });
 
+/** VS Code's `editor.acceptSuggestionOnEnter` for Markdown, as the host last posted it (`completionSettings`); its default until then. */
+let acceptOnEnter: AcceptOnEnter = 'on';
+
 /**
  * What completion and the pointer's card need from the page: the version of
  * the document shown, the pending edit sent first — every question they ask is
@@ -873,6 +884,9 @@ const languagePort = {
     flush: () => flush(),
     map: () => (view && current ? pageMap(view.state.doc) : undefined),
     post,
+    acceptOnEnter: () => acceptOnEnter,
+    textChanged: () => flush(),
+    textOf: (doc: Node) => serialize(doc),
 };
 
 /**
@@ -1005,6 +1019,8 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         if (changesText) {
             dismissRefusal(shown);
         }
+        // Before the resync replaces it: where a textblock a held space was sent for stands.
+        completionBeforeDocument(shown);
         const resync = resyncTransaction(shown.state, doc);
         const before = shown.state.doc;
         // Where each open box stood, should the document draw its block anew.
@@ -1160,6 +1176,8 @@ function onSaveKeydown(e: KeyboardEvent): void {
     if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's' || !view) {
         return;
     }
+    // The file is written as the save writes it: no space held for the completion list.
+    completionBeforeSave(view);
     commitForSending();
     if (e.altKey || e.shiftKey) {
         // Save As and the like stay VS Code's; the pending edit is sent first.
@@ -1300,6 +1318,12 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
         case 'completionApplied':
             if (view) {
                 completionMessage(view, msg);
+            }
+            break;
+        case 'completionSettings':
+            acceptOnEnter = msg.acceptSuggestionOnEnter;
+            if (view) {
+                completionSettingsChanged(view);
             }
             break;
         case 'diagnostics':

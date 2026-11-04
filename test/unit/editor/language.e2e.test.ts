@@ -227,6 +227,89 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         await settle();
     });
 
+    test('an answer that comes after the caret left the line it was asked on (a quick Enter) opens nothing', async function () {
+        this.timeout(20000);
+        await showText(SOURCE);
+        await page.waitForFunction(t => document.querySelector('.ProseMirror > p')?.textContent === t, {}, LINE_2);
+        await page.click('.ProseMirror > p');
+        await page.keyboard.press('End');
+        const before = await count();
+        await page.keyboard.type(':');
+        const asked = await waitFor('complete', before);
+        await page.keyboard.press('Enter');
+        const at = { line: 2, character: LINE_2.length + 1 };
+        await send({ type: 'completions', requestId: asked.requestId, version, incomplete: false, items: [{ label: 'late', insertText: 'late', range: { start: at, end: at } }] });
+        await delay(150);
+        assert.strictEqual(await page.$('.mep-caret-completions'), null);
+        await showText(SOURCE);
+    });
+
+    test('a setting changed while the list is open: its footer says the keys afresh', async function () {
+        this.timeout(20000);
+        await showText(SOURCE);
+        await page.waitForFunction(t => document.querySelector('.ProseMirror > p')?.textContent === t, {}, LINE_2);
+        await page.click('.ProseMirror > p');
+        await page.keyboard.press('End');
+        const before = await count();
+        await page.keyboard.type(':');
+        const asked = await waitFor('complete', before);
+        const at = { line: 2, character: LINE_2.length + 1 };
+        await send({ type: 'completions', requestId: asked.requestId, version, incomplete: false, items: [{ label: 'one', insertText: 'one', range: { start: at, end: at } }] });
+        await page.waitForSelector('.mep-caret-completions .mep-completion');
+        const keys = () => page.$eval('.mep-caret-completions .mep-completions-keys', el => el.textContent);
+        assert.strictEqual(await keys(), '↹ ↵ accept · Esc close');
+        await send({ type: 'completionSettings', acceptSuggestionOnEnter: 'off' });
+        await page.waitForFunction(() => document.querySelector('.mep-caret-completions .mep-completions-keys')?.textContent === '↹ accept · Esc close');
+        await send({ type: 'completionSettings', acceptSuggestionOnEnter: 'on' });
+        await page.keyboard.press('Escape');
+        await showText(SOURCE);
+    });
+
+    test('with acceptSuggestionOnEnter off, Enter closes the list and starts a new line, Tab accepts; the footer names Tab alone', async function () {
+        this.timeout(20000);
+        await send({ type: 'completionSettings', acceptSuggestionOnEnter: 'off' });
+        try {
+            await showText(SOURCE);
+            await page.waitForFunction(t => document.querySelector('.ProseMirror > p')?.textContent === t, {}, LINE_2);
+            const at = { line: 2, character: LINE_2.length + 1 };
+            const items = [{ label: 'one', insertText: 'one', range: { start: at, end: at } }];
+            const openList = async () => {
+                await page.click('.ProseMirror > p');
+                await page.keyboard.press('End');
+                const before = await count();
+                await page.keyboard.type(':');
+                const asked = await waitFor('complete', before);
+                await send({ type: 'completions', requestId: asked.requestId, version, incomplete: false, items });
+                await page.waitForSelector('.mep-caret-completions .mep-completion');
+                return asked;
+            };
+            const paragraphs = () => page.$$eval('.ProseMirror > p', els => els.length);
+            const shown = await paragraphs();
+
+            await openList();
+            assert.strictEqual(await page.$eval('.mep-caret-completions .mep-completions-keys', el => el.textContent), '↹ accept · Esc close');
+            const beforeEnter = await count();
+            await page.keyboard.press('Enter');
+            assert.strictEqual(await page.$('.mep-caret-completions'), null, 'Enter closes the list');
+            assert.strictEqual(await paragraphs(), shown + 1, 'and is the editor\'s: a new paragraph');
+            await delay(150);
+            assert.ok(!(await posted()).slice(beforeEnter).some(m => m.type === 'applyCompletion'), 'nothing accepted');
+            await page.keyboard.press('Backspace');
+            await page.keyboard.press('Backspace');
+            await settle();
+
+            const asked = await openList();
+            const beforeTab = await count();
+            await page.keyboard.press('Tab');
+            const accepted = await waitFor('applyCompletion', beforeTab);
+            assert.deepStrictEqual([accepted.requestId, accepted.index], [asked.requestId, 0], 'Tab accepts');
+            assert.strictEqual(await paragraphs(), shown);
+        } finally {
+            await send({ type: 'completionSettings', acceptSuggestionOnEnter: 'on' });
+            await showText(SOURCE);
+        }
+    });
+
     test('diagnostics: a squiggle on the mapped range, a source block marked whole, one marker per block, the count at the toolbar\'s end', async function () {
         this.timeout(20000);
         await showText(SOURCE);

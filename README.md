@@ -626,11 +626,16 @@ Editor too, asked of VS Code as the text editor asks, so both show the same.
 - **Completion while typing.** A list opens under the caret when a completion provider
   answers for a character just typed — Req Explorer's `-` after `FRS`, the built-in
   Markdown's `#`, `/` and `.` in a link — and on `Ctrl+Space`; a letter never opens it.
-  Letters typed while it is open filter it. `↓`/`↑` choose, `Tab` or `Enter` accepts, `Esc`
-  closes. Accepting writes the provider's own edit into the file, and the paragraph shows
-  what the file now says, the caret after the inserted text. A space typed at the very end
-  of a paragraph is not in the file until something follows it, so a provider that
-  triggers on a space answers only mid-line.
+  Letters typed while it is open filter it. `↓`/`↑` choose, `Tab` accepts, `Esc` closes.
+  `Enter` does what VS Code's `editor.acceptSuggestionOnEnter` for Markdown says, as in the
+  text editor: `on` (the default) accepts, `off` closes the list and starts the new line, and
+  `smart` accepts only where that changes the text. Accepting writes the provider's own
+  edit into the file, and the paragraph shows what the file now says, the caret after the
+  inserted text. A provider that triggers on a
+  space answers at the end of a paragraph too (the Studienhilfe's books after "1. "): the
+  space is in the file only while the providers are asked and while an accepted item is
+  written, and goes again as soon as the list opens — as it always does at a paragraph's
+  end.
 - **Problems on the page.** Every diagnostic VS Code holds for the file (the Problems view's)
   is a squiggle on the text it is about — red for an error, yellow for a warning, blue for an
   info, dotted for a hint. One that cannot be placed exactly — in a table, a source block,

@@ -41,6 +41,23 @@ export interface SerializeOptions {
      * that line's width (`lineWidth`). The host passes its setting (default 90).
      */
     defaultWrap: number;
+    /**
+     * A paragraph or heading whose closing spaces are written, where they are
+     * otherwise dropped: the caret's, while the page's completion list is
+     * asked or open after a space typed at its end (`webview/completion.ts`),
+     * so the providers see the space and the caret after it maps exactly. The
+     * parser drops them again, so the block reads back the same. Never set for
+     * a save, nor for the read-back's writer.
+     */
+    keepTrailingSpace?: Node | null;
+}
+
+/** The spaces `node` ends with, where `options` keeps them (`keepTrailingSpace`); `''` for every other node. */
+function keptTrailingSpace(node: Node, options: SerializeOptions): string {
+    if (options.keepTrailingSpace !== node || !node.lastChild?.isText) {
+        return '';
+    }
+    return / +$/.exec(node.lastChild.text ?? '')?.[0] ?? '';
 }
 
 /** A bare link a trial wrote: the node, and where its text starts in the trial's text, with its text and address. */
@@ -2623,7 +2640,7 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
             const wrapped = wrapInline(paragraphMarkdown(node), limit - column, limit - characterCount(st.delim)).join('\n');
             const text = escapedLiterals(node, wrapped, 'paragraph').text;
-            state.text(st.entryBreak === undefined ? text : withHardBreaks(text, st.entryBreak), false);
+            state.text((st.entryBreak === undefined ? text : withHardBreaks(text, st.entryBreak)) + keptTrailingSpace(node, options), false);
             state.closeBlock(node);
         },
         footnote_entry(state, node) {
@@ -2658,7 +2675,7 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             const suffix = node.attrs.attrsSuffix as string | null;
             // One line (`headingText`); a trailing ` #` run is an ATX closing sequence and is escaped there.
             const line = '#'.repeat(node.attrs.level as number) + ' ' + headingText(node, { text: inlineMarkdown(node, false), at: [] }).text;
-            state.write(suffix === null ? line.replace(/\s+$/, '') : line.replace(/\s+$/, '') + ' ' + suffix);
+            state.write(suffix === null ? line.replace(/\s+$/, '') + keptTrailingSpace(node, options) : line.replace(/\s+$/, '') + ' ' + suffix);
             state.closeBlock(node);
         },
         blockquote(state, node) {

@@ -1342,7 +1342,8 @@ text the other — never a diff:
 | host → page | `imagesResolved { requestId, sources }` | For each asked `src` that names a file, the webview uri to load it from; a `src` left out is shown as written (below) |
 | host → page | `reportCaret` | Report the caret again, the same one included: the host forgot it and no document is on its way (below, *Source positions*) |
 | host → page | `map { id, toSource?, toPage? }` | Map these page positions to source positions and these source positions to page positions, with the page's own document (below) |
-| host → page | `completions { requestId, version, items, incomplete }` | The completions at the caret, `{ label, detail?, kind?, insertText, range?, sortText?, filterText? }` each, VS Code's order, capped; empty when stale (below, *Completion, diagnostics and hover*) |
+| host → page | `completions { requestId, version, items, incomplete }` | The completions at the caret, `{ label, detail?, kind?, insertText, range?, sortText?, filterText?, snippetOrEdits? }` each, VS Code's order, capped; empty when stale (below, *Completion, diagnostics and hover*) |
+| host → page | `completionSettings { acceptSuggestionOnEnter }` | VS Code's `editor.acceptSuggestionOnEnter` for Markdown (`on`, `smart`, `off`): after every `document` and when it changes |
 | host → page | `completionApplied { requestId, version, caret }` | After the document the applied completion produced: where the caret goes in it, `null` when nothing was applied |
 | host → page | `diagnostics { version, items }` | Every diagnostic VS Code holds for the document, `{ range, severity, message, code?, source? }` each, in the text the host holds for the page |
 | host → page | `quickFixes { requestId, items }` | The quick fixes for a diagnostic's range, `CodeActionItem`s run with `runAction` |
@@ -2430,10 +2431,11 @@ none: `complete { requestId, baseVersion, position, triggerCharacter? }`, the po
 provider with the trigger in its context; those that do not trigger on it answer nothing —
 and answers `completions { requestId, version, items, incomplete }`, the items in VS Code's
 order for an empty word (`sortText`, else the label), capped at 100, each
-`{ label, detail?, kind?, insertText, range?, sortText?, filterText? }`: the `inserting`
-range (VS Code's default insert mode; an item without a range takes the word before the
-position), a snippet as the text it inserts (`snippetText`: stops empty, placeholders their
-defaults, a choice its first option). An empty answer closes the list. The list stands under
+`{ label, detail?, kind?, insertText, range?, sortText?, filterText?, snippetOrEdits? }`: the
+`inserting` range (VS Code's default insert mode; an item without a range takes the word before
+the position), a snippet as the text it inserts (`snippetText`: stops empty, placeholders their
+defaults, a choice its first option), `snippetOrEdits` for a snippet or an item with additional
+edits (what `smart` below reads). An empty answer closes the list. The list stands under
 the caret, left-aligned with the items' range start (`anchor`, mapped through every
 transaction in plugin state), and filters as the person types: the text between the anchor
 and the caret, by prefix of `filterText`, else the label, ignoring case (`filterCompletions`);
@@ -2443,6 +2445,20 @@ it scrolls, the first chosen, one dim line of keys (`↹ ↵ accept · Esc close
 `listKeyAction`'s, taken by a plugin placed before the editor's keymaps. The footer does not
 name the provider: `executeCompletionItemProvider` hands items without the extension they
 came from.
+
+**Enter follows `editor.acceptSuggestionOnEnter`** for Markdown, as the text editor's list
+does: the host reads it with `getConfiguration('editor', { uri, languageId: 'markdown' })`
+(the `[markdown]` override first, the old booleans as `on`/`off`) and posts
+`completionSettings` after every `document` and on `onDidChangeConfiguration`; the page starts
+from VS Code's default, `on`. `Tab` always accepts. With `off`, `Enter` closes the list and goes
+on to the editor's keymaps (a new line; `listKeyAction`'s `dismiss`), and the footer reads
+`↹ accept · Esc close`. With `smart` (`enterAccepts`), VS Code's rule as its bundle has it
+(`SuggestController`, the `suggestionMakesTextEdit` context key): `Enter` accepts unless the
+list opened by itself, the chosen item is no snippet and has no additional edits, and what was
+typed since the items' range began is exactly its insertion — accepting would change nothing.
+A list asked for with `Ctrl+Space` is VS Code's explicitly triggered one, whose `Enter` `smart`
+leaves alone; a list asked again because a provider said it was incomplete keeps how it was
+asked for.
 
 **Accepting applies the provider's edit to the source, not to the page.** The page posts
 `applyCompletion { requestId, index, baseVersion, position }` (after its pending edit) and
@@ -2464,10 +2480,47 @@ caret at. The block comes back as another writer's change does, in place (`resyn
 item's command is started unless it works on a text editor (`editor.*`, re-triggering
 suggest). A refused item answers `caret: null`, and the hint says the text changed.
 
-**A known limit: a space at a paragraph's end.** The serializer drops trailing white space,
-so a space typed last in a paragraph is not in the text the host holds, and the caret after
-it maps only approximately: no question is asked until something follows it. Req Explorer's
-space trigger answers mid-line only.
+**A space at a paragraph's end is held for the question.** The serializer drops a textblock's
+closing spaces (`wrapInline`), so a space typed last in a paragraph would not be in the text
+the host holds, and the caret after it would map only approximately — the Studienhilfe's books
+after "1. " (its trigger character is the space) could never be asked for there. So a question
+asked with the caret at its textblock's end right after a space (`afterClosingSpace`) **holds**
+that space: the page's own document is written with that textblock's closing spaces
+(`SerializeOptions.keepTrailingSpace`, honoured by the paragraph and heading rules —
+paragraphs in lists, quotes and footnote texts included; a table cell keeps its own rule) while
+the question is on its way, and again while an accepted item is on its way back — **not while
+the list stands open**. The held textblock is the one at `asked`, the caret's place when the
+list was last asked for, kept beside the anchor in the plugin's state and mapped through every
+transaction; the page's position map (`pageMap`) is made with it, so the edit, the caret,
+`hostText` and every other question agree on one text. `positions.ts` reads a body's own final
+line break as no line prefix, so the place after the kept spaces is exact.
+
+The answer lets go at once, after the list's anchor is read from the text with the space; so
+does every other end of the question (an empty or stale answer, its time out, the document
+replaced, `completionApplied`), and the edit that drops the space goes **at once**
+(`textChanged` is `flush`), not after the edit delay: another writer's change, a save VS Code
+starts (the File menu, auto-save, the close prompt) or Ctrl+S while the list stands open finds
+the file as typing alone leaves it. Accepting holds the space again when the caret stands after
+it, so the item is applied to the text it was offered for and its range ("1. ") covers it; a
+question asked again for an incomplete list holds it through `ask` as any question does.
+Ctrl+S during a question lets go first (`completionBeforeSave`). What the short hold cannot
+rule out — a document the host parsed from a text with the space in it, another writer's
+change landing while the question was on its way — reads that block as untouched, its `src`
+holding the space. So while a sent space may still be in the host's text (`spaceSent`: until a
+document comes, the caret leaves that textblock or something is typed there), the page notes
+where that textblock stands just before a document replaces the page's (`beforeDocument`: its
+top-level index from the start and from the end, and its path inside), and afterwards looks
+**only there** (`dropSentSpace`): a textblock with the text it had without the space, in a block
+with a `src` whose text has spaces right after its end. That block is marked edited (`src`
+cleared, so the next edit writes it by rule) only when the page then writes the text with
+those spaces taken out and nothing else changed — never a rewrite of a list or a quote beyond
+the space. An untouched block elsewhere that reads alike keeps its spaces (review 2, S1–S5).
+Over the archive (5,002 files), 169 untouched textblocks have spaces after their end; for 112
+of them writing the block by rule would change more than the spaces, and the guard refuses.
+A save VS Code starts in the few milliseconds a question is on its way can
+still write the space; the next edit takes it out. An answer is shown only while the caret is
+still in the textblock it was asked in and not before that place: "1. " and a quick Enter no
+longer open the list on the new line.
 
 **Diagnostics** (sketch 6). The host reads `languages.getDiagnostics(uri)` — what the text
 editor squiggles and the Problems view lists — when `onDidChangeDiagnostics` names the

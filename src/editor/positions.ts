@@ -381,7 +381,10 @@ class BlockMap {
         // character nothing matched is one delimiter — a wrapped line's break
         // and indentation, a quote's `\n> ` — even where the soft break's
         // space matched one of its spaces: no place strictly inside it is text.
-        for (let a = 0; a < src.length;) {
+        // The body's own final line break starts no line: spaces kept before it
+        // (`keepTrailingSpace`) are text, and the place after them too.
+        const runEnd = src.endsWith('\n') ? src.length - 1 : src.length;
+        for (let a = 0; a < runEnd;) {
             if (!PREFIX_CHARS.has(src.charCodeAt(a))) {
                 a++;
                 continue;
@@ -389,7 +392,7 @@ class BlockMap {
             let b = a;
             let lineBreak = false;
             let gap = false;
-            while (b < src.length && PREFIX_CHARS.has(src.charCodeAt(b))) {
+            while (b < runEnd && PREFIX_CHARS.has(src.charCodeAt(b))) {
                 lineBreak = lineBreak || src.charCodeAt(b) === NEWLINE;
                 gap = gap || toUnit[b] < 0;
                 b++;
