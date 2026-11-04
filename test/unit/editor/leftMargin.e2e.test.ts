@@ -263,6 +263,42 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
         }
     });
 
+    test('a bar fallen back into the column, scrolled out of the window and back, still keeps off the note — what was measured out of sight is measured again (review round 4, H-1)', async function () {
+        await closeEditorPage(this, editor);
+        this.timeout(90000);
+        editor = await openEditorPage({ width: 800, height: 600, styles: ['markdown-extended.css'], userStyles: [TIME_MARGIN] });
+        if (!editor) {
+            this.skip();
+        }
+        page = (editor as EditorPage).page;
+        const filler = Array.from({ length: 30 }, (_, k) => `Zeile ${k} mit etwas Text.`).join('\n\n');
+        const note = 'ein langer Hinweis im Rand, der Zeile um Zeile nach unten reicht, neben dem Absatz und weit unter ihn, '
+            + 'neben die folgenden Zeilen, immer weiter, bis er sicher neben der Leiste unter dem Absatz hängt, und noch ein Stück';
+        await b.show(`${filler}\n\nMitte $Uhrzeit\${class=living} und ein ruhiger Satz !!Lang|${note}!! der weitergeht.\n\n${filler}\n\nThe last paragraph.\n`);
+        await page.evaluate(() => (Array.from(document.querySelectorAll('.ProseMirror .left-sidebar')).find(e => (e.textContent ?? '').includes('Uhrzeit')) as HTMLElement).scrollIntoView({ block: 'center' }));
+        await delay(300);
+        await b.restAt('Uhrzeit', 2);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        const noteBox = () => page.$eval('.ProseMirror .mnote', e => { const r = e.getBoundingClientRect(); return { left: r.left, top: r.top, bottom: r.bottom }; });
+        const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const before = (await measure()).bar;
+        const n0 = await noteBox();
+        assert.ok(n0.top < before.bottom && n0.bottom > before.top, `the note hangs beside the bar: ${JSON.stringify({ before, n0 })}`);
+        assert.ok(before.right <= n0.left, `off the note to start with: ${JSON.stringify({ before, n0 })}`);
+        // Out of the window above (placed again there, where nothing can be probed), then back.
+        const out = Math.ceil(before.bottom) + 60;
+        await page.evaluate(dy => window.scrollBy(0, dy), out);
+        await frames();
+        const away = (await measure()).bar;
+        assert.ok(away.bottom <= 0, `out of the window: ${JSON.stringify(away)}`);
+        await page.evaluate(dy => window.scrollBy(0, -dy), out);
+        await frames();
+        const back = (await measure()).bar;
+        const n1 = await noteBox();
+        assert.ok(back.top >= 0 && back.bottom <= 600, `back in the window: ${JSON.stringify(back)}`);
+        assert.ok(back.right <= n1.left, `still off the note: ${JSON.stringify({ back, note: n1 })}`);
+    });
+
     // The user's own stylesheet, read in place (`MEP_USER_STYLESHEET`; skipped without it): the rule's invariants, wherever its
     // geometry puts the bar — never cut; in the margin at the edge + 16 px off every text and within a line's height of its
     // sidebar, or in the column off every note in the right margin.

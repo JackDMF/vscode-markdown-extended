@@ -1370,12 +1370,15 @@ export class LayerSlot {
         if (prev !== null && prev.limited !== null && this.written?.el === el && sameSize(prev.anchor, anchor) && sameFrame(prev.frame, frame)
             && Math.abs(prev.width - el.offsetWidth) < 0.5 && Math.abs(prev.height - el.offsetHeight) < 0.5 && prev.avoid.length === avoidOpen.length) {
             // A scroll moves the subject, the text and the other layers alike: where the layer stood in the page it still stands, as long as
-            // it is still in the window — measured again only when it is not, or when something else changed.
+            // it is still in the window — measured again only when it is not, or when something else changed. And only where it was
+            // in the window before the scroll too: what was placed out of sight was probed where nothing answers (`elementFromPoint`
+            // is null there — no note, no text), so it is measured again once it comes back (review round 4, H-1).
             const dy = anchor.top - prev.anchor.top;
             const base = this.mount.getBoundingClientRect();
             const at = { x: this.written.at.x + base.left, y: this.written.at.y + base.top, side: this.written.at.side };
+            const inWindow = (y: number): boolean => y >= frame.ceiling + GAP && y + el.offsetHeight <= frame.floor;
             if (prev.avoid.every((r, i) => sameRect({ ...r, top: r.top + dy, bottom: r.bottom + dy }, avoidOpen[i])) && anchor.left === prev.anchor.left
-                && (dy === 0 || (at.y >= frame.ceiling + GAP && at.y + el.offsetHeight <= frame.floor))) {
+                && (dy === 0 || (inWindow(at.y - dy) && inWindow(at.y)))) {
                 if (dy !== 0) {
                     this.write(claim, at, anchor, frame, avoidOpen, prev.limited, null, appeared);
                 }
