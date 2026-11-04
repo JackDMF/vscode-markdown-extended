@@ -713,9 +713,11 @@ suite('Editor note attributes: the cost of a key (e2e)', () => {
  * (`MEP_USER_STYLESHEET`, read in place), else the fixture shaped like it —
  * the margin suite runs in the default run too (#15 review 2).
  */
+/** The fixture alone: what a test asserts one exact place by. */
+const MARGIN_LAYOUT = path.join(repoRoot, 'test', 'fixtures', 'editor', 'marginLayout.css');
 const USER_STYLESHEET = process.env.MEP_USER_STYLESHEET !== undefined && fs.existsSync(process.env.MEP_USER_STYLESHEET)
     ? process.env.MEP_USER_STYLESHEET
-    : path.join(repoRoot, 'test', 'fixtures', 'editor', 'marginLayout.css');
+    : MARGIN_LAYOUT;
 
 /**
  * Bars reach into the margin (Daniel, #15 critique): where nothing stands in
@@ -766,9 +768,10 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test('with a margin layout at 1280: the left sidebar\'s bar is never cut: in the left margin at the edge + 16 px where a line\'s height beside its sidebar is free of text, else in the column under the block (`leftMargin.e2e.test.ts`)', async function () {
+    test('with the margin layout fixture at 1280: a list item\'s sidebar whose narrowest bar does not fit the margin, text above and below it — its bar stands in the column at its left edge, under the item, never cut (`leftMargin.e2e.test.ts` has the margin cases)', async function () {
         this.timeout(60000);
-        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [USER_STYLESHEET] });
+        // The fixture, whatever `MEP_USER_STYLESHEET` names: one exact place, not "the margin or the column".
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [MARGIN_LAYOUT] });
         if (!editor) {
             this.skip();
         }
@@ -777,17 +780,37 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         await b.restAt('Uhrzeit', 2);
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         const bar = await barBox();
-        const column = await columnRight();
-        // Text above and below the item: no free height within a line of its sidebar — the column, as before.
-        assert.ok(bar.right <= bar.edge - 16 + 0.5 && (Math.abs(bar.left - 16) < 1 || bar.left >= 160 - 1), `at the edge + 16 px or in the column: ${JSON.stringify({ bar, column })}`);
+        const { column, item, room } = await page.evaluate(() => {
+            const pm = document.querySelector('.ProseMirror') as HTMLElement;
+            const li = pm.querySelector('li') as HTMLElement;
+            return {
+                column: (pm.querySelector(':scope > p') as HTMLElement).getBoundingClientRect().left,
+                item: li.getBoundingClientRect().bottom,
+                // Where the item's text begins: the margin's room beside it.
+                room: (li.querySelector('p') as HTMLElement).getBoundingClientRect().left,
+            };
+        });
+        // The fixture's geometry, so the case is the one meant: the column at 160 px, the item's text at 200 — the 180 px
+        // between the window's edge + 16 and it are less than the item's bar at its narrowest (209 px with "…", measured 2026-11-04).
+        assert.ok(Math.abs(column - 160) < 1 && Math.abs(room - 200) < 1, `the fixture's column and item: ${JSON.stringify({ column, room })}`);
+        assert.ok(Math.abs(bar.left - column) < 1, `in the column at its left edge: ${JSON.stringify({ bar, column })}`);
+        assert.ok(bar.top >= item - 0.5, `under the item: ${JSON.stringify({ bar, item })}`);
+        assert.ok(bar.right <= bar.edge - 16 + 0.5, `inside the edge less 16 px: ${JSON.stringify(bar)}`);
         assert.ok(await page.$eval(BAR, el => el.scrollWidth <= el.clientWidth + 1), `never cut: ${JSON.stringify(bar)}`);
+        // The rest of the suite runs on its own page (`USER_STYLESHEET`).
+        await page.keyboard.press('Escape');
+        await closeEditorPage(this, editor);
+        editor = undefined;
     });
 
     test('with a margin layout at 1280: a sidebar floated beside a heading has its bar off the heading\'s text lines, not only off its own box', async function () {
+        await closeEditorPage(this, editor);
         this.timeout(60000);
-        if (editor === undefined) {
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [USER_STYLESHEET] });
+        if (!editor) {
             this.skip();
         }
+        page = (editor as EditorPage).page;
         const words = 'Rückblick, Ausblick und ein Lied mit vielen Worten, die über mehrere Zeilen laufen und laufen';
         // Text right above and right below the heading: the bar's two sides both have text, and it keeps below (#15 review 2), under the heading's last line.
         const filler = Array.from({ length: 12 }, (_, k) => `Zeile ${k} mit etwas Text.`).join('\n\n');
