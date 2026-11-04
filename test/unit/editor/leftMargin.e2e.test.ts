@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { EditorPage, SHOTS_DIR, closeEditorPage, delay, leaveObjects, openEditorPage, shot } from './pageHarness';
@@ -176,8 +177,9 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
 
     for (const width of [1280, 800]) {
         test(`with the archive sheet's time margin at ${width}: the narrowest bar does not fit the margin — never cut; within a line's height of its sidebar with no text between, else in the column under the block (Daniel, 2026-11-03)`, async function () {
-            this.timeout(90000);
+            // Closed first: `closeEditorPage` sets the test's timeout to the close hook's.
             await closeEditorPage(this, editor);
+            this.timeout(90000);
             editor = await openEditorPage({ width, height: 900, styles: ['markdown-extended.css'], userStyles: [TIME_MARGIN] });
             if (!editor) {
                 this.skip();
@@ -260,4 +262,60 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
             assert.ok(m.bar.right <= n.left, `off the note in the right margin: ${JSON.stringify({ bar: m.bar, note: n })}`);
         }
     });
+
+    // The user's own stylesheet, read in place (`MEP_USER_STYLESHEET`; skipped without it): the rule's invariants, wherever its
+    // geometry puts the bar — never cut; in the margin at the edge + 16 px off every text and within a line's height of its
+    // sidebar, or in the column off every note in the right margin.
+    const userSheet = process.env.MEP_USER_STYLESHEET;
+    for (const width of [1280, 800]) {
+        test(`with the user's own stylesheet (MEP_USER_STYLESHEET) at ${width}: a left sidebar's bar is never cut — in the margin within a line's height of its sidebar, off the text, or in the column off the notes`, async function () {
+            if (userSheet === undefined || !fs.existsSync(userSheet)) {
+                this.skip();
+            }
+            await closeEditorPage(this, editor);
+            this.timeout(120000);
+            editor = await openEditorPage({ width, height: 900, styles: ['markdown-extended.css'], userStyles: [userSheet as string] });
+            if (!editor) {
+                this.skip();
+            }
+            page = (editor as EditorPage).page;
+            const lines = Array.from({ length: 4 }, (_, k) => `Zeile ${k} mit etwas Text, der bis an den Rand der Spalte läuft und weitergeht.`).join('\n\n');
+            const note = '!!Lang|ein langer Hinweis im Rand, der Zeile um Zeile nach unten reicht, neben dem Absatz und weit unter ihn, bis er neben der Leiste hängt!!';
+            const cases: [string, string][] = [
+                ['Uhrzeit', `${lines}\n\nMitte $Uhrzeit\${class=living} und ein ruhiger Satz ${note} der weitergeht.\n\n${lines}\n\nThe last paragraph.\n`],
+                ['Listenzeit', `${lines}\n\n- Punkt $Listenzeit$ mit Text, der weitergeht.\n- Zweiter Punkt mit Text.\n\n${lines}\n\nThe last paragraph.\n`],
+                ['Ende', `${lines}\n\nThe last paragraph $Ende$ und ein Rest.\n`],
+                ['Letzte', `${lines}\n\n- Punkt, der weitergeht.\n- The last paragraph $Letzte$ mit Text.\n`],
+            ];
+            const hidden: string[] = [];
+            for (const [needle, doc] of cases) {
+                // A sheet may hide `$…$` on screen (Daniel's Styles.css of 2026-11 does, `display: none`): no box, no caret in it, no bar.
+                await b.show(doc);
+                if (await page.evaluate(n => (Array.from(document.querySelectorAll('.ProseMirror .left-sidebar')).find(e => (e.textContent ?? '').includes(n)) as HTMLElement).getClientRects().length === 0, needle)) {
+                    hidden.push(needle);
+                    continue;
+                }
+                const m = await barAt(doc, needle, `user-sheet-${needle}`);
+                const side = await sidebarOf(needle);
+                const notes = await page.$$eval('.ProseMirror :is(.sidenote, .mnote, .right-sidebar)', els => els.map(e => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; }).filter(r => r.right > r.left));
+                console.log(`MEP_USER_STYLESHEET ${width} ${needle}: ${JSON.stringify({ bar: m.bar, column: m.column, side })}`);
+                assert.ok(!m.bar.cut, `${needle}: never cut: ${JSON.stringify(m.bar)}`);
+                assert.ok(m.bar.right <= width - 16 + 0.5, `${needle}: inside the edge less 16 px: ${JSON.stringify(m.bar)}`);
+                if (Math.abs(m.bar.left - 16) < 1) {
+                    assert.deepStrictEqual(overText(m), [], `${needle}: in the margin, off every text: ${JSON.stringify(m)}`);
+                    const gap = m.bar.top >= side.bottom ? m.bar.top - side.bottom : side.top - m.bar.bottom;
+                    assert.ok(gap <= side.line, `${needle}: within a line's height of its sidebar: ${JSON.stringify({ gap, side })}`);
+                } else {
+                    assert.ok(m.bar.left >= m.column - 1, `${needle}: else in the column: ${JSON.stringify(m)}`);
+                    for (const n of notes.filter(r => r.top < m.bar.bottom && r.bottom > m.bar.top && r.left >= m.column)) {
+                        assert.ok(m.bar.right <= n.left, `${needle}: off the note in the right margin: ${JSON.stringify({ bar: m.bar, note: n })}`);
+                    }
+                }
+            }
+            if (hidden.length === cases.length) {
+                console.log(`MEP_USER_STYLESHEET ${width}: the sheet hides every left sidebar on screen — no bar to place`);
+                this.skip();
+            }
+        });
+    }
 });
