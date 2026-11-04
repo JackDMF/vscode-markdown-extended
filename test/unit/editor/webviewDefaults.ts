@@ -7,7 +7,7 @@ export const WEBVIEW_DEFAULT_STYLES_ID = '_defaultStyles';
 
 /**
  * The stylesheet VS Code puts into every webview before the page's own, copied
- * from VS Code 1.142.0 (commit 6d62b1d5), `out/vs/workbench/contrib/webview/
+ * from VS Code 1.145.0, `out/vs/workbench/contrib/webview/
  * browser/pre/index.html`: the `defaultStyles` element, `id="_defaultStyles"`,
  * prepended to the document's `<head>` (`newDocument.head.prepend`), so it is
  * the head's first child. Its rules sit in `@layer vscode-default`, so any
@@ -46,8 +46,13 @@ export const WEBVIEW_DEFAULT_STYLES = `
         max-height: 100%;
     }
 
-    a, a code {
+    a {
         color: var(--vscode-textLink-foreground);
+    }
+
+    a code {
+        color: var(--vscode-textPreformat-foreground);
+        text-decoration: underline;
     }
 
     p > a {
@@ -75,6 +80,7 @@ export const WEBVIEW_DEFAULT_STYLES = `
     }
 
     pre code {
+        background-color: transparent;
         padding: 0;
     }
 
@@ -129,7 +135,7 @@ export function webviewPageFile(): string {
 
 /**
  * The default styles of the VS Code the tests run in, read from its webview
- * page; `undefined` when that page or the element is not where 1.142 has them.
+ * page; `undefined` when that page or the element is not where it is expected.
  */
 export function installedWebviewDefaultStyles(): string | undefined {
     const file = webviewPageFile();
