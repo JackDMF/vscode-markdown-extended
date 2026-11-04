@@ -27,7 +27,7 @@
  */
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { PROBING_CLASS, contentIn, contentRight, firstLineTop, lineAt, marginContentLeft, rowCeiling, textLines } from './clearance';
+import { PROBING_CLASS, contentIn, contentLeft, contentRows, contentRight, firstLineTop, lineAt, marginContentLeft, marginItemRects, rowCeiling, textLines } from './clearance';
 import { focusPlace } from './focusPlace';
 import { rightLaneEdge } from './lane';
 import { AttributesTarget, EditorObject, currentTarget, isBlockObject, isBlockPlaced, isMarkObject, objectOfNode } from './objects';
@@ -38,6 +38,8 @@ import { AttributesTarget, EditorObject, currentTarget, isBlockObject, isBlockPl
 export const GAP = 4;
 /** A layer grown past the text column stops this short of the editor's right edge. */
 export const LAYER_GUTTER = 16;
+/** The steps a layer in the left margin looks for a height the column has no text at, within a line's height of its subject. */
+const LEFT_STEP = 4;
 /** The rest that shows a layer: the caret's in an object, a keyboard selection's, the typing re-arm. */
 export const REST_MS = 400;
 /** A layer that appeared or moved ignores the pointer this long. */
@@ -66,6 +68,8 @@ export interface Frame {
     columnRight?: number;
     /** The window's right edge less the gutter: a layer wider than the room (a field's floor) is kept left of it. Absent: no such clamp. */
     windowRight?: number;
+    /** The window's left edge plus the gutter: the least x of a layer at an anchor left of the column (a left sidebar floated into the left margin), which may stand there and reach into the column only where the column has no text (`placeAtLeftMargin`). Absent: `columnLeft` for every layer. */
+    windowLeft?: number;
 }
 
 /** The right edge a layer of `width` may reach in `frame`: the column's when it fits the column, else the layer edge. */
@@ -84,6 +88,8 @@ export interface Context {
     prefer?: 'above';
     /** An anchor in the margin keeps the layer at it, not pulled back to the column (the selection's bubble, #15 critique). */
     atAnchor?: boolean;
+    /** The layer stands in the left margin (`placeAtLeftMargin`): at `Frame.windowLeft`, whatever its anchor's x. */
+    leftMargin?: boolean;
 }
 
 export type Side = 'below' | 'above' | 'right' | 'left' | 'edge' | 'caret' | 'none';
@@ -134,7 +140,12 @@ export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Contex
     // A layer wider than the room was fitted to it before (`ObjectBar.fit`): this clamps, never shrinks.
     // The bubble over a selection in the margin (a note's body there) stands at it, up to the layer edge (#9, #15).
     const inMargin = ctx.atAnchor === true && frame.columnRight !== undefined && anchor.left >= frame.columnRight;
-    const clamped = Math.max(frame.columnLeft, Math.min(anchor.left, (inMargin ? frame.layerEdge : rightEdge(size.width, frame)) - size.width));
+    // Mirrored at the left: a layer in the left margin stands at the window's left edge + the gutter, whatever its anchor's x
+    // (a list item's sidebar starts a rem further in), and further right only where it is wider than the room before the column.
+    const inLeftMargin = ctx.leftMargin === true && frame.windowLeft !== undefined;
+    const clamped = inLeftMargin
+        ? frame.windowLeft as number
+        : Math.max(frame.columnLeft, Math.min(anchor.left, (inMargin ? frame.layerEdge : rightEdge(size.width, frame)) - size.width));
     // Wider than the column allows (a field's floor, `fieldFloor`): kept inside the window, left of the column if it must.
     const x = frame.windowRight !== undefined && clamped + size.width > frame.windowRight ? Math.max(LAYER_GUTTER, frame.windowRight - size.width) : clamped;
     const below = anchor.bottom + GAP;
@@ -572,6 +583,28 @@ function floatedAnchor(view: EditorView, pos: number, dom: Element, own: Rect): 
 }
 
 /**
+ * The own box of a note or sidebar object that the page's stylesheet sets out
+ * of its line (floated or positioned: into a margin), or `null` — `anchorOf`
+ * without the block's lines `floatedAnchor` grows it to. A layer standing in
+ * the left margin stands directly under this box.
+ */
+export function floatedBox(view: EditorView, object: EditorObject): Rect | null {
+    try {
+        if (isBlockPlaced(object) || isMarkObject(object)) {
+            return null;
+        }
+        const dom = view.nodeDOM(object.from);
+        if (!(dom instanceof Element)) {
+            return null;
+        }
+        const style = getComputedStyle(dom);
+        return style.float === 'none' && style.position !== 'absolute' && style.position !== 'fixed' ? null : boxOf(dom);
+    } catch {
+        return null;
+    }
+}
+
+/**
  * The floated or positioned element of the document `pos` stands in — a
  * note's body or a sidebar set out of its line into a margin — or `null`.
  */
@@ -666,6 +699,8 @@ export interface PlaceOptions {
     prefer?: 'above';
     /** Kept at an anchor in the margin (`Context.atAnchor`). */
     atAnchor?: boolean;
+    /** Stands in the left margin (`Context.leftMargin`). */
+    leftMargin?: boolean;
 }
 
 /** Write `p` (viewport coordinates) as `el`'s position in its space. */
@@ -689,6 +724,7 @@ export function placeLayer(el: HTMLElement, anchor: Rect, opts: PlaceOptions): P
         avoid: opts.avoid ?? openLayers(opts.mount, opts.except ?? el),
         prefer: opts.prefer,
         atAnchor: opts.atAnchor,
+        leftMargin: opts.leftMargin,
     };
     const size = { width: el.offsetWidth, height: el.offsetHeight };
     let placement: Placement;
@@ -816,6 +852,8 @@ export interface LayerClaim {
      * height (Daniel, #15 "bars may cover any empty margin"; wave 4 #5b review).
      */
     inMargin?(): boolean;
+    /** The layer's subject's own box where it is set out of its line (a floated sidebar's, `anchor` being the box grown to its block's lines): a layer in the left margin stands directly under it. */
+    box?(): Rect | null;
 }
 
 /** What the occupant was last placed from, in viewport coordinates: a re-place with the same inputs (anchor, size, frame, the other layers) does nothing. */
@@ -831,6 +869,8 @@ interface Placed {
     limited: number | null;
     /** How far into the column a layer at the margin was let reach (`columnReach`), or `null`: as far as its anchor. */
     reach: number | null;
+    /** The mount's top in the viewport when it was placed: a scroll moves it with the anchor, a change in the page above the anchor does not. */
+    mountTop: number;
 }
 
 /** Where an element was last written, in its own space: what `moved` compares. */
@@ -873,6 +913,17 @@ function sameSize(a: Rect, b: Rect): boolean {
 function sameFrame(a: Frame, b: Frame): boolean {
     return Math.abs(a.columnLeft - b.columnLeft) < 0.5 && Math.abs(a.layerEdge - b.layerEdge) < 0.5
         && Math.abs(a.ceiling - b.ceiling) < 0.5 && Math.abs(a.floor - b.floor) < 0.5 && Math.abs((a.columnRight ?? 0) - (b.columnRight ?? 0)) < 0.5;
+}
+
+/**
+ * Fit a claim's layer to the room `f` gives it, from its column's left to its
+ * layer edge. A field's room is never narrower than a hint's (#8 review 1): a
+ * user stylesheet's narrow column or margin lane (petrol at 520 px wrapped a
+ * keys line at 150 px) gives it min(44ch, window − 32 px), placed inside the window.
+ */
+function fitLayer(claim: LayerClaim, f: Frame, refit: boolean): void {
+    const room = f.layerEdge - f.columnLeft;
+    claim.fit?.(claim.kind === 'field' ? Math.max(room, fieldFloor(claim.el)) : room, refit);
 }
 
 /**
@@ -1205,16 +1256,17 @@ export class LayerSlot {
         // there at its height (Daniel, #15 critique): fitted and placed to that edge first, then — a note,
         // a sidebar or other margin content beside it — fitted and placed again short of what stands there.
         const wide: Frame = { ...frame, layerEdge: Math.max(frame.layerEdge, frame.windowRight ?? frame.layerEdge) };
-        // A field's room is never narrower than a hint's (#8 review 1): a user stylesheet's narrow column or margin lane
-        // (petrol at 520 px wrapped a keys line at 150 px) gives it min(44ch, window − 32 px), placed inside the window.
-        const fit = (f: Frame, refit: boolean) => {
-            const room = f.layerEdge - f.columnLeft;
-            claim.fit?.(claim.kind === 'field' ? Math.max(room, fieldFloor(claim.el)) : room, refit);
-        };
+        const fit = (f: Frame, refit: boolean) => fitLayer(claim, f, refit);
         const prev = this.placed;
         // The same layer again (a scroll, a re-place): fitted to the edge it was kept to last time first, so
         // nothing is measured twice where nothing changed.
         const again = !appeared && !fresh && prev !== null && prev.key === claim.key;
+        // A subject floated out left of the column (a left sidebar in the left margin, a list item's too), or an anchor wholly left of it.
+        const box = frame.columnRight === undefined ? null : claim.box?.() ?? null;
+        if (frame.columnRight !== undefined && (box !== null ? box.left < frame.columnLeft - 0.5 : anchor.right <= frame.columnLeft + 0.5)) {
+            this.placeAtLeftMargin(claim, anchor, box ?? anchor, frame, wide, again ? prev : null, fresh, appeared);
+            return;
+        }
         const firstEdge = again && prev.limited !== null ? prev.limited : wide.layerEdge;
         const firstReach = again && prev.reach !== null ? prev.reach : null;
         fit({ ...frame, layerEdge: firstEdge, columnLeft: firstReach ?? frame.columnLeft }, fresh);
@@ -1254,8 +1306,21 @@ export class LayerSlot {
                 return;
             }
         }
-        if (firstEdge !== wide.layerEdge || firstReach !== null) {
-            fit(wide, false);
+        const { p, limited, reach } = this.placeWide(claim, anchor, frame, wide, opts, margin, firstEdge !== wide.layerEdge || firstReach !== null);
+        this.write(claim, p, anchor, frame, avoid, limited, reach, appeared);
+    }
+
+    /**
+     * Place a layer out to the editor's edge less the gutter (`wide`), then
+     * kept short of the margin content beside it (`marginLimit`: a note, a
+     * sidebar floated into the right margin) and — `margin`, its subject
+     * standing there — right of the column's text at its height
+     * (`columnReach`), fitted again each time. `refit`: it is not fitted to
+     * `wide` yet. Returns where it goes and what kept it short, unwritten.
+     */
+    private placeWide(claim: LayerClaim, anchor: Rect, frame: Frame, wide: Frame, opts: PlaceOptions, margin: boolean, refit: boolean): { p: Placement; limited: number | null; reach: number | null } {
+        if (refit) {
+            fitLayer(claim, wide, false);
         }
         let p = placeLayer(claim.el, anchor, { ...opts, frame: wide });
         let limited = this.marginLimit(p, claim.el, anchor, frame, wide);
@@ -1264,12 +1329,12 @@ export class LayerSlot {
             // above (shortened to that content it would slide into the column's text, #15 review 3) — below the
             // anchor, which for a note's body is below its last line.
             const blocked = rectAt(p.x, p.y, { width: claim.el.offsetWidth, height: claim.el.offsetHeight });
-            p = placeLayer(claim.el, anchor, { ...opts, prefer: undefined, avoid: [...avoid, blocked], frame: wide });
+            p = placeLayer(claim.el, anchor, { ...opts, prefer: undefined, avoid: [...opts.avoid ?? [], blocked], frame: wide });
             limited = this.marginLimit(p, claim.el, anchor, frame, wide);
         }
         if (limited !== null) {
             const short: Frame = { ...frame, layerEdge: limited };
-            fit(short, false);
+            fitLayer(claim, short, false);
             p = placeLayer(claim.el, anchor, { ...opts, frame: short });
         }
         // At the margin and reaching into the column where it has text at the layer's height: kept right of
@@ -1277,10 +1342,138 @@ export class LayerSlot {
         const reach = margin ? this.columnReach(p, claim.el, frame) : null;
         if (reach !== null) {
             const narrow: Frame = { ...wide, layerEdge: limited ?? wide.layerEdge, columnLeft: reach };
-            fit(narrow, false);
+            fitLayer(claim, narrow, false);
             p = placeLayer(claim.el, anchor, { ...opts, frame: narrow });
         }
-        this.write(claim, p, anchor, frame, avoid, limited, reach, appeared);
+        return { p, limited, reach };
+    }
+
+    /**
+     * A layer whose subject stands in the left margin (a left sidebar floated
+     * there, `box` its own box; `anchor` that grown to its block's lines): the
+     * mirror of the right margin's rule (#15). It stands at the window's edge +
+     * `LAYER_GUTTER`, directly under (or over) the subject's own box, and
+     * reaches into the column only where the column has no text at its height;
+     * where it has, the layer is fitted to the margin (its verbs drop their
+     * nouns first, `ObjectBar.fit`). Other notes in the margin are kept off
+     * like any layer. Fitted and placed up to three times: the side decides
+     * whether text is at its height, the text decides the width.
+     *
+     * A layer is never cut: where even its narrowest form (its `scrollWidth`)
+     * does not fit the margin, a height is looked for — nearest the subject,
+     * below or above — where the column has no text across the whole width it
+     * needs. None: it is placed in the column as before, under
+     * the block, off the caret's line, and kept short of a note in the
+     * right margin like every bar there (`placeWide`).
+     */
+    private placeAtLeftMargin(claim: LayerClaim, anchor: Rect, box: Rect, frame: Frame, wide: Frame, prev: Placed | null, fresh: boolean, appeared: boolean): void {
+        const el = claim.el;
+        const avoidOpen = openLayers(this.mount, el);
+        if (prev !== null && prev.limited !== null && this.written?.el === el && sameSize(prev.anchor, anchor) && sameFrame(prev.frame, frame)
+            && Math.abs(prev.width - el.offsetWidth) < 0.5 && Math.abs(prev.height - el.offsetHeight) < 0.5 && prev.avoid.length === avoidOpen.length) {
+            // A scroll moves the subject, the text and the other layers alike: where the layer stood in the page it still stands, as long as
+            // it is still in the window — measured again only when it is not, or when something else changed. And only where it was
+            // in the window before the scroll too: what was placed out of sight was probed where nothing answers (`elementFromPoint`
+            // is null there — no note, no text), so it is measured again once it comes back (review round 4, H-1).
+            // And only a scroll: the page moved as far as the subject did. Content grown above the subject with no scroll (the
+            // host's lens rows, a late image, an outside edit) moves the subject, not the page — measured again (review round 5, H-2).
+            const dy = anchor.top - prev.anchor.top;
+            const base = this.mount.getBoundingClientRect();
+            const at = { x: this.written.at.x + base.left, y: this.written.at.y + base.top, side: this.written.at.side };
+            const inWindow = (y: number): boolean => y >= frame.ceiling + GAP && y + el.offsetHeight <= frame.floor;
+            if (Math.abs(base.top - prev.mountTop - dy) < 0.5
+                && prev.avoid.every((r, i) => sameRect({ ...r, top: r.top + dy, bottom: r.bottom + dy }, avoidOpen[i])) && anchor.left === prev.anchor.left
+                && (dy === 0 || (inWindow(at.y - dy) && inWindow(at.y)))) {
+                if (dy !== 0) {
+                    this.write(claim, at, anchor, frame, avoidOpen, prev.limited, null, appeared);
+                }
+                return;
+            }
+        }
+        const least = LAYER_GUTTER;
+        const opts: PlaceOptions = { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: el, prefer: claim.prefer?.(), atAnchor: true, leftMargin: true };
+        const probe = <T>(read: () => T): T => {
+            this.mount.classList.add(PROBING_CLASS);
+            try {
+                return read();
+            } finally {
+                this.mount.classList.remove(PROBING_CLASS);
+            }
+        };
+        // Where the column's text begins at the height of a layer `height` tall at `y`, whatever the layer's width: the edge it is kept to.
+        const roomAt = (y: number, height: number): number => {
+            const text = probe(() => contentLeft(this.view, { left: frame.columnLeft, right: wide.layerEdge, top: y - GAP, bottom: y + height + GAP }));
+            return text === null ? wide.layerEdge : Math.max(least, text - GAP);
+        };
+        const reach = (e: number): number => Math.max(e - least, claim.kind === 'field' ? fieldFloor(el) : 0);
+        // Notes and other floated content in the margin, around the subject: kept off like an open layer.
+        // The one place a layer may be moved to is within a line's height of its subject's box (Daniel, 2026-11-03).
+        const lineHeight = parseFloat(getComputedStyle(this.view.dom).lineHeight) || (parseFloat(getComputedStyle(this.view.dom).fontSize) || 14) * 1.5;
+        const reachY = Math.ceil(lineHeight) + el.offsetHeight + GAP;
+        const lo = Math.max(frame.ceiling, box.top - reachY);
+        const hi = Math.min(frame.floor, box.bottom + reachY);
+        const others = probe(() => marginItemRects(this.view, { left: least, right: frame.columnLeft, top: lo, bottom: hi }, box));
+        const avoid = [...avoidOpen, ...others];
+        // A scroll: the edge it was kept to last time first, so the wide fit is not measured again.
+        let edge = prev !== null && prev.limited !== null ? prev.limited : wide.layerEdge;
+        let p: Placement;
+        let room: number;
+        for (let tries = 0; ; tries++) {
+            claim.fit?.(reach(edge), tries === 0 && fresh);
+            p = placeLayer(el, box, { ...opts, avoid, frame: { ...frame, layerEdge: edge, windowLeft: least } });
+            room = roomAt(p.y, el.offsetHeight);
+            if (Math.abs(room - edge) < 0.5 || tries >= 2) {
+                break;
+            }
+            edge = room;
+        }
+        if (least + Math.max(el.offsetWidth, el.scrollWidth) <= room + 0.5) {
+            this.write(claim, p, anchor, frame, avoidOpen, room, null, appeared);
+            return;
+        }
+        // It does not fit: a height with no text across its whole width.
+        // Given the room its narrowest form measures (its box's border too): never cut.
+        claim.fit?.(Math.ceil(Math.max(el.offsetWidth, el.scrollWidth) + el.offsetWidth - el.clientWidth), false);
+        const width = Math.max(el.offsetWidth, el.scrollWidth);
+        const height = el.offsetHeight;
+        const right = least + width;
+        const caret = caretBand(this.view, frame);
+        // The column's occupied heights over the width the layer needs, probed once for every candidate.
+        const occupied = probe(() => contentRows(this.view, frame.columnLeft, right + GAP, lo, hi));
+        const free = (y: number): boolean => {
+            if (y < frame.ceiling + GAP || y + height > frame.floor) {
+                return false;
+            }
+            const rect = { left: least, top: y, right, bottom: y + height };
+            if ((caret !== null && overlaps(rect, caret)) || overlaps(rect, box) || avoid.some(r => overlaps(rect, r))) {
+                return false;
+            }
+            // Nothing between the layer and its subject either: no line of text, no other note.
+            const from = y >= box.bottom ? box.bottom : y + height;
+            const to = y >= box.bottom ? y : box.top;
+            const between = { left: least, top: from, right: frame.columnLeft, bottom: to };
+            if (to > from && avoid.some(r => overlaps(between, r))) {
+                return false;
+            }
+            return !occupied.some(row => (row >= y - GAP && row <= y + height + GAP) || (to > from && row >= from && row <= to));
+        };
+        const below = box.bottom + GAP;
+        const above = box.top - GAP - height;
+        for (let d = 0; GAP + d <= lineHeight; d += LEFT_STEP) {
+            for (const [y, side] of [[below + d, 'below'], [above - d, 'above']] as const) {
+                if (free(y)) {
+                    const found: Placement = { x: least, y, side };
+                    writeAt(el, found.x, found.y, 'mount', this.mount);
+                    this.write(claim, found, anchor, frame, avoidOpen, room, null, appeared);
+                    return;
+                }
+            }
+        }
+        // Nowhere: as before the left margin was known — in the column, under the block (`anchor`, the subject grown to its
+        // block's lines), off the caret's line and the open layers, placed as every bar in the column is: out to the edge,
+        // kept short of a note in the right margin beside it (`placeWide`, review round 3 M-1); never cut.
+        const column = this.placeWide(claim, anchor, frame, wide, { ...opts, atAnchor: false, leftMargin: false, avoid: avoidOpen }, false, true);
+        this.write(claim, column.p, anchor, frame, avoidOpen, room, null, appeared);
     }
 
     /**
@@ -1314,7 +1507,7 @@ export class LayerSlot {
         const at: Placement = { x: p.x - base.left, y: p.y - base.top, side: p.side };
         const before = this.written?.el === claim.el ? this.written.at : null;
         this.written = { el: claim.el, at };
-        this.placed = { key: claim.key, anchor, width: claim.el.offsetWidth, height: claim.el.offsetHeight, frame, avoid, limited, reach };
+        this.placed = { key: claim.key, anchor, width: claim.el.offsetWidth, height: claim.el.offsetHeight, frame, avoid, limited, reach, mountTop: base.top };
         // Standing above what it is about: a tooltip of its controls goes above it too, off its anchor (`tooltip.ts`).
         claim.el.toggleAttribute('data-flipped', p.y + claim.el.offsetHeight <= anchor.top + 0.5);
         const shifted = appeared || moved(before, at);

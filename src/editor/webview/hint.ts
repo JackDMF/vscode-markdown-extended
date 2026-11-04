@@ -33,7 +33,7 @@
  */
 import { EditorState, NodeSelection, Plugin, PluginKey, Selection, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { APPLY_BINDING, UNDO_BINDING, keyLabel } from '../keys';
+import { APPLY_BINDING, UNDO_BINDING, deleteKeyName, isMacPlatform, keyLabel } from '../keys';
 import { REANNOUNCE_GAP_MS, refusalMs } from '../refusal';
 import { Said, saidParts, saidText } from '../tips';
 import { placeOfElement } from './focusPlace';
@@ -536,7 +536,12 @@ export function showParagraphHint(view: EditorView, text: string): void {
 
 /** Whether the platform names the editing modifier Cmd (macOS), not Ctrl. */
 export function macKeys(): boolean {
-    return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+    return isMacPlatform();
+}
+
+/** A deleting key as the platform's keyboard names it (`deleteKeyName`): a hint that names the key a press needs. */
+export function deleteKey(key: 'Backspace' | 'Delete'): string {
+    return deleteKeyName(key, macKeys());
 }
 
 /** The key that undoes — the page keymap's own binding (`keys.ts`) — as the platform names it, for a hint that offers the undo. */

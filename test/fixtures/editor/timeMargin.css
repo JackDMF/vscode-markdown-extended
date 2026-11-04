@@ -1,0 +1,77 @@
+/*
+ * A user stylesheet with the geometry of Daniel's archive sheet (Styles.css):
+ * the body at 12 pt with a line height of 1.5, lists set in by 1.5 em; at the
+ * left a time margin of 3 cm from 1200 px, 2 cm below, the body's padding
+ * making it, `$…$` at 14 pt floated into it at 0.75 × the margin, 0.75 rem in
+ * from the window's edge — and a list item's one rem further in; at the right
+ * a side margin of 10 cm (7 cm below 1200 px) its notes float into at
+ * 0.75 × the margin, at 10 pt. Test fixture, not his file: the left margin's
+ * tests run against the real one too where `MEP_USER_STYLESHEET` names it
+ * (`leftMargin.e2e.test.ts`).
+ */
+:root {
+    --body-fs: 12pt;
+    --time-fs: 14pt;
+    --side-note-fs: 10pt;
+    --time-margin: 2cm;
+    --side-margin: 7cm;
+    --time-width: calc(0.75 * var(--time-margin));
+    --time-offset: calc(-1 * var(--time-margin) + 0.75rem);
+    --sidebar-width: calc(0.75 * var(--side-margin));
+    --sidebar-offset: calc(-1 * var(--side-margin) + 1rem);
+}
+
+@media (min-width: 1200px) {
+    :root {
+        --time-margin: 3cm;
+        --side-margin: 10cm;
+    }
+}
+
+html {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+body {
+    padding-left: var(--time-margin) !important;
+    padding-right: 0 !important;
+    width: calc(100% - var(--side-margin) - var(--time-margin)) !important;
+    max-width: none !important;
+    font-size: var(--body-fs);
+    line-height: calc(var(--body-fs) * 1.5);
+}
+
+ol,
+ul {
+    padding-inline-start: 1.5em;
+}
+
+span.left-sidebar,
+sub {
+    width: var(--time-width);
+    margin-left: var(--time-offset);
+    float: left;
+    clear: left;
+    display: block;
+    text-align: center;
+    font-size: var(--time-fs);
+    line-height: inherit;
+}
+
+li > span.left-sidebar,
+li > sub {
+    margin-left: calc(var(--time-offset) - 1rem);
+}
+
+span:is(.sidenote, .mnote) {
+    display: block;
+    float: right;
+    clear: right;
+    position: relative;
+    width: var(--sidebar-width);
+    margin-right: var(--sidebar-offset);
+    padding: 0 0.25em;
+    font-size: var(--side-note-fs);
+    line-height: 1rem;
+}

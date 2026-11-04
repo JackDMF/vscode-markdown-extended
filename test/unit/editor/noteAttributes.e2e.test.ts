@@ -63,6 +63,10 @@ async function barOf(page: puppeteer.Page) {
         title: bar.querySelector(':scope > .mep-object-label')?.textContent ?? null,
         verbs: Array.from(bar.querySelectorAll(':scope > button[data-verb]')).filter(b => !(b as HTMLElement).hidden).map(b => b.textContent),
         ids: Array.from(bar.querySelectorAll(':scope > button[data-verb]')).filter(b => !(b as HTMLElement).hidden).map(b => (b as HTMLElement).dataset.verb),
+        /** Every verb the bar holds, those given way to "…" too (a sidebar in a left margin has the room of the margin only). */
+        all: Array.from(bar.querySelectorAll(':scope > button[data-verb]')).map(b => (b as HTMLElement).dataset.verb),
+        more: bar.querySelector<HTMLElement>('.mep-object-more')?.hidden === false,
+        cut: bar.scrollWidth > bar.clientWidth + 1,
     }));
 }
 
@@ -314,7 +318,11 @@ suite('Editor note attributes: the note bar (e2e)', () => {
         await page.waitForSelector(BAR, { visible: true, timeout: 2000 });
         const bar = await barOf(page);
         assert.strictEqual(bar.title, 'Left sidebar {.l}');
-        assert.deepStrictEqual(bar.verbs, ['Move to right', 'Attributes…', 'Edit source', 'Remove attributes, keep sidebar', 'Remove sidebar, keep text']);
+        // The sidebar floats into the left margin, where the bar stands (`leftMargin.e2e.test.ts`): the verbs that do not fit the margin are in "…", as worded, and none is cut by the bar's edge.
+        assert.deepStrictEqual(bar.verbs, ['Move to right', 'Attributes…']);
+        assert.deepStrictEqual(bar.all, ['convert-note', 'note-attributes', 'edit-source', 'remove-attributes', 'remove-note']);
+        assert.ok(bar.more, 'the verbs given way are behind "…"');
+        assert.ok(!bar.cut, 'nothing cut by the bar\'s edge');
     });
 
     test('crumbs: List item {.i} › Marginal note {.tipp}; Remove ▾ says "marginal note stays"', async function () {
@@ -620,7 +628,8 @@ suite('Editor note attributes: menu, bubble and refusals (e2e)', () => {
 
     test('R4 at the control: removing the literal that keeps a left sidebar apart from a digit says why at Remove', async function () {
         this.timeout(20000);
-        await b.show('Price $Status${.l}5 here.\n\nThe last paragraph.\n');
+        // On the last line: no text below, so the bar reaches into the column with every verb drawn (in the left margin alone the verb is in "…").
+        await b.show('The first line.\n\nPrice $Status${.l}5 here.\n', 'here');
         await caretIn('Status', 2);
         const verb = `${BAR} [data-verb="remove-attributes"]`;
         await page.waitForSelector(verb, { visible: true, timeout: 2000 });
@@ -704,9 +713,11 @@ suite('Editor note attributes: the cost of a key (e2e)', () => {
  * (`MEP_USER_STYLESHEET`, read in place), else the fixture shaped like it —
  * the margin suite runs in the default run too (#15 review 2).
  */
+/** The fixture alone: what a test asserts one exact place by. */
+const MARGIN_LAYOUT = path.join(repoRoot, 'test', 'fixtures', 'editor', 'marginLayout.css');
 const USER_STYLESHEET = process.env.MEP_USER_STYLESHEET !== undefined && fs.existsSync(process.env.MEP_USER_STYLESHEET)
     ? process.env.MEP_USER_STYLESHEET
-    : path.join(repoRoot, 'test', 'fixtures', 'editor', 'marginLayout.css');
+    : MARGIN_LAYOUT;
 
 /**
  * Bars reach into the margin (Daniel, #15 critique): where nothing stands in
@@ -757,29 +768,98 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test('with a margin layout at 1280: the left sidebar\'s bar grows into the empty right margin, every verb on it, up to the edge less 16 px', async function () {
+    test('with the margin layout fixture at 1280: a list item\'s sidebar, text above and below it — its bar at its narrowest, measured, decides: in the margin at the edge + 16 px right under the sidebar where it fits, else in the column at its left edge under the item; never cut', async function () {
+        this.timeout(60000);
+        // The fixture, whatever `MEP_USER_STYLESHEET` names: one place, decided before it is looked at — not "the margin or the column".
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [MARGIN_LAYOUT] });
+        if (!editor) {
+            this.skip();
+        }
+        page = (editor as EditorPage).page;
+        await b.show('Erster Absatz ohne alles.\n\n- Zeit $Uhrzeit${class=living} und ein ruhiger Satz, der weitergeht. {.punkt}\n\n- Ein zweiter Punkt ohne Notiz. {.punkt}\n\nThe last paragraph.\n');
+        // The bar's narrowest form is the width it has fitted to the least room it is given (the margin's): every read of its
+        // `scrollWidth` while it is placed is noted with the room it was fitted to then. Its width depends on the system's fonts
+        // (209 px with "…" on macOS), so it is measured, not assumed — the outcome is then the one the rule gives for it.
+        await page.evaluate(() => {
+            const w = window as unknown as { fits: { room: number; width: number }[]; restoreScrollWidth: () => void };
+            const own = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth') as PropertyDescriptor;
+            w.fits = [];
+            Object.defineProperty(Element.prototype, 'scrollWidth', {
+                configurable: true,
+                get(this: HTMLElement) {
+                    const v = (own.get as () => number).call(this);
+                    if (this.matches('.mep-object-toolbar[data-trigger="selection"]') && this.style.maxWidth !== '') {
+                        w.fits.push({ room: parseFloat(this.style.maxWidth), width: Math.max(v, this.offsetWidth) });
+                    }
+                    return v;
+                },
+            });
+            w.restoreScrollWidth = () => {
+                Object.defineProperty(Element.prototype, 'scrollWidth', own);
+            };
+        });
+        try {
+            await b.restAt('Uhrzeit', 2);
+            await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        } finally {
+            await page.evaluate(() => {
+                (window as unknown as { restoreScrollWidth: () => void }).restoreScrollWidth();
+            });
+        }
+        const { narrowest, least } = await page.evaluate(() => {
+            const fits = (window as unknown as { fits: { room: number; width: number }[] }).fits;
+            if (fits.length === 0) {
+                return { narrowest: null, least: null };
+            }
+            // The least room is the margin's as the placement measured it (`roomAt`: the column's text probed on its grid, less
+            // the gap and the window's edge + 16); there the reads go down as its verbs move into "…": the least is its narrowest form.
+            const room = Math.min(...fits.map(f => f.room));
+            return { narrowest: Math.min(...fits.filter(f => f.room === room).map(f => f.width)), least: room };
+        });
+        assert.ok(narrowest !== null && least !== null, 'the bar was fitted as it was placed');
+        const bar = await barBox();
+        const { column, item, room, side, line } = await page.evaluate(() => {
+            const pm = document.querySelector('.ProseMirror') as HTMLElement;
+            const li = pm.querySelector('li') as HTMLElement;
+            const s = (li.querySelector('.left-sidebar') as HTMLElement).getBoundingClientRect();
+            return {
+                column: (pm.querySelector(':scope > p') as HTMLElement).getBoundingClientRect().left,
+                item: li.getBoundingClientRect().bottom,
+                // Where the item's text begins: the margin's room beside it ends a gap (4 px) before it.
+                room: (li.querySelector('p') as HTMLElement).getBoundingClientRect().left,
+                side: { top: s.top, bottom: s.bottom },
+                line: parseFloat(getComputedStyle(pm).lineHeight),
+            };
+        });
+        // The fixture's geometry, so the case is the one meant: the column at 160 px, the item's text at 200.
+        assert.ok(Math.abs(column - 160) < 1 && Math.abs(room - 200) < 1, `the fixture's column and item: ${JSON.stringify({ column, room })}`);
+        // The placement's own test: its narrowest form within the room it was fitted to at the least (`placeAtLeftMargin`).
+        const fits = (narrowest as number) <= (least as number) + 0.5;
+        console.log(`#5b the list item's bar at its narrowest: ${narrowest} px, the margin's room as measured ${least} px — ${fits ? 'the margin' : 'the column'}`);
+        if (fits) {
+            assert.ok(Math.abs(bar.left - 16) < 1, `fits (${narrowest} px): at the edge + 16 px: ${JSON.stringify(bar)}`);
+            assert.ok(bar.right <= room - 4 + 0.5, `fits (${narrowest} px): in the margin, off the item's text: ${JSON.stringify({ bar, room })}`);
+            assert.ok(bar.top >= side.bottom - 0.5 && bar.top - side.bottom <= line, `fits (${narrowest} px): right under its sidebar: ${JSON.stringify({ bar, side, line })}`);
+        } else {
+            assert.ok(Math.abs(bar.left - column) < 1, `does not fit (${narrowest} px): in the column at its left edge: ${JSON.stringify({ bar, column })}`);
+            assert.ok(bar.top >= item - 0.5, `does not fit (${narrowest} px): under the item: ${JSON.stringify({ bar, item })}`);
+        }
+        assert.ok(bar.right <= bar.edge - 16 + 0.5, `inside the edge less 16 px: ${JSON.stringify(bar)}`);
+        assert.ok(await page.$eval(BAR, el => el.scrollWidth <= el.clientWidth + 1), `never cut: ${JSON.stringify(bar)}`);
+        // The rest of the suite runs on its own page (`USER_STYLESHEET`).
+        await page.keyboard.press('Escape');
+        await closeEditorPage(this, editor);
+        editor = undefined;
+    });
+
+    test('with a margin layout at 1280: a sidebar floated beside a heading has its bar off the heading\'s text lines, not only off its own box', async function () {
+        await closeEditorPage(this, editor);
         this.timeout(60000);
         editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [USER_STYLESHEET] });
         if (!editor) {
             this.skip();
         }
         page = (editor as EditorPage).page;
-        // Without the notes: nothing in the right margin at the bar's height, whichever side of the item it takes.
-        await b.show('Erster Absatz ohne alles.\n\n- Zeit $Uhrzeit${class=living} und ein ruhiger Satz, der weitergeht. {.punkt}\n\n- Ein zweiter Punkt ohne Notiz. {.punkt}\n\nThe last paragraph.\n');
-        await b.restAt('Uhrzeit', 2);
-        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
-        const bar = await barBox();
-        const column = await columnRight();
-        assert.ok(bar.right > column + 1, `past the column: ${JSON.stringify({ bar, column })}`);
-        assert.ok(bar.right <= bar.edge - 16 + 0.5, `inside the edge less 16 px: ${JSON.stringify(bar)}`);
-        assert.ok(!bar.more, `no word gave way: ${JSON.stringify(bar)}`);
-    });
-
-    test('with a margin layout at 1280: a sidebar floated beside a heading has its bar off the heading\'s text lines, not only off its own box', async function () {
-        this.timeout(60000);
-        if (editor === undefined) {
-            this.skip();
-        }
         const words = 'Rückblick, Ausblick und ein Lied mit vielen Worten, die über mehrere Zeilen laufen und laufen';
         // Text right above and right below the heading: the bar's two sides both have text, and it keeps below (#15 review 2), under the heading's last line.
         const filler = Array.from({ length: 12 }, (_, k) => `Zeile ${k} mit etwas Text.`).join('\n\n');

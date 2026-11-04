@@ -4,6 +4,7 @@ import { ADMONITION_TYPES, NOTE_SYNTAX, plainWikiEmbed } from '../syntax/markers
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { domAttrsOf } from './attrs';
 import { languageOf } from './fences';
+import { deleteKeyName, isMacPlatform } from './keys';
 import { EMBED_WAY_BACK, VERB } from './verbs';
 
 /**
@@ -259,7 +260,9 @@ const NOTE_REF_ATTR = 'data-mep-note-ref';
 const LINK_TITLE_ATTR = 'data-mep-title';
 
 /** A wiki embed's tooltip: what it is, and the two ways to its text and the one way back. */
-const WIKI_EMBED_TITLE = `Wiki embed — kept as written. Backspace right after typing, or ${VERB.convertToText}, makes it text; ${EMBED_WAY_BACK}`;
+function wikiEmbedTitle(): string {
+    return `Wiki embed — kept as written. ${deleteKeyName('Backspace', isMacPlatform())} right after typing, or ${VERB.convertToText}, makes it text; ${EMBED_WAY_BACK}`;
+}
 
 /**
  * A pasted note (the preview's HTML, or the editor's own copy): its `.sidenote`
@@ -829,7 +832,7 @@ export const editorSchema = new Schema({
             toDOM(node): DOMOutputSpec {
                 const source = node.attrs.source as string;
                 // Shown plain: a place's encoding of a character (`&#124;` in a note) is how it is written, not its name.
-                return ['span', { class: 'mep-wiki-embed', 'data-mep-wiki-embed': source, title: WIKI_EMBED_TITLE }, plainWikiEmbed(source)];
+                return ['span', { class: 'mep-wiki-embed', 'data-mep-wiki-embed': source, title: wikiEmbedTitle() }, plainWikiEmbed(source)];
             },
         },
         // An emoji the file holds (`markdownItEmoji.ts`): one unit, drawn as its

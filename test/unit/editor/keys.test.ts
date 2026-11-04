@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { APPLY_BINDING, MODIFIER_KEYS, REDO_BINDINGS, UNDO_BINDING, ariaKeyshortcuts, bindingMatches, keyLabel, typesText } from '../../../src/editor/keys';
+import { APPLY_BINDING, MODIFIER_KEYS, REDO_BINDINGS, UNDO_BINDING, ariaKeyshortcuts, bindingMatches, deleteKeyName, keyLabel, typesText } from '../../../src/editor/keys';
 
 /**
  * The key a hint names is the binding the page's keymap binds (`keys.ts`),
@@ -18,6 +18,11 @@ suite('Editor keys: a binding as the platform names it', () => {
         assert.strictEqual(keyLabel(APPLY_BINDING, true), 'Cmd+Enter');
         assert.strictEqual(keyLabel(APPLY_BINDING, false), 'Ctrl+Enter');
         assert.deepStrictEqual([ariaKeyshortcuts(APPLY_BINDING, true), ariaKeyshortcuts(APPLY_BINDING, false)], ['Meta+Enter', 'Control+Enter']);
+    });
+
+    test('a deleting key is named as the keyboard prints it: Backspace and Delete, on a Mac Delete (the key above Return) and Fn+Delete (forward)', () => {
+        assert.deepStrictEqual([deleteKeyName('Backspace', false), deleteKeyName('Delete', false)], ['Backspace', 'Delete']);
+        assert.deepStrictEqual([deleteKeyName('Backspace', true), deleteKeyName('Delete', true)], ['Delete', 'Fn+Delete']);
     });
 
     test('the undo binding is the one the undo hints name', () => {

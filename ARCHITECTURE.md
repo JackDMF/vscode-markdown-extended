@@ -2110,6 +2110,23 @@ cannot supply another — VS Code's `undo` does not reach the page, and no exten
 command's keybinding. The hint is the one the notes plugin shows a refusal in; one element, two tones
 (`data-tone`), so the page has one place beside the caret where it speaks.
 
+The deleting keys are named the same way: `deleteKeyName` (`keys.ts`; `deleteKey` in
+`hint.ts` for the page) says *Backspace* / *Delete* off a Mac and, as the keyboard prints
+them, *Delete* (the key above Return) / *Fn+Delete* (forward) on one. Modifiers are spelled as
+words on every surface (*Cmd+Z*, not ⌘Z), so the key caps are words too, not ⌫ / ⌦ — a glyph
+would be the only one on the page. Every string that names a deleting key goes through it (the
+footnote reference's first-press hint, the wiki embed's tooltip); `isMacPlatform` (`keys.ts`)
+is the one platform test, false in the host, which has no `navigator`.
+
+**A layer at an anchor left of the column** (a left sidebar floated into the left margin;
+`placeAtLeftMargin` in `webview/placement.ts`) mirrors the right margin's rule (#15): it
+stands at its anchor, never left of the window's edge + 16 px (`Frame.windowLeft`), and reaches
+into the column only where the column has no text at its height (`contentLeft` in
+`clearance.ts`, probed across the whole room, so the width does not decide it); where it has,
+the layer is fitted to the margin and its verbs drop their nouns first (`ObjectBar.fit`).
+Floated content in the margin (any float, probed: `marginItemRects`) is kept off like any layer. Fitted and placed up to three times: the side
+decides whether text is at its height, the text decides the width. A bar stands directly under the subject's own box (`LayerClaim.box`, `floatedBox`), at the window's edge + 16 px whatever x the subject has (a list item's sidebar starts a rem further in). Where even its narrowest form (`scrollWidth`) does not fit before the column's text, a height within one line's height of the subject's box, with no text, marker or other note between the two and none across that width, is looked for; none: the column, under the block, as before — placed as any bar there (`placeWide`: out to the edge, kept short of a note or sidebar in the right margin beside it, `marginLimit`). A scroll — the page moved as far as the subject did (`Placed.mountTop`); content grown above the subject with no scroll, a host's lens rows or a late image, is no scroll and is measured again — moves the layer with the text without probing, where it stood in the window before the scroll and after it; one placed out of sight was probed where nothing answers (`elementFromPoint` is null outside the window), so it is measured again when it comes back. Bar, bubble and field alike.
+
 **The inline field** (`webview/inlineField.ts`) is one reusable component for every place a
 value is asked for where it is used — the verbs' fields, and the toolbar's **Span with
 class**, which opens the attributes field (empty between its fixed braces, `adorn`) in a

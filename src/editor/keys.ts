@@ -108,6 +108,27 @@ export function keyLabel(binding: string, mac: boolean): string {
     return [...modifiers, key.length === 1 ? key.toUpperCase() : key].join('+');
 }
 
+/** Whether this page runs on an Apple platform, where the editing modifier is Cmd (the host, which has no `navigator`, is not). */
+export function isMacPlatform(): boolean {
+    return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+}
+
+/**
+ * A deleting key as the platform's keyboard names it. A Mac has no key called
+ * Backspace: the one above Return is printed "delete" (⌫), and the key that
+ * deletes forward is Fn+delete (a laptop has none of its own; a full keyboard's
+ * ⌦ is also printed "delete"). The page spells modifiers as words (`Cmd+Z`,
+ * `keyLabel`), never as glyphs, so the cap is named the same way: `Delete` for
+ * the backward key, `Fn+Delete` for the forward one. Elsewhere the keys keep
+ * their `KeyboardEvent.key` names.
+ */
+export function deleteKeyName(key: 'Backspace' | 'Delete', mac: boolean): string {
+    if (!mac) {
+        return key;
+    }
+    return key === 'Backspace' ? 'Delete' : 'Fn+Delete';
+}
+
 /** The keys `aria-keyshortcuts` cannot write as themselves: `+` joins its keys, and a space separates shortcuts. */
 const ARIA_KEY_NAMES: Readonly<Record<string, string>> = { '+': 'Plus', ' ': 'Space' };
 

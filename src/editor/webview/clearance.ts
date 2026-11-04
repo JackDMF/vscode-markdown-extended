@@ -20,6 +20,9 @@ export interface Band {
 /** How far apart the points are that a band is probed at. */
 const PROBE_STEP = 16;
 
+/** How far apart the rows are that a band is probed at: closer than the height of a line of text. */
+const ROW_STEP = 6;
+
 /** On the mount while the placement probes (`placement.ts`): the page's floating chrome takes no hit then (`editor.css`). */
 export const PROBING_CLASS = 'mep-probing';
 
@@ -95,6 +98,29 @@ export function marginContentLeft(view: EditorView, band: Band, anchor: Band): n
     return left;
 }
 
+/**
+ * The boxes of the floated or positioned content (a note, a sidebar, a `~…~`
+ * the stylesheet floats) that stands in `band` — a part of the margin — but
+ * the layer's own subject (what overlaps `subject`), the way `marginContentLeft`
+ * sees margin content, probed at a step of 8 px down and 16 px across.
+ */
+export function marginItemRects(view: EditorView, band: Band, subject: Band): Band[] {
+    const found = new Map<Element, Band>();
+    for (let y = band.top; y <= band.bottom; y += PROBE_STEP / 2) {
+        for (let x = band.left + 2; x <= band.right - 2; x += PROBE_STEP) {
+            const item = marginItemAt(view, x, y);
+            if (item === null || found.has(item)) {
+                continue;
+            }
+            const r = item.getBoundingClientRect();
+            if (!(r.left < subject.right && r.right > subject.left && r.top < subject.bottom && r.bottom > subject.top) && r.right > r.left && r.bottom > r.top) {
+                found.set(item, { left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+            }
+        }
+    }
+    return Array.from(found.values());
+}
+
 /** What of the document stands at `x`, `y` as margin content (`marginContentLeft`): its floated or positioned box, else the element holding content there; `null` for none. */
 function marginItemAt(view: EditorView, x: number, y: number): Element | null {
     const element = document.elementFromPoint(x, y);
@@ -129,6 +155,52 @@ export function contentRight(view: EditorView, band: Band): number | null {
         }
     }
     return null;
+}
+
+/**
+ * The left edge of the content in `band` — a part of the text column — or
+ * `null` where it holds none (`contentIn`'s fact): `contentRight`'s mirror,
+ * probed from the band's left edge rightwards, at half `contentIn`'s step, up
+ * to one step before the content found. How far a layer at a note in the left
+ * margin may reach into the column (the mirror of #15: only where the column
+ * has no text at its height).
+ */
+export function contentLeft(view: EditorView, band: Band): number | null {
+    if (band.right <= band.left || band.bottom <= band.top) {
+        return null;
+    }
+    const step = PROBE_STEP / 2;
+    // Rows close enough that no line of text falls between two (a tall layer, a field, has a tall band).
+    const rows: number[] = [];
+    for (let y = band.top + 2; y < band.bottom - 2; y += ROW_STEP) {
+        rows.push(y);
+    }
+    rows.push(band.bottom - 2);
+    for (let x = band.left + 2; x <= band.right - 2; x += step) {
+        if (rows.some(y => contentAt(view, x, y))) {
+            return Math.max(band.left, x - step);
+        }
+    }
+    return null;
+}
+
+/**
+ * The heights, from `top` to `bottom` in steps of `ROW_STEP`, at which the
+ * column has content between `left` and `right` — probed once, for a layer
+ * that looks for a height with none (`placeAtLeftMargin`): a candidate height
+ * is free when no occupied one lies in its band.
+ */
+export function contentRows(view: EditorView, left: number, right: number, top: number, bottom: number): number[] {
+    const out: number[] = [];
+    for (let y = top; y <= bottom; y += ROW_STEP) {
+        for (let x = left + 2; x <= right - 2; x += PROBE_STEP) {
+            if (contentAt(view, x, y)) {
+                out.push(y);
+                break;
+            }
+        }
+    }
+    return out;
 }
 
 /**
