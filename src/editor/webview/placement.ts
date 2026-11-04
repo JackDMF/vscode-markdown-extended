@@ -914,6 +914,17 @@ function sameFrame(a: Frame, b: Frame): boolean {
 }
 
 /**
+ * Fit a claim's layer to the room `f` gives it, from its column's left to its
+ * layer edge. A field's room is never narrower than a hint's (#8 review 1): a
+ * user stylesheet's narrow column or margin lane (petrol at 520 px wrapped a
+ * keys line at 150 px) gives it min(44ch, window − 32 px), placed inside the window.
+ */
+function fitLayer(claim: LayerClaim, f: Frame, refit: boolean): void {
+    const room = f.layerEdge - f.columnLeft;
+    claim.fit?.(claim.kind === 'field' ? Math.max(room, fieldFloor(claim.el)) : room, refit);
+}
+
+/**
  * The one floating layer of a view: the selection's bubble, an object's bar,
  * a field bar or the pointer's bar — one at a time. A 'hover' claim takes
  * only an empty slot; every other kind displaces the occupant, which comes
@@ -1243,12 +1254,7 @@ export class LayerSlot {
         // there at its height (Daniel, #15 critique): fitted and placed to that edge first, then — a note,
         // a sidebar or other margin content beside it — fitted and placed again short of what stands there.
         const wide: Frame = { ...frame, layerEdge: Math.max(frame.layerEdge, frame.windowRight ?? frame.layerEdge) };
-        // A field's room is never narrower than a hint's (#8 review 1): a user stylesheet's narrow column or margin lane
-        // (petrol at 520 px wrapped a keys line at 150 px) gives it min(44ch, window − 32 px), placed inside the window.
-        const fit = (f: Frame, refit: boolean) => {
-            const room = f.layerEdge - f.columnLeft;
-            claim.fit?.(claim.kind === 'field' ? Math.max(room, fieldFloor(claim.el)) : room, refit);
-        };
+        const fit = (f: Frame, refit: boolean) => fitLayer(claim, f, refit);
         const prev = this.placed;
         // The same layer again (a scroll, a re-place): fitted to the edge it was kept to last time first, so
         // nothing is measured twice where nothing changed.
@@ -1298,8 +1304,21 @@ export class LayerSlot {
                 return;
             }
         }
-        if (firstEdge !== wide.layerEdge || firstReach !== null) {
-            fit(wide, false);
+        const { p, limited, reach } = this.placeWide(claim, anchor, frame, wide, opts, margin, firstEdge !== wide.layerEdge || firstReach !== null);
+        this.write(claim, p, anchor, frame, avoid, limited, reach, appeared);
+    }
+
+    /**
+     * Place a layer out to the editor's edge less the gutter (`wide`), then
+     * kept short of the margin content beside it (`marginLimit`: a note, a
+     * sidebar floated into the right margin) and — `margin`, its subject
+     * standing there — right of the column's text at its height
+     * (`columnReach`), fitted again each time. `refit`: it is not fitted to
+     * `wide` yet. Returns where it goes and what kept it short, unwritten.
+     */
+    private placeWide(claim: LayerClaim, anchor: Rect, frame: Frame, wide: Frame, opts: PlaceOptions, margin: boolean, refit: boolean): { p: Placement; limited: number | null; reach: number | null } {
+        if (refit) {
+            fitLayer(claim, wide, false);
         }
         let p = placeLayer(claim.el, anchor, { ...opts, frame: wide });
         let limited = this.marginLimit(p, claim.el, anchor, frame, wide);
@@ -1308,12 +1327,12 @@ export class LayerSlot {
             // above (shortened to that content it would slide into the column's text, #15 review 3) — below the
             // anchor, which for a note's body is below its last line.
             const blocked = rectAt(p.x, p.y, { width: claim.el.offsetWidth, height: claim.el.offsetHeight });
-            p = placeLayer(claim.el, anchor, { ...opts, prefer: undefined, avoid: [...avoid, blocked], frame: wide });
+            p = placeLayer(claim.el, anchor, { ...opts, prefer: undefined, avoid: [...opts.avoid ?? [], blocked], frame: wide });
             limited = this.marginLimit(p, claim.el, anchor, frame, wide);
         }
         if (limited !== null) {
             const short: Frame = { ...frame, layerEdge: limited };
-            fit(short, false);
+            fitLayer(claim, short, false);
             p = placeLayer(claim.el, anchor, { ...opts, frame: short });
         }
         // At the margin and reaching into the column where it has text at the layer's height: kept right of
@@ -1321,10 +1340,10 @@ export class LayerSlot {
         const reach = margin ? this.columnReach(p, claim.el, frame) : null;
         if (reach !== null) {
             const narrow: Frame = { ...wide, layerEdge: limited ?? wide.layerEdge, columnLeft: reach };
-            fit(narrow, false);
+            fitLayer(claim, narrow, false);
             p = placeLayer(claim.el, anchor, { ...opts, frame: narrow });
         }
-        this.write(claim, p, anchor, frame, avoid, limited, reach, appeared);
+        return { p, limited, reach };
     }
 
     /**
