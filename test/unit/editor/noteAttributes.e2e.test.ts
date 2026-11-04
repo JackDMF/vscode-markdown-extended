@@ -794,18 +794,29 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
                     return v;
                 },
             });
-            w.restoreScrollWidth = () => Object.defineProperty(Element.prototype, 'scrollWidth', own);
+            w.restoreScrollWidth = () => {
+                Object.defineProperty(Element.prototype, 'scrollWidth', own);
+            };
         });
-        await b.restAt('Uhrzeit', 2);
-        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
-        const narrowest = await page.evaluate(() => {
-            const w = window as unknown as { fits: { room: number; width: number }[]; restoreScrollWidth: () => void };
-            w.restoreScrollWidth();
-            // At the least room the reads go down as its verbs move into "…": the last, least one is its narrowest form.
-            const least = Math.min(...w.fits.map(f => f.room));
-            return w.fits.length === 0 ? null : Math.min(...w.fits.filter(f => f.room === least).map(f => f.width));
+        try {
+            await b.restAt('Uhrzeit', 2);
+            await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        } finally {
+            await page.evaluate(() => {
+                (window as unknown as { restoreScrollWidth: () => void }).restoreScrollWidth();
+            });
+        }
+        const { narrowest, least } = await page.evaluate(() => {
+            const fits = (window as unknown as { fits: { room: number; width: number }[] }).fits;
+            if (fits.length === 0) {
+                return { narrowest: null, least: null };
+            }
+            // The least room is the margin's as the placement measured it (`roomAt`: the column's text probed on its grid, less
+            // the gap and the window's edge + 16); there the reads go down as its verbs move into "…": the least is its narrowest form.
+            const room = Math.min(...fits.map(f => f.room));
+            return { narrowest: Math.min(...fits.filter(f => f.room === room).map(f => f.width)), least: room };
         });
-        assert.ok(narrowest !== null, 'the bar was fitted as it was placed');
+        assert.ok(narrowest !== null && least !== null, 'the bar was fitted as it was placed');
         const bar = await barBox();
         const { column, item, room, side, line } = await page.evaluate(() => {
             const pm = document.querySelector('.ProseMirror') as HTMLElement;
@@ -822,8 +833,9 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         });
         // The fixture's geometry, so the case is the one meant: the column at 160 px, the item's text at 200.
         assert.ok(Math.abs(column - 160) < 1 && Math.abs(room - 200) < 1, `the fixture's column and item: ${JSON.stringify({ column, room })}`);
-        const fits = 16 + (narrowest as number) <= room - 4 + 0.5;
-        console.log(`#5b the list item's bar at its narrowest: ${narrowest} px, the margin's room ${room - 4 - 16} px — ${fits ? 'the margin' : 'the column'}`);
+        // The placement's own test: its narrowest form within the room it was fitted to at the least (`placeAtLeftMargin`).
+        const fits = (narrowest as number) <= (least as number) + 0.5;
+        console.log(`#5b the list item's bar at its narrowest: ${narrowest} px, the margin's room as measured ${least} px — ${fits ? 'the margin' : 'the column'}`);
         if (fits) {
             assert.ok(Math.abs(bar.left - 16) < 1, `fits (${narrowest} px): at the edge + 16 px: ${JSON.stringify(bar)}`);
             assert.ok(bar.right <= room - 4 + 0.5, `fits (${narrowest} px): in the margin, off the item's text: ${JSON.stringify({ bar, room })}`);
