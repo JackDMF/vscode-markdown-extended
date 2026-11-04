@@ -233,4 +233,31 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
         assert.strictEqual(calls, 0, 'no probes for a scroll');
         assert.ok(Math.abs(after.top - (before.top - 3)) < 1.5 && Math.abs(after.left - before.left) < 1, JSON.stringify({ before, after }));
     });
+
+    test('a bar that falls back into the column keeps off a note in the right margin beside it, as every bar does (review round 3, M-1)', async function () {
+        await closeEditorPage(this, editor);
+        this.timeout(90000);
+        // At 800 the archive sheet's time margin (2 cm) is too narrow for the bar, and its notes float into the right margin
+        // (7 cm): a bar under the block at the column's left, fitted out to the window's edge, would reach over them.
+        editor = await openEditorPage({ width: 800, height: 900, styles: ['markdown-extended.css'], userStyles: [TIME_MARGIN] });
+        if (!editor) {
+            this.skip();
+        }
+        page = (editor as EditorPage).page;
+        const lines = Array.from({ length: 4 }, (_, k) => `Zeile ${k} mit etwas Text, der bis an den Rand der Spalte läuft.`).join('\n\n');
+        const note = 'ein langer Hinweis im Rand, der Zeile um Zeile nach unten reicht, neben dem Absatz und weit unter ihn, '
+            + 'neben die folgenden Zeilen, immer weiter, bis er sicher neben der Leiste unter dem Absatz hängt, und noch ein Stück';
+        // Text above and below the sidebar: no free height within a line of it — the bar falls back into the column, under the block.
+        const doc = `${lines}\n\nMitte $Uhrzeit\${class=living} und ein ruhiger Satz !!Lang|${note}!! der weitergeht.\n\n${lines}\n\nThe last paragraph.\n`;
+        const m = await barAt(doc, 'Uhrzeit', 'left-fallback-note');
+        const notes = await page.$$eval('.ProseMirror :is(.sidenote, .mnote, .right-sidebar)', els => els.map(e => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; }));
+        assert.ok(notes.length > 0, 'the note floats into the right margin');
+        assert.ok(m.bar.left >= m.column - 1, `fallen back into the column: ${JSON.stringify(m.bar)}`);
+        assert.ok(!m.bar.cut, `never cut: ${JSON.stringify(m.bar)}`);
+        const beside = notes.filter(n => n.top < m.bar.bottom && n.bottom > m.bar.top);
+        assert.ok(beside.length > 0, `the note hangs beside the bar (else the test proves nothing): ${JSON.stringify({ bar: m.bar, notes })}`);
+        for (const n of beside) {
+            assert.ok(m.bar.right <= n.left, `off the note in the right margin: ${JSON.stringify({ bar: m.bar, note: n })}`);
+        }
+    });
 });

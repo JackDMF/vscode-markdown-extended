@@ -1361,7 +1361,8 @@ export class LayerSlot {
      * does not fit the margin, a height is looked for — nearest the subject,
      * below or above — where the column has no text across the whole width it
      * needs. None: it is placed in the column as before, under
-     * the block, off the caret's line.
+     * the block, off the caret's line, and kept short of a note in the
+     * right margin like every bar there (`placeWide`).
      */
     private placeAtLeftMargin(claim: LayerClaim, anchor: Rect, box: Rect, frame: Frame, wide: Frame, prev: Placed | null, fresh: boolean, appeared: boolean): void {
         const el = claim.el;
@@ -1461,10 +1462,10 @@ export class LayerSlot {
             }
         }
         // Nowhere: as before the left margin was known — in the column, under the block (`anchor`, the subject grown to its
-        // block's lines), off the caret's line and the open layers, fitted to the column's room; never cut.
-        claim.fit?.(Math.max(wide.layerEdge - frame.columnLeft, claim.kind === 'field' ? fieldFloor(el) : 0), false);
-        const column = placeLayer(el, anchor, { ...opts, atAnchor: false, leftMargin: false, avoid: avoidOpen, frame: wide });
-        this.write(claim, column, anchor, frame, avoidOpen, room, null, appeared);
+        // block's lines), off the caret's line and the open layers, placed as every bar in the column is: out to the edge,
+        // kept short of a note in the right margin beside it (`placeWide`, review round 3 M-1); never cut.
+        const column = this.placeWide(claim, anchor, frame, wide, { ...opts, atAnchor: false, leftMargin: false, avoid: avoidOpen }, false, true);
+        this.write(claim, column.p, anchor, frame, avoidOpen, room, null, appeared);
     }
 
     /**
