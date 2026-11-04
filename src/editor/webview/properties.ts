@@ -34,7 +34,7 @@ import {
 import { CompletionListView } from './completionList';
 import { DeclaredControl, panelRole } from './focusPlace';
 import { undoHint } from './hint';
-import { EditorPort, SourceEditor, element, isUndoRedo } from './nodeViews';
+import { EditorPort, SourceEditor, element, isUndoRedo, lostInBox } from './nodeViews';
 
 type GetPos = () => number | undefined;
 
@@ -130,6 +130,12 @@ export class PropertiesView implements NodeView, SourceEditor {
     /** The source box, while it is open. */
     private area: HTMLTextAreaElement | null = null;
     private untrackArea: (() => void) | null = null;
+    /** The YAML the open box stands on: the body when it opened, then each one the panel wrote. */
+    private areaSource = '';
+    /** The YAML as the host last held it while the box is open: what it opened on, then what a host document left (`hostShown`). */
+    private areaConfirmed = '';
+    /** The panel is writing into the document (`write`): the change that comes back is its own. */
+    private writing = false;
     /** The row (by index) of the list whose **+ Add** field is open. */
     private addingItem: number | null = null;
     /** The **+ Add** (a property) row's state while it is open: the name typed, and whether the value is asked now. */
@@ -192,7 +198,13 @@ export class PropertiesView implements NodeView, SourceEditor {
         if (changed) {
             this.parts = splitFrontMatter(node.attrs.src as string);
             this.read = readProperties(this.parts.body);
-            this.render();
+            // A document from the host that changed the YAML under the open box closes it unapplied
+            // (#23), as a source block's: applied, or left, it would write the YAML it opened with over that change.
+            if (this.area !== null && !this.writing && this.port.takingHostDocument() && this.parts.body !== this.areaSource) {
+                this.closeForChangeOutside(true);
+            } else {
+                this.render();
+            }
         }
         return true;
     }
@@ -215,6 +227,10 @@ export class PropertiesView implements NodeView, SourceEditor {
     }
 
     destroy(): void {
+        // The front matter removed by a document from the host under the open box: what was typed is kept (#23).
+        if (this.area !== null && this.port.takingHostDocument()) {
+            this.closeForChangeOutside(false);
+        }
         this.untrackArea?.();
         this.untrackDirty?.();
         this.untrackArea = null;
@@ -768,6 +784,8 @@ export class PropertiesView implements NodeView, SourceEditor {
         });
         area.addEventListener('blur', () => this.closeSource(true, false));
         this.area = area;
+        this.areaSource = body;
+        this.areaConfirmed = body;
         this.untrackArea = this.port.trackSourceEditor(this);
         this.render();
         this.content.hidden = false;
@@ -805,6 +823,32 @@ export class PropertiesView implements NodeView, SourceEditor {
         }
     }
 
+    /** A document from the host left the box open: the host holds the YAML the panel holds now (`lostInBox`). */
+    hostShown(): void {
+        if (this.area) {
+            this.areaConfirmed = this.parts.body;
+        }
+    }
+
+    /** Close the box unapplied for a change from outside, and tell the page what it held; `standing`: the panel is still on the page. */
+    private closeForChangeOutside(standing: boolean): void {
+        const area = this.area;
+        if (!area) {
+            return;
+        }
+        const focused = area.ownerDocument.activeElement === area;
+        const typed = lostInBox(area.value, this.areaConfirmed, standing ? this.parts.body : null);
+        this.closeSource(false, false);
+        this.port.sourceChangedOutside({
+            what: 'front matter',
+            typed,
+            focused,
+            pos: () => (standing ? this.getPos() : undefined),
+            editor: this,
+            ...(standing ? { refocus: () => this.focusSlot('source') } : {}),
+        });
+    }
+
     private writeSource(value: string): void {
         const eol = eolOf(this.node.attrs.src as string);
         const text = value.replace(/\r\n?/g, '\n');
@@ -824,7 +868,14 @@ export class PropertiesView implements NodeView, SourceEditor {
         }
         const src = joinFrontMatter({ ...this.parts, body });
         if (src !== this.node.attrs.src) {
-            this.port.commitFrontMatter(pos, src);
+            this.writing = true;
+            try {
+                this.port.commitFrontMatter(pos, src);
+            } finally {
+                this.writing = false;
+            }
+            // An open box stands on what was written (a save commits it and leaves it open).
+            this.areaSource = this.parts.body;
         }
     }
 

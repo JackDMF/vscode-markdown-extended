@@ -59,6 +59,10 @@ export interface SessionHost {
     exportDocument?(uri: vscode.Uri, format: ExportFormat): Thenable<unknown>;
     /** Bring the page's panel to the front with the keyboard (`WebviewPanel.reveal`), for `insertBlock` with `focus`; nothing without it. */
     reveal?(): void;
+    /** The editor group the page's panel is in (`WebviewPanel.viewColumn`); `undefined` without a panel. */
+    viewColumn?(): vscode.ViewColumn | undefined;
+    /** VS Code's clipboard (`vscode.env.clipboard`, the default), for the page's `copyText`; a test keeps its own, not the machine's. */
+    clipboard?: { writeText(text: string): Thenable<void> };
 }
 
 /** The part of a `vscode.Webview` a session talks to. */
@@ -103,19 +107,38 @@ interface PendingInsert {
     stopTimers(): void;
 }
 
-/** The open sessions by document uri, so a link followed from one page can land in another. */
-const sessions = new Map<string, VisualEditorSession>();
+/**
+ * The open sessions by document uri, so a link followed from one page can land
+ * in another. VS Code gives a custom text editor as many panels over one file
+ * as are asked for — a split, the open file as a diff's side — each with a
+ * page and a session of its own (#22): the one active last comes first
+ * (`activated`), and a request by uri goes to it.
+ */
+const sessions = new Map<string, VisualEditorSession[]>();
 /** A reveal for a document whose page is opening: taken by its session when it is made. */
 const pendingReveals = new Map<string, Reveal>();
+
+/**
+ * The session a request by uri goes to (a reveal, Sort Footnotes,
+ * `insertBlock`): of the Visual Editors open over it, the one active — else
+ * the one active last; `undefined` when none is open over it.
+ */
+function sessionFor(uri: vscode.Uri): VisualEditorSession | undefined {
+    return sessions.get(uri.toString())?.[0];
+}
 
 /**
  * Bring `reveal` into view in the Visual Editor over `uri`: now, if a session
  * is open for it, else as soon as one is (the page a `vscode.open` just
  * opened may not have made its session yet). The session posts it once its
- * page has the document.
+ * page has the document. `column`: the editor group the tab that shows it is
+ * in — with the file open in the Visual Editor twice, the one there, though
+ * VS Code may not have said yet that it is active (review 1, N3); else the
+ * one active last.
  */
-export function revealInVisualEditor(uri: vscode.Uri, reveal: Reveal): void {
-    const session = sessions.get(uri.toString());
+export function revealInVisualEditor(uri: vscode.Uri, reveal: Reveal, column?: vscode.ViewColumn): void {
+    const inColumn = column === undefined ? undefined : sessions.get(uri.toString())?.find(s => s.viewColumn === column);
+    const session = inColumn ?? sessionFor(uri);
     if (session) {
         session.reveal(reveal);
     } else {
@@ -125,19 +148,28 @@ export function revealInVisualEditor(uri: vscode.Uri, reveal: Reveal): void {
 
 /** The palette's "Sort Footnotes" for the Visual Editor over `uri`: its page sorts them (`sortFootnotes`). Whether one is open. */
 export function sortFootnotesIn(uri: vscode.Uri): boolean {
-    const session = sessions.get(uri.toString());
+    const session = sessionFor(uri);
     session?.sortFootnotes();
     return session !== undefined;
 }
 
 /**
+ * The last `insertBlock` asked for each document, by uri: the next one is
+ * posted only once it is settled, so it is written into the page's parse of
+ * it — per file, not per editor, since two Visual Editors over one file
+ * write the same document (review 1, N1).
+ */
+const insertChains = new Map<string, Promise<unknown>>();
+
+/**
  * `visualEditor.insertBlock` for another extension: `markdown` inserted by the
  * Visual Editor over `uri` (`VisualEditorSession.insertBlock`), or `no-editor`
- * when none is open for it. One editor per document (the provider does not
- * set `supportsMultipleEditorsPerDocument`), so the uri names it.
+ * when none is open for it. With the file open in the Visual Editor twice, the
+ * one active, else the one active last, inserts (`sessionFor`); requests for
+ * one file are taken one after the other, whichever editor takes each.
  */
 export function insertBlockIn(uri: vscode.Uri, markdown: string, options?: InsertBlockOptions): Promise<InsertBlockResult> {
-    const session = sessions.get(uri.toString());
+    const session = sessionFor(uri);
     return session === undefined ? Promise.resolve({ inserted: false, reason: 'no-editor' }) : session.insertBlock(markdown, options);
 }
 
@@ -201,8 +233,6 @@ export class VisualEditorSession implements vscode.Disposable {
      */
     private readonly pendingInserts = new Map<number, PendingInsert>();
     private insertSeq = 0;
-    /** The last `insertBlock` asked: the next one is posted only once it is settled, so it is written into the page's parse of it. */
-    private insertChain: Promise<unknown> = Promise.resolve();
     /** Whether the last edit the page sent was written to the document — read for the `blockInserted` behind it. */
     private lastEditLanded = false;
     private disposed = false;
@@ -270,7 +300,8 @@ export class VisualEditorSession implements vscode.Disposable {
             host.onDidChangeEngine(() => this.enqueue(() => this.post())),
         ];
         const key = document.uri.toString();
-        sessions.set(key, this);
+        // Behind any other Visual Editor over the file: the provider says when this one is active (`activated`).
+        sessions.set(key, [...sessions.get(key) ?? [], this]);
         this.pendingReveal = pendingReveals.get(key);
         pendingReveals.delete(key);
     }
@@ -300,6 +331,24 @@ export class VisualEditorSession implements vscode.Disposable {
         if (reveal) {
             await this.webview.postMessage({ type: 'revealAnchor', anchor: reveal.anchor, line: reveal.line });
         }
+    }
+
+    /**
+     * This editor's panel became the active editor: a request by uri for its
+     * document comes here now, and after it loses the focus, until another
+     * Visual Editor over the file is active.
+     */
+    activated(): void {
+        const key = this.document.uri.toString();
+        const open = sessions.get(key);
+        if (!this.disposed && open !== undefined && open[0] !== this) {
+            sessions.set(key, [this, ...open.filter(s => s !== this)]);
+        }
+    }
+
+    /** The editor group this editor's panel is in, as VS Code last said; `undefined` without a panel. */
+    get viewColumn(): vscode.ViewColumn | undefined {
+        return this.host.viewColumn?.();
     }
 
     /** The document this editor shows. */
@@ -400,8 +449,12 @@ export class VisualEditorSession implements vscode.Disposable {
         // Only those the page has not answered: an answered one is settled in the queue once its edit
         // is applied — which it still is — and says what the document holds.
         [...this.pendingInserts.values()].filter(pending => !pending.answered).forEach(pending => pending.settle({ inserted: false, reason: 'closed' }));
-        if (sessions.get(this.document.uri.toString()) === this) {
-            sessions.delete(this.document.uri.toString());
+        const key = this.document.uri.toString();
+        const left = (sessions.get(key) ?? []).filter(s => s !== this);
+        if (left.length > 0) {
+            sessions.set(key, left);
+        } else {
+            sessions.delete(key);
         }
         [...this.pendingMaps.values()].forEach(settle => settle(undefined));
         this.subscriptions.forEach(d => d.dispose());
@@ -547,6 +600,13 @@ export class VisualEditorSession implements vscode.Disposable {
                 });
                 break;
             }
+            case 'copyText':
+                if (typeof msg.text === 'string') {
+                    void Promise.resolve((this.host.clipboard ?? vscode.env.clipboard).writeText(msg.text)).catch(error => {
+                        this.host.log(`[WARN] Visual Editor: the clipboard could not be written: ${message(error)}`);
+                    });
+                }
+                break;
             case 'exportSettings':
                 void Promise.resolve(this.execute('workbench.action.openSettings', 'markdownExtended.export')).catch(error => {
                     this.host.log(`[WARN] Visual Editor: the export settings could not be shown: ${message(error)}`);
@@ -559,10 +619,13 @@ export class VisualEditorSession implements vscode.Disposable {
      * `visualEditor.insertBlock` (`host/activeEditor.ts`): the page inserts
      * `markdown` after the block its selection ends in, as one step of its
      * history, in one edit with typing still in its delay, and the host parses
-     * it with every plugin (`reparse`). One at a time: a request is posted once
-     * the one before is settled, so it lands in the page's parse of that one.
-     * Asked in the queue, behind the edits received before, and not waited for
-     * there: the page's edit and its `blockInserted` come in behind it.
+     * it with every plugin (`reparse`). One at a time per file (`insertChains`):
+     * a request is posted once the one before is settled — in this editor or
+     * another over the same file — so it lands in the page's parse of that
+     * one; a page that has not been shown the document as it now stands is
+     * shown it first. Asked in the queue, behind the edits received before,
+     * and not waited for there: the page's edit and its `blockInserted` come
+     * in behind it.
      *
      * Only the page's word settles it — no clock is compared. Resolves once
      * the edit is applied, or with why nothing was written: `empty`,
@@ -584,8 +647,14 @@ export class VisualEditorSession implements vscode.Disposable {
         if (focus && !this.disposed) {
             this.host.reveal?.();
         }
-        const result = this.insertChain.then(() => this.askToInsert(markdown, focus));
-        this.insertChain = result;
+        const key = this.document.uri.toString();
+        const result = (insertChains.get(key) ?? Promise.resolve()).then(() => this.askToInsert(markdown, focus));
+        insertChains.set(key, result);
+        void result.then(() => {
+            if (insertChains.get(key) === result) {
+                insertChains.delete(key);
+            }
+        });
         return result;
     }
 
@@ -600,6 +669,15 @@ export class VisualEditorSession implements vscode.Disposable {
                 if (this.broken || this.postedVersion < 0) {
                     resolve({ inserted: false, reason: 'error-state' });
                     return;
+                }
+                // A change the page has not been shown yet — another editor's insertion over the same
+                // file, still in the re-sync's delay — goes first: the page inserts into the text the file holds.
+                if (this.document.getText() !== this.webviewText) {
+                    await this.post();
+                    if (this.broken) {
+                        resolve({ inserted: false, reason: 'error-state' });
+                        return;
+                    }
                 }
                 const requestId = ++this.insertSeq;
                 const settle = (answer: InsertBlockResult) => {
@@ -796,7 +874,7 @@ export class VisualEditorSession implements vscode.Disposable {
         await vscode.commands.executeCommand('vscode.open', file, { selection: at });
         const tab = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
         if (tab instanceof vscode.TabInputCustom && tab.viewType === VISUAL_EDITOR_VIEW_TYPE && tab.uri.toString() === file.toString()) {
-            revealInVisualEditor(file, { anchor: landing.anchor, line });
+            revealInVisualEditor(file, { anchor: landing.anchor, line }, vscode.window.tabGroups.activeTabGroup.viewColumn);
             return;
         }
         // The editor `vscode.open` showed; the active one may not be it yet when the call returns.

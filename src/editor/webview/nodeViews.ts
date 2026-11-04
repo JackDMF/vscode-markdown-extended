@@ -38,12 +38,85 @@ export interface EditorPort {
     documentKey(): string;
     /** Put the caret in the text after the front matter and give the editor the focus. */
     leaveFrontMatter(): void;
+    /**
+     * Whether the page is taking in a document from the host — a change made
+     * outside the editor, shown by the re-sync (`resync.ts`) — at this moment:
+     * what changes a block now is not the person's doing in the page.
+     */
+    takingHostDocument(): boolean;
+    /**
+     * An open source box closed unapplied because a document from the host
+     * changed or removed its block (#23). The page says so once the document
+     * is shown, and keeps what was typed on the clipboard.
+     */
+    sourceChangedOutside(change: SourceChangedOutside): void;
+}
+
+/** A source box a change from outside the editor closed (`EditorPort.sourceChangedOutside`). */
+export interface SourceChangedOutside {
+    /** What changed, as the hint names it: `block`, `front matter`. */
+    what: string;
+    /**
+     * What the box held that the document does not (`lostInBox`), which the
+     * page puts on the clipboard; `null` when nothing of the person's is lost.
+     */
+    typed: string | null;
+    /** Whether the box had the focus: the page then gives it to what the box stood on. */
+    focused: boolean;
+    /** Where the block now stands, read once the document is shown; `undefined` when it is gone. */
+    pos(): number | undefined;
+    /** Give the focus back where the box was, when the view knows a place for it (the panel's Edit as source); else the page selects the block. */
+    refocus?(): void;
+    /** The box that closed, as the page tracked it (`trackSourceEditor`): where it stood before the document came, the page knows. */
+    editor: SourceEditor;
+    /**
+     * A source block's box: what it held, for the page to open again on the
+     * same block, should that still be there unchanged (`reopenRawSourceAt`) —
+     * ProseMirror may draw an untouched block anew when much around it
+     * changed, and a source block inserted right before it can take its node
+     * (the re-sync matches source blocks by type alone).
+     */
+    reopen?: BoxText;
+    /** Draw the block as selected again where ProseMirror's selection still is it (an open box hid the outline). */
+    drawSelection?(): void;
+}
+
+/** What an open source box holds: the source it stands on, the one the host last held for it, its text and selection. */
+export interface BoxText {
+    source: string;
+    confirmed: string;
+    value: string;
+    selectionStart: number;
+    selectionEnd: number;
+}
+
+/**
+ * What a source box closed by a change from outside the editor held that is
+ * in no document: its text, unless that is the source the host last held for
+ * the block (`confirmed`: the box opened on it, or a document from the host
+ * has held it since) or what the block holds now (`now`; `null` when it is
+ * gone) — `null` then, nothing of the person's is lost. Not measured against
+ * what the box wrote itself: a save from the box that the host dropped (the
+ * file changed meanwhile) wrote it into the page alone. Line endings aside,
+ * as the box shows them.
+ */
+export function lostInBox(value: string, confirmed: string, now: string | null): string | null {
+    const shown = (src: string) => src.replace(/\r\n?/g, '\n').replace(/\n$/, '');
+    return value === shown(confirmed) || (now !== null && value === shown(now)) ? null : value;
 }
 
 /** A raw block's open source editor, as the page sees it. */
 export interface SourceEditor {
     /** Write what the textarea holds into the document now, leaving it open. */
     commitSource(): void;
+    /** Where the block it edits stands in the document, when the editor is a block's box. */
+    position?(): number | undefined;
+    /**
+     * A document from the host was taken in and left the box open: the host
+     * holds what its block holds now — a save from the box has landed — which
+     * `lostInBox` measures against from here on.
+     */
+    hostShown?(): void;
 }
 
 type GetPos = () => number | undefined;
@@ -117,6 +190,14 @@ abstract class AtomView implements NodeView {
 export class RawBlockView extends AtomView implements SourceEditor {
     private readonly content: HTMLElement;
     private editor: HTMLTextAreaElement | null = null;
+    /** The source the open box stands on: the block's when it opened, then each one the box wrote itself. */
+    private boxSource = '';
+    /** The block's source as the host last held it while the box is open: what it opened on, then what a host document left (`hostShown`). */
+    private confirmedSource = '';
+    /** The box is writing its text into the document (`commit`): the change that comes back is its own. */
+    private writing = false;
+    /** ProseMirror's selection is this block, whether or not its outline is drawn (not under an open box). */
+    private selected = false;
     /** Apply and Cancel under the open box (`sourceActions`), gone with it. */
     private actions: HTMLElement | null = null;
     private untrack: (() => void) | null = null;
@@ -148,14 +229,38 @@ export class RawBlockView extends AtomView implements SourceEditor {
         this.render();
     }
 
+    /**
+     * A document from the host that changed this block's source under the
+     * open box — Find/Replace in the text editor, another extension — closes
+     * the box unapplied (#23): applied, or merely left, it would write the
+     * text it opened with over that change. A change elsewhere leaves it open
+     * with what was typed; the box's own commit, coming back, is not a change.
+     */
+    update(node: Node): boolean {
+        if (node.type !== this.node.type) {
+            return false;
+        }
+        const changedUnderBox = this.editor !== null && !this.writing && this.port.takingHostDocument()
+            && node.attrs.src !== this.boxSource;
+        this.node = node;
+        if (changedUnderBox) {
+            this.closeForChangeOutside(true);
+        } else {
+            this.render();
+        }
+        return true;
+    }
+
     /** The node's selection outline is not redrawn under an open source box; the box is the edit. */
     selectNode(): void {
+        this.selected = true;
         if (!this.editor) {
             super.selectNode();
         }
     }
 
     deselectNode(): void {
+        this.selected = false;
         if (!this.editor) {
             super.deselectNode();
         }
@@ -218,8 +323,13 @@ export class RawBlockView extends AtomView implements SourceEditor {
         return this.getPos();
     }
 
-    /** Open the block's source in a textarea; the object toolbar's **Edit source** calls it, and the formatting toolbar for a block it inserted. */
-    editSource(): void {
+    /**
+     * Open the block's source in a textarea; the object toolbar's **Edit
+     * source** calls it, and the formatting toolbar for a block it inserted.
+     * With `restore`, the box a document from the host closed on this very
+     * block opens again as it was: its text and selection.
+     */
+    editSource(restore?: BoxText): void {
         if (this.editor) {
             return;
         }
@@ -227,7 +337,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
         const area = element('textarea', 'mep-raw-editor');
         // The textarea shows `\n`; the terminator of the last line is not text
         // anybody edits, and is put back on commit.
-        area.value = src.replace(/\r\n?/g, '\n').replace(/\n$/, '');
+        area.value = restore?.value ?? src.replace(/\r\n?/g, '\n').replace(/\n$/, '');
         area.rows = Math.max(3, area.value.split('\n').length + 1);
         area.spellcheck = false;
         area.addEventListener('keydown', e => {
@@ -248,6 +358,8 @@ export class RawBlockView extends AtomView implements SourceEditor {
         area.addEventListener('blur', () => this.stopEditing(true));
         this.dom.classList.remove('ProseMirror-selectednode');
         this.editor = area;
+        this.boxSource = src;
+        this.confirmedSource = restore?.confirmed ?? src;
         this.actions = sourceActions(apply => this.stopEditing(apply));
         this.untrack = this.port.trackSourceEditor(this);
         this.dom.classList.add('mep-editing');
@@ -256,7 +368,13 @@ export class RawBlockView extends AtomView implements SourceEditor {
         // At the end, where a person adding to the block starts; the source
         // lines do not map to points of the rendering, so a double click cannot
         // say where in the source it meant.
-        area.setSelectionRange(area.value.length, area.value.length);
+        area.setSelectionRange(restore?.selectionStart ?? area.value.length, restore?.selectionEnd ?? area.value.length);
+    }
+
+    hostShown(): void {
+        if (this.editor) {
+            this.confirmedSource = this.node.attrs.src as string;
+        }
     }
 
     commitSource(): void {
@@ -275,10 +393,43 @@ export class RawBlockView extends AtomView implements SourceEditor {
     }
 
     destroy(): void {
+        // A document from the host that removed the block, or made it something else, under the open box:
+        // what was typed is kept (#23). A verb of the page's (Delete block) removes it with the box, as before.
+        if (this.editor !== null && this.port.takingHostDocument()) {
+            this.closeForChangeOutside(false);
+        }
         this.untrack?.();
         this.untrack = null;
         this.sizes?.disconnect();
         cancelAnimationFrame(this.measuring);
+    }
+
+    /** Close the box unapplied for a change from outside, and tell the page what it held (`sourceChangedOutside`); `standing`: the block is still on the page. */
+    private closeForChangeOutside(standing: boolean): void {
+        const area = this.editor;
+        if (!area) {
+            return;
+        }
+        const focused = area.ownerDocument.activeElement === area;
+        const typed = lostInBox(area.value, this.confirmedSource, standing ? this.node.attrs.src as string : null);
+        const held: BoxText = {
+            source: this.boxSource, confirmed: this.confirmedSource, value: area.value, selectionStart: area.selectionStart, selectionEnd: area.selectionEnd,
+        };
+        this.stopEditing(false);
+        this.port.sourceChangedOutside({
+            what: 'block',
+            typed,
+            focused,
+            pos: () => (standing ? this.getPos() : undefined),
+            editor: this,
+            reopen: held,
+            // Still the selection (the click that opened the box made it): drawn again, as the keyboard comes back to it.
+            drawSelection: () => {
+                if (standing && this.selected && !this.editor) {
+                    this.dom.classList.add('ProseMirror-selectednode');
+                }
+            },
+        });
     }
 
     private stopEditing(commit: boolean): void {
@@ -305,7 +456,14 @@ export class RawBlockView extends AtomView implements SourceEditor {
         if (pos === undefined || next === src) {
             return;
         }
-        this.port.commitRawSource(pos, next);
+        this.writing = true;
+        try {
+            this.port.commitRawSource(pos, next);
+        } finally {
+            this.writing = false;
+        }
+        // The box stands on what it wrote, if it stays open (a save commits it so).
+        this.boxSource = this.node.attrs.src as string;
     }
 }
 
@@ -411,6 +569,17 @@ export function rawBlockControl(el: Element): DeclaredControl | null {
     const atom = el.closest('.mep-raw-block');
     const rawView = atom ? rawBlockViews.get(atom) : undefined;
     return rawView?.holdsFocusOf(el) ? { pos: rawView.position(), role: 'source' } : null;
+}
+
+/** Open the box of the raw block at `pos` again with what a box held (`BoxText`). False when there is no raw block there. */
+export function reopenRawSourceAt(view: EditorView, pos: number, text: BoxText): boolean {
+    const dom = view.nodeDOM(pos);
+    const rawView = dom ? rawBlockViews.get(dom) : undefined;
+    if (!rawView) {
+        return false;
+    }
+    rawView.editSource(text);
+    return true;
 }
 
 /** Open the **Edit source** box of the raw block at `pos`. False when there is no raw block there. */

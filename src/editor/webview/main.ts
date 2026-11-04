@@ -15,6 +15,7 @@
 import { Node } from 'prosemirror-model';
 import { closeHistory, redo, undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
+import type { Mappable } from 'prosemirror-transform';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap, selectionOf } from '../positions';
@@ -33,7 +34,7 @@ import { SOURCE_VERB_META } from './sourceBlock';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
 import { DROP_LOCK, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLockReason } from './objects';
 import { pendingRangePlugin } from './pendingRange';
-import { EditorPort, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
+import { EditorPort, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceChangedOutside, SourceEditor, reopenRawSourceAt } from './nodeViews';
 import { PropertiesView } from './properties';
 import { lensPlugin, lensVerbsAt, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
@@ -77,6 +78,10 @@ let reparseWanted = false;
 let committingForSave = false;
 /** The raw blocks whose source is open in a textarea, and not yet in the document. */
 const openSourceEditors = new Set<SourceEditor>();
+/** A document from the host with another text than the page's is being taken in (`showDocument`, `EditorPort.takingHostDocument`). */
+let takingHostDocument = false;
+/** The source boxes that document closed unapplied (`EditorPort.sourceChangedOutside`), said once it is shown. */
+const closedByChange: SourceChangedOutside[] = [];
 
 function post(message: WebviewMessage): void {
     vscodeApi.postMessage(message);
@@ -265,6 +270,10 @@ const port: EditorPort = {
         return () => {
             openSourceEditors.delete(editor);
         };
+    },
+    takingHostDocument: () => takingHostDocument,
+    sourceChangedOutside: change => {
+        closedByChange.push(change);
     },
     commitFrontMatter: (pos, src) => {
         if (!view) {
@@ -997,7 +1006,22 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
             dismissRefusal(shown);
         }
         const resync = resyncTransaction(shown.state, doc);
-        keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
+        const before = shown.state.doc;
+        // Where each open box stood, should the document draw its block anew.
+        const boxesAt = new Map(Array.from(openSourceEditors, editor => [editor, editor.position?.()] as const));
+        // Only another text is a change from outside: the host's parse of the page's own edit (a save, a
+        // source box's reparse) closes no box.
+        takingHostDocument = changesText;
+        try {
+            keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
+        } finally {
+            takingHostDocument = false;
+        }
+        sayClosedSourceBoxes(shown, change => reopenBox(shown, change, before, boxesAt.get(change.editor), resync.mapping));
+        // What the boxes left open stand on, the host holds now: a save from one has landed.
+        for (const editor of openSourceEditors) {
+            editor.hostShown?.();
+        }
         if (insertedBlock !== undefined) {
             // The host's parse of blocks another extension inserted: the source block is now what its text is.
             const { end, focus } = insertedBlock;
@@ -1022,6 +1046,84 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     // A property's field taking or giving back the focus changes what the caret is (none while in one).
     view.dom.addEventListener('focusin', () => caretReporter.selectionMoved());
     view.dom.addEventListener('focusout', () => caretReporter.selectionMoved());
+}
+
+/**
+ * The source boxes a change from outside the editor closed unapplied (#23):
+ * applied, or merely left, they would have written the text they opened with
+ * over that change. What was typed in them goes to the clipboard (through the
+ * host), and a hint at the block says so — a refusal, since the person's edit
+ * was not applied; a neutral word where nothing was typed. A box that had the
+ * focus gives it to its block, selected, so the keyboard is still in the page.
+ */
+function sayClosedSourceBoxes(shown: EditorView, reopen: (change: SourceChangedOutside) => boolean): void {
+    // A block drawn anew but not changed keeps its box: nothing to say for it.
+    const closed = closedByChange.splice(0).filter(change => !reopen(change));
+    if (closed.length === 0) {
+        return;
+    }
+    const typed = closed.filter(c => c.typed !== null);
+    if (typed.length > 0) {
+        post({ type: 'copyText', text: typed.map(c => c.typed).join('\n\n') });
+    }
+    for (const change of closed.filter(c => c.focused)) {
+        if (change.refocus) {
+            change.refocus();
+            continue;
+        }
+        const pos = change.pos();
+        shown.focus();
+        if (pos !== undefined && shown.state.doc.nodeAt(pos)?.isAtom) {
+            shown.dispatch(shown.state.tr.setSelection(NodeSelection.create(shown.state.doc, pos)).setMeta('addToHistory', false));
+            change.drawSelection?.();
+        }
+    }
+    const said = typed[0] ?? closed[0];
+    const pos = said.pos();
+    const near = pos === undefined ? undefined : shown.nodeDOM(pos);
+    showHint(shown, said.typed !== null
+        ? `Not applied — the ${said.what} changed outside the editor. Your text is on the clipboard.`
+        : `Source closed — the ${said.what} changed outside the editor.`,
+    said.typed !== null ? 'refusal' : 'neutral', near instanceof Element ? near : undefined);
+}
+
+/**
+ * A source block's box a document from the host closed opens again on the
+ * same block, as it was (`SourceChangedOutside.reopen`), when that block is
+ * there unchanged: ProseMirror draws an untouched block anew when much
+ * around it changed, and a source block inserted right before it takes its
+ * node — the re-sync matches source blocks by type alone and gives the kept
+ * node the new one's source. The same block is the one with the box's
+ * source, between where the start and the end of its old place map to (the
+ * run the document replaced, or the insertion beside it), at the same place
+ * among the blocks of that very source — counted in the whole document,
+ * before and after, which must hold as many of them; anything less certain
+ * closes the box as a change does. The selection goes to that block.
+ */
+function reopenBox(shown: EditorView, change: SourceChangedOutside, before: Node, oldPos: number | undefined, mapping: Mappable): boolean {
+    const text = change.reopen;
+    if (text === undefined || oldPos === undefined) {
+        return false;
+    }
+    const same = (doc: Node) => {
+        const at: number[] = [];
+        doc.forEach((node, offset) => {
+            if (node.type === editorSchema.nodes.raw_block && node.attrs.src === text.source) {
+                at.push(offset);
+            }
+        });
+        return at;
+    };
+    const was = same(before);
+    const now = same(shown.state.doc);
+    const index = was.indexOf(oldPos);
+    const pos = now[index];
+    const size = before.nodeAt(oldPos)?.nodeSize ?? 1;
+    if (index < 0 || was.length !== now.length || pos < mapping.map(oldPos, -1) || pos > mapping.map(oldPos + size, 1)) {
+        return false;
+    }
+    shown.dispatch(shown.state.tr.setSelection(NodeSelection.create(shown.state.doc, pos)).setMeta('addToHistory', false));
+    return reopenRawSourceAt(shown, pos, text);
 }
 
 /**

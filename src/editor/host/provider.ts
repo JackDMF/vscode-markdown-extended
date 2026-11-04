@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Command } from '../../commands/command';
-import { ActiveVisualEditorTracker } from './activeEditor';
+import { ActiveVisualEditorTracker, TrackedEditor, TrackedPanel } from './activeEditor';
 import { EditorEngineHost } from './engineHost';
 import { editorPage, localResourceRoots } from './html';
 import { collectIncludeProviders } from './includes';
@@ -54,16 +54,47 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
             onDidChangeEngine: this.engines.onDidChange,
             log: this.log,
             includeProviders: () => collectIncludeProviders(this.selfId, this.log),
-            // `insertBlock` with `focus`: the panel in its own column, the keyboard in it.
-            reveal: () => panel.reveal(undefined, false),
+            // `insertBlock` with `focus`: the panel in its own column, the keyboard in it. The column is named:
+            // without it VS Code shows the editor in the active group — for a custom text editor a second
+            // Visual Editor over the file there, the text editor that was active pushed aside.
+            reveal: () => panel.reveal(panel.viewColumn, false),
+            viewColumn: () => panel.viewColumn,
         });
-        const tracking = this.tracker?.track(panel, session);
+        const following = followPanel(panel, session, this.tracker);
         panel.onDidDispose(() => {
             folders.dispose();
-            tracking?.dispose();
+            following.dispose();
             session.dispose();
         });
     }
+}
+
+/**
+ * Follow a Visual Editor's panel as it becomes active and stops being so: the
+ * session first — the file may be open in the Visual Editor twice, and a
+ * request by uri goes to the panel active last (`activated`) — then the
+ * tracker, whose `onDidChangeActive` a reader may answer with `insertBlock` at
+ * once: by then the request reaches this editor (review 1, N2). Dispose it
+ * when the panel closes.
+ */
+export function followPanel(
+    panel: TrackedPanel, session: TrackedEditor & { activated(): void }, tracker?: ActiveVisualEditorTracker,
+): vscode.Disposable {
+    const viewState = panel.onDidChangeViewState(() => {
+        if (panel.active) {
+            session.activated();
+        }
+    });
+    if (panel.active) {
+        session.activated();
+    }
+    const tracking = tracker?.track(panel, session);
+    return {
+        dispose: () => {
+            viewState.dispose();
+            tracking?.dispose();
+        },
+    };
 }
 
 /**

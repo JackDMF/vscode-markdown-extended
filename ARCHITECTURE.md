@@ -1547,6 +1547,38 @@ undoable; a whole-document replace would have deleted every position those steps
 An edit still waiting in the page's 250 ms delay at that moment was computed against the
 superseded text and is dropped.
 
+**An open source box under a change from outside** (#23). A source block's box and the
+properties' YAML box hold their text outside the document until they apply, and a re-sync
+leaves an open box alone (`render` returns early) — so the box, applied or merely left (its
+blur applies), wrote the text it opened with over whatever changed the block meanwhile:
+Find/Replace in the text editor, another extension, Claude. Now a host document whose text
+differs from the page's (`changesText`; the host's parse of the page's own edit — a save, a
+box's reparse — is not one) is taken in with `takingHostDocument` set, and a node view whose
+box stands on a block it changes (`update`: `src` other than the box's `boxSource`, which the
+box's own commits move along) or removes (`destroy`) closes the box unapplied and reports it
+(`sourceChangedOutside`). Once the document is shown the page puts what the box held on the
+clipboard through the host (`copyText`) where it is in no document (`lostInBox`): not the
+source the host last held for the block — what the box opened on, or what a host document has
+left it standing on since (`hostShown`, so a save from the box counts once the host's parse of
+it comes back) — and not what the block holds now. A save from the box, or a block inserted
+for another extension with the box committed first, that the host dropped because the file
+changed meanwhile counts as typing: it was in the page alone. The page says so at the block —
+a refusal, *Not applied — the block changed outside the editor. Your text is on the
+clipboard.*, or a neutral *Source closed — …* where nothing is lost — and gives a box that had
+the focus back to its block, selected (the properties' box: to **Edit as source**). A change
+elsewhere in the file leaves the box open, with its typing and the focus. Two re-sync
+behaviours would close it there all the same, and are undone at the box (`reopenBox`), not in
+`resyncTransaction`: ProseMirror may draw an untouched block anew when much around it changed
+(the view is destroyed), and a source block inserted right before the box's takes the box's
+node, since the re-sync matches source blocks by type alone and sets the kept node's `src` to
+the new one's. The page then opens the box again as it was (text, selection, focus, the
+selection on that block) on the block of the box's source between where the start and the end
+of its old place map to, at the same place among the blocks of that source — only when the
+document holds as many of them before and after; anything less certain closes it as a change
+does. A page verb that removes the block (Delete block) is the person's own and says nothing.
+A format-on-save that rewrites the block closes an open box as a change from outside would
+(accepted).
+
 ### Where fidelity is enforced
 
 - **`parse.ts`** — refuses a document whose blocks do not rebuild it.
@@ -2881,6 +2913,23 @@ Visual Editor can be; a reader that finds it inactive has no Visual Editor to as
 `version` is 2 from 4.12.0 and absent before; a reader still tests for the member it calls
 (`typeof api.insertBlock === 'function'`), since a number says less than the member itself.
 
+### One file in two Visual Editors
+
+VS Code gives a custom *text* editor as many panels over one file as are asked for — a split,
+**Open to the Side**, the open file as a diff's side; `supportsMultipleEditorsPerDocument`
+applies only to the other kind of custom editor. Each panel has its page and its session, and
+each session is to the others what the text editor beside is: another writer, whose change
+reaches its page as a re-sync. What is addressed by uri — a link's reveal, **Sort Footnotes**,
+`insertBlock` — goes to one of them (`sessionFor`): the sessions over a uri are kept in the
+order they were last active (`followPanel` calls `activated` when a panel becomes the active
+editor, from `onDidChangeViewState` — before it tells the tracker, so a reader that answers
+`onDidChangeActive` with `insertBlock` at once reaches the editor that just became active), so a
+request goes to the one active, else the one active last. A link followed into the file names
+the group whose tab shows it (`activeTabGroup.viewColumn`), and the reveal goes to the editor in
+that group, which VS Code may not yet have said is active. `insertBlock` requests are chained per
+file, not per editor (below). A session closing takes only itself out; through 4.12.0 the second panel's session replaced
+the first's, which was then out of reach (`no-editor`) once the second closed (#22).
+
 ### Inserting blocks for another extension
 
 The Studienhilfe writes Bible quote blocks where a person works. In the text editor it inserts
@@ -2892,15 +2941,20 @@ reports no caret (a selected source block, a gap cursor) there is no place to wr
 the page writes it, as its Insert menu writes any block: `visualEditor.insertBlock(uri,
 markdown, { focus })`.
 
-- **Host.** `insertBlockIn` (`session.ts`) finds the session over `uri` — one per document,
-  since the provider does not set `supportsMultipleEditorsPerDocument` — else `no-editor`;
-  Markdown that is only whitespace is `empty`. Requests to one session are chained: the next is
-  posted once the one before is settled, so it lands in the page's parse of that one (two at
-  once would otherwise race — the second edit based on the document before the first parse,
-  and dropped). The session asks in its queue, behind the edits received before, and does not
+- **Host.** `insertBlockIn` (`session.ts`) finds the session over `uri` — with the file open
+  in the Visual Editor twice, the one active, else the one active last (below, "One file in two
+  Visual Editors") — else `no-editor`;
+  Markdown that is only whitespace is `empty`. Requests for one file are chained (`insertChains`,
+  by uri — also across two Visual Editors over it): the next is posted once the one before is
+  settled, so it lands in the page's parse of that one (two at once would otherwise race — the
+  second edit based on the document before the first parse, and dropped); a page not yet shown
+  the document as it stands (another editor's insertion still in the re-sync's delay) is shown it
+  before it is asked. The session asks in its queue, behind the edits received before, and does not
   wait there: it posts `insertBlock { requestId, src, focus }` and returns. With `focus` it
-  first reveals the panel (`SessionHost.reveal`, `panel.reveal(undefined, false)`), which works
-  for an editor in a background tab too.
+  first reveals the panel in its own column (`SessionHost.reveal`, `panel.reveal(panel.viewColumn,
+  false)`), which works for an editor in a background tab too. The column is named: without it
+  VS Code shows the editor in the active group, and for a custom text editor that is a second
+  Visual Editor over the file there, the active text editor pushed aside (4.12.0).
 - **Page.** A source box open meanwhile is committed first, as a save commits it — its text is
   a history step before the block's and goes in the same edit; the focus leaving it later
   commits nothing more. Then `insertBlockTransaction` (`toolbar/commands.ts`, the sister of

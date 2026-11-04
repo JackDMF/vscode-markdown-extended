@@ -468,6 +468,12 @@ export type WebviewMessage =
     /** The diagnostics count in the toolbar was clicked: show VS Code's Problems view. */
     | { type: 'showProblems' }
     /**
+     * Put `text` on the clipboard: what a source box held when a change from
+     * outside the editor closed it unapplied (#23), so the typing is not lost.
+     * Through the host, whose clipboard needs no focus or permission of the page.
+     */
+    | { type: 'copyText'; text: string }
+    /**
      * **Export** in the toolbar: run the extension's export (`exportUri`) on
      * this document in `format`, which the person chose on the page, so VS
      * Code asks for no format. Sent after the page committed its open source
