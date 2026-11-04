@@ -768,33 +768,70 @@ suite('Editor note attributes: bars reach into the margin (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test('with the margin layout fixture at 1280: a list item\'s sidebar whose narrowest bar does not fit the margin, text above and below it — its bar stands in the column at its left edge, under the item, never cut (`leftMargin.e2e.test.ts` has the margin cases)', async function () {
+    test('with the margin layout fixture at 1280: a list item\'s sidebar, text above and below it — its bar at its narrowest, measured, decides: in the margin at the edge + 16 px right under the sidebar where it fits, else in the column at its left edge under the item; never cut', async function () {
         this.timeout(60000);
-        // The fixture, whatever `MEP_USER_STYLESHEET` names: one exact place, not "the margin or the column".
+        // The fixture, whatever `MEP_USER_STYLESHEET` names: one place, decided before it is looked at — not "the margin or the column".
         editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'], userStyles: [MARGIN_LAYOUT] });
         if (!editor) {
             this.skip();
         }
         page = (editor as EditorPage).page;
         await b.show('Erster Absatz ohne alles.\n\n- Zeit $Uhrzeit${class=living} und ein ruhiger Satz, der weitergeht. {.punkt}\n\n- Ein zweiter Punkt ohne Notiz. {.punkt}\n\nThe last paragraph.\n');
+        // The bar's narrowest form is the width it has fitted to the least room it is given (the margin's): every read of its
+        // `scrollWidth` while it is placed is noted with the room it was fitted to then. Its width depends on the system's fonts
+        // (209 px with "…" on macOS), so it is measured, not assumed — the outcome is then the one the rule gives for it.
+        await page.evaluate(() => {
+            const w = window as unknown as { fits: { room: number; width: number }[]; restoreScrollWidth: () => void };
+            const own = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth') as PropertyDescriptor;
+            w.fits = [];
+            Object.defineProperty(Element.prototype, 'scrollWidth', {
+                configurable: true,
+                get(this: HTMLElement) {
+                    const v = (own.get as () => number).call(this);
+                    if (this.matches('.mep-object-toolbar[data-trigger="selection"]') && this.style.maxWidth !== '') {
+                        w.fits.push({ room: parseFloat(this.style.maxWidth), width: Math.max(v, this.offsetWidth) });
+                    }
+                    return v;
+                },
+            });
+            w.restoreScrollWidth = () => Object.defineProperty(Element.prototype, 'scrollWidth', own);
+        });
         await b.restAt('Uhrzeit', 2);
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        const narrowest = await page.evaluate(() => {
+            const w = window as unknown as { fits: { room: number; width: number }[]; restoreScrollWidth: () => void };
+            w.restoreScrollWidth();
+            // At the least room the reads go down as its verbs move into "…": the last, least one is its narrowest form.
+            const least = Math.min(...w.fits.map(f => f.room));
+            return w.fits.length === 0 ? null : Math.min(...w.fits.filter(f => f.room === least).map(f => f.width));
+        });
+        assert.ok(narrowest !== null, 'the bar was fitted as it was placed');
         const bar = await barBox();
-        const { column, item, room } = await page.evaluate(() => {
+        const { column, item, room, side, line } = await page.evaluate(() => {
             const pm = document.querySelector('.ProseMirror') as HTMLElement;
             const li = pm.querySelector('li') as HTMLElement;
+            const s = (li.querySelector('.left-sidebar') as HTMLElement).getBoundingClientRect();
             return {
                 column: (pm.querySelector(':scope > p') as HTMLElement).getBoundingClientRect().left,
                 item: li.getBoundingClientRect().bottom,
-                // Where the item's text begins: the margin's room beside it.
+                // Where the item's text begins: the margin's room beside it ends a gap (4 px) before it.
                 room: (li.querySelector('p') as HTMLElement).getBoundingClientRect().left,
+                side: { top: s.top, bottom: s.bottom },
+                line: parseFloat(getComputedStyle(pm).lineHeight),
             };
         });
-        // The fixture's geometry, so the case is the one meant: the column at 160 px, the item's text at 200 — the 180 px
-        // between the window's edge + 16 and it are less than the item's bar at its narrowest (209 px with "…", measured 2026-11-04).
+        // The fixture's geometry, so the case is the one meant: the column at 160 px, the item's text at 200.
         assert.ok(Math.abs(column - 160) < 1 && Math.abs(room - 200) < 1, `the fixture's column and item: ${JSON.stringify({ column, room })}`);
-        assert.ok(Math.abs(bar.left - column) < 1, `in the column at its left edge: ${JSON.stringify({ bar, column })}`);
-        assert.ok(bar.top >= item - 0.5, `under the item: ${JSON.stringify({ bar, item })}`);
+        const fits = 16 + (narrowest as number) <= room - 4 + 0.5;
+        console.log(`#5b the list item's bar at its narrowest: ${narrowest} px, the margin's room ${room - 4 - 16} px — ${fits ? 'the margin' : 'the column'}`);
+        if (fits) {
+            assert.ok(Math.abs(bar.left - 16) < 1, `fits (${narrowest} px): at the edge + 16 px: ${JSON.stringify(bar)}`);
+            assert.ok(bar.right <= room - 4 + 0.5, `fits (${narrowest} px): in the margin, off the item's text: ${JSON.stringify({ bar, room })}`);
+            assert.ok(bar.top >= side.bottom - 0.5 && bar.top - side.bottom <= line, `fits (${narrowest} px): right under its sidebar: ${JSON.stringify({ bar, side, line })}`);
+        } else {
+            assert.ok(Math.abs(bar.left - column) < 1, `does not fit (${narrowest} px): in the column at its left edge: ${JSON.stringify({ bar, column })}`);
+            assert.ok(bar.top >= item - 0.5, `does not fit (${narrowest} px): under the item: ${JSON.stringify({ bar, item })}`);
+        }
         assert.ok(bar.right <= bar.edge - 16 + 0.5, `inside the edge less 16 px: ${JSON.stringify(bar)}`);
         assert.ok(await page.$eval(BAR, el => el.scrollWidth <= el.clientWidth + 1), `never cut: ${JSON.stringify(bar)}`);
         // The rest of the suite runs on its own page (`USER_STYLESHEET`).
