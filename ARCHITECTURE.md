@@ -3109,8 +3109,8 @@ markdown, { focus })`.
   refused or dropped insertion leaves nothing for Ctrl+Z. `insertBlock.e2e.test.ts` holds
   this, byte for byte, with and without typing just before — also in a list item or an
   admonition —, in LF and CRLF. Ctrl+Z in the round trip, before the parse shows, takes the
-  step before the insertion. Where typing in the round trip changed a block beside them, or
-  they are all the document holds, the blocks stay outside the history.
+  step before the insertion; into an empty file too, Ctrl+Z gives back the empty file. Where
+  typing in the round trip changed a block beside them, the blocks stay outside the history.
 - **The caret.** The page keeps the position right after the block, mapped through its own
   changes meanwhile, and once the parse shows maps it through the re-sync and puts the caret
   there (`Selection.near`, forward first — the start of the next block; after the last block,

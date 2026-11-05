@@ -675,9 +675,10 @@ function cancelInsert(requestId: number): void {
  * the file's bytes as they were (no blank line left before a block that stood
  * tight, no line break after a last line that had none), and Ctrl+Y puts it
  * back. Their source block went in outside the history, as the host might have
- * refused it. Not done — the insertion left out of the history — when a block
- * around them is no longer the one that stood there, or when they are all
- * the document holds.
+ * refused it. Also when they are all the document holds (an empty file): taken
+ * out, it is empty for a moment, as the schema lets a document be. Not done —
+ * the insertion left out of the history — when a block around them is no
+ * longer the one that stood there.
  */
 function takeIntoHistory(target: EditorView, index: number, count: number, around: Around): void {
     const doc = target.state.doc;
@@ -694,9 +695,6 @@ function takeIntoHistory(target: EditorView, index: number, count: number, aroun
     let to = from;
     for (let i = index; i < index + count; i++) {
         to += doc.child(i).nodeSize;
-    }
-    if (from === 0 && to === doc.content.size) {
-        return;
     }
     const blocks = doc.slice(from, to).content;
     const markup = (tr: Transaction, pos: number, node: Node | null) => {

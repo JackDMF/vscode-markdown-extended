@@ -259,6 +259,27 @@ suite('Editor insertBlock (e2e)', () => {
         assert.strictEqual(await hostReparses(), WITH_QUOTE);
     });
 
+    for (const empty of ['', '\n'] as const) {
+        test(`into an empty file (${JSON.stringify(empty)}): the block is its first, and Ctrl+Z after the host's parse gives back the empty file, Ctrl+Y the block (M1)`, async function () {
+            this.timeout(20000);
+            await showDocument(empty);
+            await page.focus('.ProseMirror');
+            await delay(80);
+            const answer = await insert(QUOTE);
+            assert.strictEqual(answer.inserted, true);
+            const written = await hostReparses();
+            assert.strictEqual(written, `${QUOTE}\n${empty}`);
+            await page.waitForSelector('.ProseMirror > blockquote');
+            await undoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, empty, 'Ctrl+Z: the file as it was');
+            assert.strictEqual(await page.$('.ProseMirror > blockquote'), null);
+            await redoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, written, 'Ctrl+Y: the block again');
+        });
+    }
+
     test('at the end of a file without a final line break: the block goes after it, the file still ends without one, and Ctrl+Z after the host\'s parse gives back the bytes', async function () {
         this.timeout(20000);
         const open = SOURCE.replace(/\n$/, '');
