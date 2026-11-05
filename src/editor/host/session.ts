@@ -1106,7 +1106,7 @@ export class VisualEditorSession implements vscode.Disposable {
         if (this.pendingInserts.has(requestId)) {
             this.refusedInserts.set(requestId, reason);
         }
-        await this.postQuietly({ type: 'insertBlockRefused', requestId });
+        await this.postQuietly({ type: 'insertBlockRefused', requestId, reason: reason === 'not-separate' ? 'not-separate' : 'error-state' });
     }
 
     /**

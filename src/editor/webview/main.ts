@@ -31,7 +31,7 @@ import { completionBeforeDocument, completionBeforeSave, completionDocumentShown
 import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
-import { dismissRefusal, showChangeHint, showHint } from './hint';
+import { applyKey, dismissRefusal, showChangeHint, showHint, showRefusal } from './hint';
 import { hoverDocumentShown, hoverMessage, hoverPlugin } from './hover';
 import { SOURCE_VERB_META } from './sourceBlock';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
@@ -549,9 +549,13 @@ interface Around {
 
 /**
  * The selection from before blocks the host refused (`insertBlockRefused`),
- * put back once its parse without them is shown: the caret stays where it was.
+ * put back once its parse without them is shown: the caret stays where it
+ * was, and for `not-separate` the page says why there.
  */
-let selectionBeforeRefused: SelectionBookmark | undefined;
+let selectionBeforeRefused: { bookmark: SelectionBookmark; say: boolean } | undefined;
+
+/** Why the page took no block another extension inserted, where the host's parse would have read it into what is around it. */
+const NOT_SEPARATE_HINT = 'Block not inserted — it would not stand on its own here, for example inside an open code fence.';
 
 /**
  * The `insertBlock` requests this page has answered, or that the host withdrew
@@ -588,7 +592,13 @@ function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
     }
     // Typed in a box and not applied: committed from outside, the text might leave a code fence open that takes
     // the block in, and the box would stay open over what the host's parse made of it. The person applies it first.
-    if ([...openSourceEditors].some(editor => editor.holdsUnapplied?.() === true)) {
+    const typedIn = [...openSourceEditors].find(editor => editor.holdsUnapplied?.() === true);
+    if (typedIn !== undefined) {
+        // Said under the box's block, never over the box or its Apply and Cancel.
+        const pos = typedIn.position?.();
+        const near = pos === undefined ? null : view.nodeDOM(pos);
+        showRefusal(view, `Block not inserted — apply this source (${applyKey()}) or cancel it (Esc) first.`,
+            { at: 'caret', near: near instanceof Element ? near : undefined });
         refuse('source-open');
         return;
     }
@@ -636,9 +646,9 @@ function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
  * right behind and takes the source block out; the selection from before the
  * insertion is put back then, and the page does not take the keyboard.
  */
-function insertRefused(requestId: number): void {
+function insertRefused(requestId: number, reason: 'not-separate' | 'error-state'): void {
     if (insertedBlock?.requestId === requestId) {
-        selectionBeforeRefused = insertedBlock.selectionBefore;
+        selectionBeforeRefused = { bookmark: insertedBlock.selectionBefore, say: reason === 'not-separate' };
         insertedBlock = undefined;
     }
 }
@@ -1123,7 +1133,9 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
             insertedBlock.end = tr.mapping.map(insertedBlock.end, -1);
             insertedBlock.selectionBefore = insertedBlock.selectionBefore.map(tr.mapping);
         }
-        selectionBeforeRefused = selectionBeforeRefused?.map(tr.mapping);
+        if (selectionBeforeRefused !== undefined) {
+            selectionBeforeRefused.bookmark = selectionBeforeRefused.bookmark.map(tr.mapping);
+        }
         scheduleFlush();
     }
     if (tr.docChanged || tr.selectionSet) {
@@ -1200,9 +1212,12 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         }
         if (selectionBeforeRefused !== undefined) {
             // The host's parse without blocks it refused: the selection from before them, not one the re-sync mapped.
-            const back = selectionBeforeRefused.map(resync.mapping).resolve(shown.state.doc);
+            const { bookmark, say } = selectionBeforeRefused;
             selectionBeforeRefused = undefined;
-            shown.dispatch(shown.state.tr.setSelection(back).setMeta('addToHistory', false));
+            shown.dispatch(shown.state.tr.setSelection(bookmark.map(resync.mapping).resolve(shown.state.doc)).setMeta('addToHistory', false));
+            if (say) {
+                showRefusal(shown, NOT_SEPARATE_HINT);
+            }
         }
         sendDeferredActions();
         caretReporter.documentShown();
@@ -1267,9 +1282,10 @@ function sayClosedSourceBoxes(shown: EditorView, reopen: (change: SourceChangedO
  * A source block's box a document from the host closed opens again on the
  * same block, as it was (`SourceChangedOutside.reopen`), when that block is
  * there unchanged: ProseMirror draws an untouched block anew when much
- * around it changed, and a source block inserted right before it takes its
- * node — the re-sync matches source blocks by type alone and gives the kept
- * node the new one's source. The same block is the one with the box's
+ * around it changed, and through 4.13.0 a source block inserted right
+ * before it took its node — the re-sync matched source blocks by type alone
+ * and gave the kept node the new one's source (it reads their `src` since,
+ * `sharedEnds`). The same block is the one with the box's
  * source, between where the start and the end of its old place map to (the
  * run the document replaced, or the insertion beside it), at the same place
  * among the blocks of that very source — counted in the whole document,
@@ -1461,7 +1477,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             cancelInsert(msg.requestId);
             break;
         case 'insertBlockRefused':
-            insertRefused(msg.requestId);
+            insertRefused(msg.requestId, msg.reason);
             break;
         case 'linkChoicesResult':
             applyLinkChoices(msg.requestId, msg.items);

@@ -218,12 +218,14 @@ export type HostMessage =
      */
     | { type: 'insertBlockCancel'; requestId: number }
     /**
-     * The blocks `insertBlock` `requestId` inserted do not stand alone in the
-     * host's parse (`not-separate`, `host/insertCheck.ts`): the host wrote the
-     * edit without them and posts its parse right behind this, which takes the
-     * source block out. The page leaves its caret where it is.
+     * The blocks `insertBlock` `requestId` inserted were not written, for
+     * `reason`: they do not stand alone in the host's parse (`not-separate`,
+     * `host/insertCheck.ts`), or that could not be told (`error-state`). The
+     * host wrote the edit without them and posts its parse right behind this,
+     * which takes the source block out. The page leaves its caret where it is
+     * and, for `not-separate`, says why at it.
      */
-    | { type: 'insertBlockRefused'; requestId: number }
+    | { type: 'insertBlockRefused'; requestId: number; reason: 'not-separate' | 'error-state' }
     /**
      * The answer to `pickInclude`: the line the person chose, exactly as the
      * extension offering it wrote it (`IncludeChoice.insert`, one line without

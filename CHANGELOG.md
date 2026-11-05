@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- An extension inserting blocks (`visualEditor.insertBlock`) while an Edit source box holds text you typed and have not applied is refused with the new reason `source-open`: your text stays in the box as it was, and the block no longer lands inside a code fence you had just opened there.
+- An extension inserting blocks (`visualEditor.insertBlock`) while an Edit source box holds text you typed and have not applied is refused with the new reason `source-open`: your text stays in the box as it was, the block no longer lands inside a code fence you had just opened there, and a hint under the box says to apply or cancel it first.
 - Ctrl+Z (Cmd+Z) after an extension inserted a block takes it out again also when you had just typed in a list item, an admonition or another block inside a block; it used to take nothing out there.
-- Blocks an extension inserts that the file would not keep apart — after a code fence or HTML comment left open, or Markdown that leaves one open itself — are no longer written and reported as inserted (where Ctrl+Z could not take them out): the request is refused with the new reason `not-separate`, the file and your caret stay as they were, and typing on its way is kept.
+- Blocks an extension inserts that the file would not keep apart — after a code fence or HTML comment left open, or Markdown that leaves one open itself — are no longer written and reported as inserted (where Ctrl+Z could not take them out): the request is refused with the new reason `not-separate`, the file and your caret stay as they were, typing on its way is kept, and a hint at the caret says why.
 
 ## v4.13.0 — Margins, Suggestions and Two Editors
 

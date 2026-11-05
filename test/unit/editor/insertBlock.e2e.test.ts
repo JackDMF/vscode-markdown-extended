@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { judgeInsertion } from '../../../src/editor/host/insertCheck';
+import { refusalMs } from '../../../src/editor/refusal';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
@@ -64,7 +65,7 @@ suite('Editor insertBlock (e2e)', () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const verdict = judgeInsertion(md, edit.text, edit.insert);
         if (verdict.refused !== undefined) {
-            await (editor as EditorPage).send({ type: 'insertBlockRefused', requestId: edit.insert.requestId });
+            await (editor as EditorPage).send({ type: 'insertBlockRefused', requestId: edit.insert.requestId, reason: verdict.refused });
         }
         assert.ok(verdict.text !== undefined, 'something to write');
         await showDocument(verdict.text);
@@ -274,6 +275,16 @@ suite('Editor insertBlock (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, `${open}\n\n${QUOTE}`);
     });
 
+    /** The page's hint: shown, its tone and text, and its box. */
+    const hint = () => page.$eval('.mep-hint', el => {
+        const r = el.getBoundingClientRect();
+        return { shown: !(el as HTMLElement).hidden, tone: (el as HTMLElement).dataset.tone, text: el.textContent ?? '', rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } };
+    });
+    type Box = { left: number; right: number; top: number; bottom: number };
+    const overlaps = (a: Box, b: Box) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const NOT_SEPARATE_HINT = 'Block not inserted — it would not stand on its own here, for example inside an open code fence.';
+    const SOURCE_OPEN_HINT = `Block not inserted — apply this source (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Enter) or cancel it (Esc) first.`;
+
     /** The table's source box opened as a person opens it: the table selected, **Edit source** on its bar. */
     const openTableBox = async () => {
         const cell = await page.waitForSelector('.mep-raw-block .mep-atom-content table');
@@ -328,6 +339,17 @@ suite('Editor insertBlock (e2e)', () => {
         assert.strictEqual((await (editor as EditorPage).edits()).length, 0, 'nothing written: not the block, not the box\'s text');
         assert.deepStrictEqual(await openBox(), { value: '| a | b |\n| = | = |\n| 1 | 2 |\n| 3 | 4 |', focused: true }, 'the box as it was');
         assert.strictEqual((await page.$$('.ProseMirror > .mep-raw-block')).length, 1, 'no source block for the quote on the page');
+        // The page says why, under the box's block: never over the box or its Apply and Cancel.
+        const said = await hint();
+        assert.deepStrictEqual([said.shown, said.tone, said.text], [true, 'refusal', SOURCE_OPEN_HINT]);
+        const block = await page.$eval('.ProseMirror > .mep-raw-block', el => {
+            const r = el.getBoundingClientRect();
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+        });
+        assert.ok(!overlaps(said.rect, block), `the hint keeps off the box: ${JSON.stringify({ hint: said.rect, block })}`);
+        // And goes as every refusal does, after its time.
+        await delay(refusalMs(SOURCE_OPEN_HINT) + 300);
+        assert.strictEqual((await hint()).shown, false);
 
         await page.keyboard.down(MOD);
         await page.keyboard.press('Enter');
@@ -370,6 +392,14 @@ suite('Editor insertBlock (e2e)', () => {
         assert.deepStrictEqual(await page.$$eval('.ProseMirror > *', els => els.length), 2, 'the paragraph and the fence, no source block');
         assert.ok(!(await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('Römer'));
         assert.deepStrictEqual((await carets()).pop()?.position, { line: 3, character: 3 }, 'the caret where it was, in the fence');
+        // The page says why, at the caret, off its line.
+        const said = await hint();
+        assert.deepStrictEqual([said.shown, said.tone, said.text], [true, 'refusal', NOT_SEPARATE_HINT]);
+        const line = await page.evaluate(() => {
+            const r = window.getSelection()?.getRangeAt(0).getBoundingClientRect();
+            return r ? { left: r.left, right: r.right + 1, top: r.top, bottom: r.bottom } : null;
+        });
+        assert.ok(line !== null && !overlaps(said.rect, line), `the hint keeps off the caret: ${JSON.stringify({ hint: said.rect, line })}`);
 
         await undoKey();
         await settle();

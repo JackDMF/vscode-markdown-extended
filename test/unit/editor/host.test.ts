@@ -2314,7 +2314,7 @@ suite('Editor host: insertBlock', () => {
             const types = s.webview.posted.map(m => m.type);
             const refused = types.lastIndexOf('insertBlockRefused');
             assert.ok(refused >= 0 && refused < types.lastIndexOf('document'), `the page is told before the parse: ${JSON.stringify(types)}`);
-            assert.deepStrictEqual(s.webview.posted[refused], { type: 'insertBlockRefused', requestId: asked.requestId });
+            assert.deepStrictEqual(s.webview.posted[refused], { type: 'insertBlockRefused', requestId: asked.requestId, reason: 'not-separate' });
             assert.strictEqual(s.webview.documents().length, documents + 1, 'and shown the parse of what was written');
             assert.strictEqual(s.posted().version, s.document.version);
         } finally {

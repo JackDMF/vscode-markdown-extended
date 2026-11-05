@@ -3032,7 +3032,10 @@ markdown, { focus })`.
   Visual Editor over the file there, the active text editor pushed aside (4.12.0).
 - **Page.** A raw block's source box holding text typed and not yet applied refuses the
   block: `source-open`, nothing committed, nothing written, the box left open with its text
-  and the keyboard (`SourceEditor.holdsUnapplied`). Committed from outside, that text could
+  and the keyboard (`SourceEditor.holdsUnapplied`). The page says so under the box's block — a
+  refusal of `hint.ts`, never over the box or its Apply and Cancel, gone as every refusal goes:
+  "Block not inserted — apply this source (Ctrl+Enter) or cancel it (Esc) first." (Cmd+Enter
+  on a Mac). Committed from outside, that text could
   leave a construct open — a code fence typed but not closed — which the host's parse would
   read the block into (the extension hearing `inserted`, undo no longer reaching it); and the
   box, which a commit leaves open, would stand over a block the parse split, whose next
@@ -3078,8 +3081,10 @@ markdown, { focus })`.
   they leave open reads in what follows, and the extension would hear `inserted` while undo no
   longer reached them, the re-sync replacing a range wider than the block (review 2,
   03.11.2026). Then the host writes the edit without them — the typing and box commits in it
-  kept —, posts `insertBlockRefused { requestId }` and its parse right behind; the page puts
-  back the selection from before the insertion and does not take the keyboard, and the
+  kept —, posts `insertBlockRefused { requestId, reason }` and its parse right behind; the page
+  puts back the selection from before the insertion, does not take the keyboard and, for
+  `not-separate`, says why at the caret (a refusal of `hint.ts`): "Block not inserted — it
+  would not stand on its own here, for example inside an open code fence." The
   extension hears `not-separate` — only once the text without them is written: an edit dropped
   for another writer's change is `changed`, blocks or not. The page's history holds nothing of
   the refused insertion. A page document or text that cannot be read is `error-state`, the
