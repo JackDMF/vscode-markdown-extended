@@ -541,10 +541,18 @@ let insertedBlock: {
     focus: boolean;
 } | undefined;
 
-/** The top-level blocks before and after an insertion's place, as they stood before it; `null` where there is none. */
+/**
+ * The top-level blocks before and after an insertion's place; `null` where
+ * there is none. `before` and `after` as they stood before it, whose `src`
+ * and `gap` an undo gives back; `seenBefore` and `seenAfter` as the insertion
+ * left them — a last block's `src` with the line ending it gained — which the
+ * host's parse of them must match for the insertion to become a history step.
+ */
 interface Around {
     before: Node | null;
     after: Node | null;
+    seenBefore: Node | null;
+    seenAfter: Node | null;
 }
 
 /**
@@ -623,11 +631,17 @@ function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
         return;
     }
     const at = before.resolve(inserted.pos).index(0);
+    const now = view.state.doc;
     insertedBlock = {
         requestId: msg.requestId,
         start: inserted.pos,
         end: inserted.end,
-        around: { before: at > 0 ? before.child(at - 1) : null, after: at < before.childCount ? before.child(at) : null },
+        around: {
+            before: at > 0 ? before.child(at - 1) : null,
+            after: at < before.childCount ? before.child(at) : null,
+            seenBefore: at > 0 ? now.child(at - 1) : null,
+            seenAfter: at + 1 < now.childCount ? now.child(at + 1) : null,
+        },
         selectionBefore: selectionBefore.map(inserted.tr.mapping),
         focus: msg.focus,
     };
@@ -678,14 +692,17 @@ function cancelInsert(requestId: number): void {
  * refused it. Also when they are all the document holds (an empty file): taken
  * out, it is empty for a moment, as the schema lets a document be. Not done —
  * the insertion left out of the history — when a block around them is no
- * longer the one that stood there.
+ * longer the one the insertion left there (`Around.seenBefore`,
+ * `seenAfter`).
  */
 function takeIntoHistory(target: EditorView, index: number, count: number, around: Around): void {
     const doc = target.state.doc;
     const prev = index > 0 ? doc.child(index - 1) : null;
     const next = index + count < doc.childCount ? doc.child(index + count) : null;
     const same = (was: Node | null, now: Node | null) => (was === null ? now === null : now !== null && sameContent(was, now));
-    if (count < 1 || index + count > doc.childCount || !same(around.before, prev) || !same(around.after, next)) {
+    // Against the blocks as the insertion left them, not as they stood before it: it gave a last block its line
+    // ending, and a source block's `src` is what it holds (`sameContent`).
+    if (count < 1 || index + count > doc.childCount || !same(around.seenBefore, prev) || !same(around.seenAfter, next)) {
         return;
     }
     let from = 0;

@@ -280,6 +280,38 @@ suite('Editor insertBlock (e2e)', () => {
         });
     }
 
+    for (const [what, file] of [
+        ['raw HTML', 'A.\n\n<div>x</div>'],
+        ['a thematic break', 'A.\n\n---'],
+        ['front matter only', '---\nt: 1\n---'],
+        ['raw HTML, CRLF', 'A.\r\n\r\n<div>x</div>'],
+    ] as const) {
+        test(`after ${what} as the last block of a file without a final line break: Ctrl+Z gives back the bytes, Ctrl+Y the block, Ctrl+Z the bytes again (M2)`, async function () {
+            this.timeout(20000);
+            const eol = file.includes('\r\n') ? '\r\n' : '\n';
+            await showDocument(file);
+            await page.focus('.ProseMirror');
+            await page.keyboard.down(MOD);
+            await page.keyboard.press('End');
+            await page.keyboard.up(MOD);
+            await delay(80);
+            const answer = await insert(QUOTE);
+            assert.strictEqual(answer.inserted, true);
+            const written = `${file}${eol}${eol}${QUOTE.replace(/\n/g, eol)}`;
+            assert.strictEqual(await hostReparses(), written, 'after the last block, the file still without a final line break');
+            await page.waitForSelector('.ProseMirror > blockquote');
+            await undoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, file, 'Ctrl+Z: the bytes as they were');
+            await redoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, written, 'Ctrl+Y: the block again');
+            await undoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, file, 'Ctrl+Z again: the bytes as they were');
+        });
+    }
+
     test('at the end of a file without a final line break: the block goes after it, the file still ends without one, and Ctrl+Z after the host\'s parse gives back the bytes', async function () {
         this.timeout(20000);
         const open = SOURCE.replace(/\n$/, '');
