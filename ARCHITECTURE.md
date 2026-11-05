@@ -1519,7 +1519,7 @@ as the heading's id.
 
 The session remembers the text it believes the page holds. An `edit` is written only
 when its `baseVersion` is the last posted version and the document still holds that
-text — then as **one minimal replacement** (`host/minimalEdit.ts`: common prefix and
+text — then as **one minimal replacement** (`minimalEdit.ts`: common prefix and
 suffix, never splitting `\r\n` or a surrogate pair); otherwise the page is re-synced
 and the edit dropped. A document change that leaves the text equal to the page's is
 the page's own edit and is not posted back; any other change is re-parsed and posted.

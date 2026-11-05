@@ -19,7 +19,7 @@ import { LensController, SessionPort } from './lenses';
 import { FileLister } from './linkChoices';
 import { LinksAndImages } from './linksImages';
 import { fragmentHeading, fragmentLine, headingAnchors, resolveLinkTarget } from './links';
-import { minimalReplacement } from './minimalEdit';
+import { minimalReplacement } from '../minimalEdit';
 import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
 import { inPlaceEnv } from '../footnoteEngine';
 
