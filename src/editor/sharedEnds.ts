@@ -75,3 +75,29 @@ export function sharedEnds(old: Node, next: Node): { head: number; tail: number 
     }
     return { head, tail };
 }
+
+/**
+ * Whether the page's re-sync from `page` — its document with another
+ * extension's blocks inserted as the source block at `index` — to `parsed`,
+ * the host's parse of its text, replaces that source block and nothing else:
+ * then undo takes out exactly the parsed blocks, as `insertBlock` promises
+ * (ARCHITECTURE.md, "Undo after the parse"). Also when the source block stays
+ * in place, read as one of its kind (a raw block of HTML), and all else is
+ * kept. Not when the parse read the blocks into a construct left open before
+ * them (a code fence, an HTML comment), read what follows into one they leave
+ * open, or anything else outside them changed: the re-sync would replace a
+ * wider run, and the insertion's history step would no longer reach it.
+ */
+export function insertionStandsAlone(page: Node, index: number, parsed: Node): boolean {
+    if (!Number.isInteger(index) || index < 0 || index >= page.childCount) {
+        return false;
+    }
+    const { head, tail } = sharedEnds(page, parsed);
+    // The page's children [head, end) are replaced by `added` of the parse's.
+    const end = page.childCount - tail;
+    const added = parsed.childCount - head - tail;
+    if (head === end) {
+        return added === 0;
+    }
+    return head === index && end === index + 1 && added > 0;
+}
