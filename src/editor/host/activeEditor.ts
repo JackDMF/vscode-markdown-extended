@@ -48,14 +48,15 @@ export interface ActiveVisualEditor {
 /**
  * How `insertBlock` went. `inserted: true`: the document holds the blocks.
  * `inserted: false` means *not confirmed*: with every reason but
- * `unconfirmed` nothing was written; with `unconfirmed` nobody can say.
+ * `unconfirmed` the blocks were not written (with `not-separate`, typing on
+ * its way was); with `unconfirmed` nobody can say.
  */
 export type InsertBlockResult =
     | { inserted: true }
     | { inserted: false; reason: InsertBlockRefusal };
 
 /**
- * Why `insertBlock` reports no insertion. Nothing was written for: no Visual
+ * Why `insertBlock` reports no insertion. The blocks were not written for: no Visual
  * Editor open over the uri (`no-editor`, and always in the web build); it
  * shows the error state, no document yet, or would not take the block
  * (`error-state`); Markdown of whitespace only (`empty`); its page did not
@@ -77,7 +78,8 @@ export type InsertBlockResult =
  * elsewhere, but say that it is unknown and let the person look.
  *
  * Reasons may be added within API 2, as these two were: a caller takes one
- * it does not know as every reason but `unconfirmed` — nothing was written.
+ * it does not know as every reason but `unconfirmed` — the blocks were not
+ * written.
  */
 export type InsertBlockRefusal = 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'source-open' | 'not-separate' | 'unconfirmed';
 
