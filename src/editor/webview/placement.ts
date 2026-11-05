@@ -25,6 +25,7 @@
  * functions only. What counts as content is `clearance.ts`'s fact; where a
  * layer goes is this one.
  */
+import type { Node } from 'prosemirror-model';
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { PROBING_CLASS, contentIn, contentLeft, contentRows, contentRight, firstLineTop, lineAt, marginContentLeft, marginItemRects, rowCeiling, textLines } from './clearance';
@@ -871,6 +872,10 @@ interface Placed {
     reach: number | null;
     /** The mount's top in the viewport when it was placed: a scroll moves it with the anchor, a change in the page above the anchor does not. */
     mountTop: number;
+    /** The document it was placed over: a change of it may have changed the text under the layer, its anchor unmoved. */
+    doc: Node;
+    /** How far the content reached when it was placed (`contentExtent`): a scroll leaves it, content that came under the layer does not. */
+    extent: number;
 }
 
 /** Where an element was last written, in its own space: what `moved` compares. */
@@ -910,6 +915,18 @@ function sameSize(a: Rect, b: Rect): boolean {
     return Math.abs((a.right - a.left) - (b.right - b.left)) < 0.5 && Math.abs((a.bottom - a.top) - (b.bottom - b.top)) < 0.5;
 }
 
+/**
+ * How far down the document's content reaches, from the mount's top: the
+ * bottom of its last block. What comes under a layer whose anchor did not move
+ * — a host's lens row, an image or a rendering grown late — moves it, whatever
+ * the editor's `min-height`; a scroll moves the content and the mount alike
+ * and leaves it. One rect, read where the placement has laid the page out.
+ */
+function contentExtent(view: EditorView, mountTop: number): number {
+    const last = view.dom.lastElementChild;
+    return last === null ? 0 : last.getBoundingClientRect().bottom - mountTop;
+}
+
 function sameFrame(a: Frame, b: Frame): boolean {
     return Math.abs(a.columnLeft - b.columnLeft) < 0.5 && Math.abs(a.layerEdge - b.layerEdge) < 0.5
         && Math.abs(a.ceiling - b.ceiling) < 0.5 && Math.abs(a.floor - b.floor) < 0.5 && Math.abs((a.columnRight ?? 0) - (b.columnRight ?? 0)) < 0.5;
@@ -935,9 +952,10 @@ function fitLayer(claim: LayerClaim, f: Frame, refit: boolean): void {
  * bar; a field is opened from a bar or the row and replaces it).
  *
  * The slot places its occupant (`placeLayer`: caret's line, text, the other
- * layers) and places it again on a scroll, a resize or a font loading —
- * once per frame, and only when the
- * anchor, the size or the frame changed. A layer that appeared or moved
+ * layers) and places it again on a scroll, a resize, a font or an image
+ * loading — once per frame, and only when the anchor, the size, the frame or
+ * the content under it changed (`Placed.doc`, `Placed.extent`: a host's lens
+ * row drawn under its anchor moves no anchor). A layer that appeared or moved
  * ignores the pointer for `INERT_MS` (`data-inert`) — a field, asked for and
  * focused, excepted; the keyboard is untouched.
  */
@@ -976,6 +994,10 @@ export class LayerSlot {
             this.refitNext = true;
             this.replaceInFrame();
         });
+        // An image of the document that loaded (or failed to) after the layer was placed took its size with no transaction:
+        // what stands under the layer may have changed. `load` does not bubble: heard on its way down.
+        this.listen(view.dom, 'load', () => this.replaceInFrame(), true);
+        this.listen(view.dom, 'error', () => this.replaceInFrame(), true);
     }
 
     get current(): LayerClaim | null {
@@ -1273,7 +1295,7 @@ export class LayerSlot {
         const width = claim.el.offsetWidth;
         const height = claim.el.offsetHeight;
         const avoid = openLayers(this.mount, claim.el);
-        if (again && sameRect(prev.anchor, anchor)
+        if (again && sameRect(prev.anchor, anchor) && this.sameContent(prev)
             && Math.abs(prev.width - width) < 0.5 && Math.abs(prev.height - height) < 0.5 && sameFrame(prev.frame, frame)
             && prev.avoid.length === avoid.length && prev.avoid.every((r, i) => sameRect(r, avoid[i]))) {
             return;
@@ -1369,7 +1391,7 @@ export class LayerSlot {
     private placeAtLeftMargin(claim: LayerClaim, anchor: Rect, box: Rect, frame: Frame, wide: Frame, prev: Placed | null, fresh: boolean, appeared: boolean): void {
         const el = claim.el;
         const avoidOpen = openLayers(this.mount, el);
-        if (prev !== null && prev.limited !== null && this.written?.el === el && sameSize(prev.anchor, anchor) && sameFrame(prev.frame, frame)
+        if (prev !== null && prev.limited !== null && this.written?.el === el && sameSize(prev.anchor, anchor) && sameFrame(prev.frame, frame) && this.sameContent(prev)
             && Math.abs(prev.width - el.offsetWidth) < 0.5 && Math.abs(prev.height - el.offsetHeight) < 0.5 && prev.avoid.length === avoidOpen.length) {
             // A scroll moves the subject, the text and the other layers alike: where the layer stood in the page it still stands, as long as
             // it is still in the window — measured again only when it is not, or when something else changed. And only where it was
@@ -1377,6 +1399,7 @@ export class LayerSlot {
             // is null there — no note, no text), so it is measured again once it comes back (review round 4, H-1).
             // And only a scroll: the page moved as far as the subject did. Content grown above the subject with no scroll (the
             // host's lens rows, a late image, an outside edit) moves the subject, not the page — measured again (review round 5, H-2).
+            // Content come under the layer with the subject unmoved (a lens row under its block) is no scroll either (`sameContent`).
             const dy = anchor.top - prev.anchor.top;
             const base = this.mount.getBoundingClientRect();
             const at = { x: this.written.at.x + base.left, y: this.written.at.y + base.top, side: this.written.at.side };
@@ -1500,6 +1523,17 @@ export class LayerSlot {
         return reach !== null && (always || reach > p.x) ? reach : null;
     }
 
+    /**
+     * Whether what stands around the layer is what it was placed over: the
+     * same document, its content reaching as far (`contentExtent`). A scroll
+     * keeps both; a lens row, an image or a source block grown under an
+     * anchor that did not move, or an edit from outside, changes one — and
+     * the layer is measured again.
+     */
+    private sameContent(prev: Placed): boolean {
+        return prev.doc === this.view.state.doc && Math.abs(prev.extent - contentExtent(this.view, this.mount.getBoundingClientRect().top)) < 0.5;
+    }
+
     /** The occupant placed at `p`: what it was placed from kept (`Placed`), the pointer refused where it moved. */
     private write(claim: LayerClaim, p: Placement, anchor: Rect, frame: Frame, avoid: Rect[], limited: number | null, reach: number | null, appeared: boolean): void {
         // Compared where it is written: a layer that scrolls with the text has not moved.
@@ -1507,7 +1541,10 @@ export class LayerSlot {
         const at: Placement = { x: p.x - base.left, y: p.y - base.top, side: p.side };
         const before = this.written?.el === claim.el ? this.written.at : null;
         this.written = { el: claim.el, at };
-        this.placed = { key: claim.key, anchor, width: claim.el.offsetWidth, height: claim.el.offsetHeight, frame, avoid, limited, reach, mountTop: base.top };
+        this.placed = {
+            key: claim.key, anchor, width: claim.el.offsetWidth, height: claim.el.offsetHeight, frame, avoid, limited, reach, mountTop: base.top,
+            doc: this.view.state.doc, extent: contentExtent(this.view, base.top),
+        };
         // Standing above what it is about: a tooltip of its controls goes above it too, off its anchor (`tooltip.ts`).
         claim.el.toggleAttribute('data-flipped', p.y + claim.el.offsetHeight <= anchor.top + 0.5);
         const shifted = appeared || moved(before, at);

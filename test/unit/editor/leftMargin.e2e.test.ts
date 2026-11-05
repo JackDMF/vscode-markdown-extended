@@ -339,6 +339,49 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
         });
     }
 
+    // A row drawn under the sidebar's block while its bar is up, the sidebar unmoved: nothing moved the anchor, the page or the frame,
+    // and still the bar is measured again — it was placed for a band that was free and now holds the row.
+    test('a bar fallen back into the column: a row of lenses drawn under its block while it is up, the sidebar unmoved — measured again, over neither the row nor any text', async function () {
+        await closeEditorPage(this, editor);
+        this.timeout(90000);
+        editor = await openEditorPage({ width: 800, height: 600, styles: ['markdown-extended.css'], userStyles: [TIME_MARGIN] });
+        if (!editor) {
+            this.skip();
+        }
+        page = (editor as EditorPage).page;
+        // A stylesheet that sets these blocks apart: room above the sidebar's paragraph and above the next one, so the bar under the
+        // block (or over it) stands over no text. The sidebar on the paragraph's second line: its own lines above and below it leave
+        // no free height within a line's height, so the bar falls back into the column, under the block.
+        await page.addStyleTag({ content: '.ProseMirror > p.abgesetzt { margin-top: 3.5em; }' });
+        const lines = Array.from({ length: 4 }, (_, k) => `Zeile ${k} mit etwas Text, der bis an den Rand der Spalte läuft.`);
+        const blocks = [
+            ...lines,
+            'Ein Absatz mit genug Text, dass er umbricht, und erst auf seiner zweiten Zeile steht $Zeit${class=living} mitten im Satz, der danach noch eine dritte und eine vierte Zeile füllt und so weitergeht, bis er endet. {.abgesetzt}',
+            'Der Absatz danach, mit Abstand. {.abgesetzt}',
+            ...lines,
+            'The last paragraph.',
+        ];
+        const m = await barAt(`${blocks.join('\n\n')}\n`, 'Zeit');
+        const paragraph = await page.evaluate(() => { const r = (document.querySelector('.ProseMirror > p.abgesetzt') as HTMLElement).getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; });
+        const side = await sidebarOf('Zeit');
+        assert.ok(side.top > paragraph.top + side.line / 2 && side.bottom < paragraph.bottom - side.line / 2, `the sidebar on a middle line: ${JSON.stringify({ side, paragraph })}`);
+        assert.ok(m.bar.left >= m.column - 1, `fallen back into the column: ${JSON.stringify(m.bar)}`);
+        assert.deepStrictEqual(overText(m), [], `over no text to start with: ${JSON.stringify(m)}`);
+        await (editor as EditorPage).send({ type: 'lenses', version: 1_000_000, blocks: blocks.length, rows: [
+            { blockIndex: lines.length + 1, items: [{ id: 'u', title: 'Lens under the sidebar\'s block' }] },
+        ] });
+        await page.waitForFunction(() => document.querySelectorAll('.ProseMirror > .mep-lens-row').length === 1);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await delay(200);
+        const after = await measure();
+        const row = await page.$eval('.ProseMirror > .mep-lens-row', e => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; });
+        const still = await sidebarOf('Zeit');
+        assert.ok(Math.abs(still.top - side.top) < 0.5, `the sidebar did not move: ${JSON.stringify({ side, still })}`);
+        assert.ok(after.bar.bottom <= row.top || after.bar.top >= row.bottom, `off the row that came under it: ${JSON.stringify({ bar: after.bar, row })}`);
+        assert.deepStrictEqual(overText(after), [], `over no text: ${JSON.stringify(after)}`);
+        assert.ok(!after.bar.cut, `never cut: ${JSON.stringify(after.bar)}`);
+    });
+
     // The user's own stylesheet, read in place (`MEP_USER_STYLESHEET`; skipped without it): the rule's invariants, wherever its
     // geometry puts the bar — never cut; in the margin at the edge + 16 px off every text and within a line's height of its
     // sidebar, or in the column off every note in the right margin.

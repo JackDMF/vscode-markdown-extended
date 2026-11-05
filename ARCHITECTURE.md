@@ -1996,7 +1996,15 @@ and, wherever the probe lands, a cell of an editable table (an empty one too —
 table's content, drawn to be seen), an image, an atom, or another extension's lens row
 (`OCCUPIED`); a place inside a rendered block probes that block's own text, images and cells.
 The floating chrome is looked through while probing, by one class on the mount around the
-whole search; bars are placed again on scroll and resize once per animation frame. Three
+whole search; bars are placed again on scroll and resize once per animation frame, and on a
+font or an image of the document loading (`load` heard on its way down to the image: no
+transaction tells of it). The slot keeps what it placed a layer from (`Placed`) and does nothing
+where nothing of it changed — the anchor, the layer's size, the frame, the other layers, and what
+stands around it: the document and how far its content reaches (`contentExtent`, the bottom of
+its last block from the mount's top). A lens row drawn under a block, an image grown under a
+link, moves no anchor; it moves the content's end, and the layer is measured again — off the row
+where the other side is free. A scroll moves the content and the mount alike and leaves the
+extent as it was: the left margin's scroll still probes nothing. Three
 ladders with three notions of free had drifted apart (a bar pinned over its block under the
 row, a place blind to images, a bubble over a lens row), which is why it is one now.
 **An inline object's bar follows the same rule with the
@@ -2125,7 +2133,7 @@ into the column only where the column has no text at its height (`contentLeft` i
 `clearance.ts`, probed across the whole room, so the width does not decide it); where it has,
 the layer is fitted to the margin and its verbs drop their nouns first (`ObjectBar.fit`).
 Floated content in the margin (any float, probed: `marginItemRects`) is kept off like any layer. Fitted and placed up to three times: the side
-decides whether text is at its height, the text decides the width. A bar stands directly under the subject's own box (`LayerClaim.box`, `floatedBox`), at the window's edge + 16 px whatever x the subject has (a list item's sidebar starts a rem further in). Where even its narrowest form (`scrollWidth`) does not fit before the column's text, a height within one line's height of the subject's box, with no text, marker or other note between the two and none across that width, is looked for; none: the column, under the block, as before — placed as any bar there (`placeWide`: out to the edge, kept short of a note or sidebar in the right margin beside it, `marginLimit`). A scroll — the page moved as far as the subject did (`Placed.mountTop`); content grown above the subject with no scroll, a host's lens rows or a late image, is no scroll and is measured again — moves the layer with the text without probing, where it stood in the window before the scroll and after it; one placed out of sight was probed where nothing answers (`elementFromPoint` is null outside the window), so it is measured again when it comes back. Bar, bubble and field alike.
+decides whether text is at its height, the text decides the width. A bar stands directly under the subject's own box (`LayerClaim.box`, `floatedBox`), at the window's edge + 16 px whatever x the subject has (a list item's sidebar starts a rem further in). Where even its narrowest form (`scrollWidth`) does not fit before the column's text, a height within one line's height of the subject's box, with no text, marker or other note between the two and none across that width, is looked for; none: the column, under the block, as before — placed as any bar there (`placeWide`: out to the edge, kept short of a note or sidebar in the right margin beside it, `marginLimit`). A scroll — the page moved as far as the subject did (`Placed.mountTop`), the content under it unchanged (`sameContent`); content grown above the subject with no scroll, a host's lens rows or a late image, is no scroll and is measured again, and so is content come under the subject's block with the subject unmoved (a lens row under it) — moves the layer with the text without probing, where it stood in the window before the scroll and after it; one placed out of sight was probed where nothing answers (`elementFromPoint` is null outside the window), so it is measured again when it comes back. Bar, bubble and field alike.
 
 **The inline field** (`webview/inlineField.ts`) is one reusable component for every place a
 value is asked for where it is used — the verbs' fields, and the toolbar's **Span with
