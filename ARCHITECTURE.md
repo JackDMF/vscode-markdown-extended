@@ -2001,7 +2001,7 @@ font or an image of the document loading (`load` heard on its way down to the im
 transaction tells of it). The slot keeps what it placed a layer from (`Placed`) and does nothing
 where nothing of it changed — the anchor, the layer's size, the frame, the other layers, and what
 stands around it: the document and how far its content reaches (`contentExtent`, the bottom of
-its last block from the mount's top). A lens row drawn under a block, an image grown under a
+its last block drawn as a box — one hidden, or the gap cursor, passed over — from the mount's top). A lens row drawn under a block, an image grown under a
 link, moves no anchor; it moves the content's end, and the layer is measured again — off the row
 where the other side is free. A scroll moves the content and the mount alike and leaves the
 extent as it was: the left margin's scroll still probes nothing. Three

@@ -917,14 +917,22 @@ function sameSize(a: Rect, b: Rect): boolean {
 
 /**
  * How far down the document's content reaches, from the mount's top: the
- * bottom of its last block. What comes under a layer whose anchor did not move
- * — a host's lens row, an image or a rendering grown late — moves it, whatever
- * the editor's `min-height`; a scroll moves the content and the mount alike
- * and leaves it. One rect, read where the placement has laid the page out.
+ * bottom of its last block that is drawn. What comes under a layer whose
+ * anchor did not move — a host's lens row, an image or a rendering grown late
+ * — moves it, whatever the editor's `min-height`; a scroll moves the content
+ * and the mount alike and leaves it. A block drawn as no box (a user sheet's
+ * `display: none`, ProseMirror's gap cursor without the focus) has a rect of
+ * zeros, which a scroll would seem to move: passed over (review N-1). Its
+ * `offsetTop` would not move, but would hide every change behind the same 0,
+ * and is whole pixels in the offset parent's space, not the placement's.
  */
 function contentExtent(view: EditorView, mountTop: number): number {
-    const last = view.dom.lastElementChild;
-    return last === null ? 0 : last.getBoundingClientRect().bottom - mountTop;
+    for (let el = view.dom.lastElementChild; el !== null; el = el.previousElementSibling) {
+        if (el.getClientRects().length > 0) {
+            return el.getBoundingClientRect().bottom - mountTop;
+        }
+    }
+    return 0;
 }
 
 function sameFrame(a: Frame, b: Frame): boolean {
