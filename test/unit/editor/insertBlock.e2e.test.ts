@@ -1,6 +1,8 @@
 import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
+import { judgeInsertion } from '../../../src/editor/host/insertCheck';
+import { refusalMs } from '../../../src/editor/refusal';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
@@ -50,12 +52,31 @@ suite('Editor insertBlock (e2e)', () => {
         return (await posted()).find((m): m is BlockInserted => m.type === 'blockInserted' && m.requestId === requestId) as BlockInserted;
     };
 
-    /** The host's half after an inserting edit: it applies it and posts its parse (`applyEdit` with `reparse`). */
-    const hostReparses = async (): Promise<string> => {
+    /**
+     * The host's half after an inserting edit, as `applyEdit` plays it: the
+     * blocks judged (`judgeInsertion`), the text written — the edit's, or the
+     * edit's without them, the page told first (`insertBlockRefused`) — and its
+     * parse posted.
+     */
+    const hostTakes = async (): Promise<{ written: string | undefined; refused: string | undefined }> => {
         const edit = await lastEdit();
         assert.ok(edit?.reparse, 'the insertion asks for a re-parse');
-        await showDocument(edit.text);
-        return edit.text;
+        assert.ok(edit.insert, 'and says where the blocks are');
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const verdict = judgeInsertion(md, edit.text, edit.insert);
+        if (verdict.refused !== undefined) {
+            await (editor as EditorPage).send({ type: 'insertBlockRefused', requestId: edit.insert.requestId, reason: verdict.refused });
+        }
+        assert.ok(verdict.text !== undefined, 'something to write');
+        await showDocument(verdict.text);
+        return { written: verdict.text, refused: verdict.refused };
+    };
+
+    /** The host's half after an inserting edit whose blocks stand alone: the edit applied, its parse posted. */
+    const hostReparses = async (): Promise<string> => {
+        const { written, refused } = await hostTakes();
+        assert.strictEqual(refused, undefined, 'the blocks stand alone in the host\'s parse');
+        return written as string;
     };
 
     const undoKey = async () => {
@@ -238,6 +259,59 @@ suite('Editor insertBlock (e2e)', () => {
         assert.strictEqual(await hostReparses(), WITH_QUOTE);
     });
 
+    for (const empty of ['', '\n'] as const) {
+        test(`into an empty file (${JSON.stringify(empty)}): the block is its first, and Ctrl+Z after the host's parse gives back the empty file, Ctrl+Y the block (M1)`, async function () {
+            this.timeout(20000);
+            await showDocument(empty);
+            await page.focus('.ProseMirror');
+            await delay(80);
+            const answer = await insert(QUOTE);
+            assert.strictEqual(answer.inserted, true);
+            const written = await hostReparses();
+            assert.strictEqual(written, `${QUOTE}\n${empty}`);
+            await page.waitForSelector('.ProseMirror > blockquote');
+            await undoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, empty, 'Ctrl+Z: the file as it was');
+            assert.strictEqual(await page.$('.ProseMirror > blockquote'), null);
+            await redoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, written, 'Ctrl+Y: the block again');
+        });
+    }
+
+    for (const [what, file] of [
+        ['raw HTML', 'A.\n\n<div>x</div>'],
+        ['a thematic break', 'A.\n\n---'],
+        ['front matter only', '---\nt: 1\n---'],
+        ['raw HTML, CRLF', 'A.\r\n\r\n<div>x</div>'],
+    ] as const) {
+        test(`after ${what} as the last block of a file without a final line break: Ctrl+Z gives back the bytes, Ctrl+Y the block, Ctrl+Z the bytes again (M2)`, async function () {
+            this.timeout(20000);
+            const eol = file.includes('\r\n') ? '\r\n' : '\n';
+            await showDocument(file);
+            await page.focus('.ProseMirror');
+            await page.keyboard.down(MOD);
+            await page.keyboard.press('End');
+            await page.keyboard.up(MOD);
+            await delay(80);
+            const answer = await insert(QUOTE);
+            assert.strictEqual(answer.inserted, true);
+            const written = `${file}${eol}${eol}${QUOTE.replace(/\n/g, eol)}`;
+            assert.strictEqual(await hostReparses(), written, 'after the last block, the file still without a final line break');
+            await page.waitForSelector('.ProseMirror > blockquote');
+            await undoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, file, 'Ctrl+Z: the bytes as they were');
+            await redoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, written, 'Ctrl+Y: the block again');
+            await undoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, file, 'Ctrl+Z again: the bytes as they were');
+        });
+    }
+
     test('at the end of a file without a final line break: the block goes after it, the file still ends without one, and Ctrl+Z after the host\'s parse gives back the bytes', async function () {
         this.timeout(20000);
         const open = SOURCE.replace(/\n$/, '');
@@ -254,11 +328,18 @@ suite('Editor insertBlock (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, `${open}\n\n${QUOTE}`);
     });
 
-    test('an open source box is committed before the block, with focus: Ctrl+Z takes the block, then the box\'s text', async function () {
-        this.timeout(30000);
-        const table = '| a | b |\n| = | = |\n| 1 | 2 |\n';
-        const withTable = `Intro paragraph.\n\n${table}\nLast paragraph.\n`;
-        await showDocument(withTable);
+    /** The page's hint: shown, its tone and text, and its box. */
+    const hint = () => page.$eval('.mep-hint', el => {
+        const r = el.getBoundingClientRect();
+        return { shown: !(el as HTMLElement).hidden, tone: (el as HTMLElement).dataset.tone, text: el.textContent ?? '', rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } };
+    });
+    type Box = { left: number; right: number; top: number; bottom: number };
+    const overlaps = (a: Box, b: Box) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const NOT_SEPARATE_HINT = 'Block not inserted — it would not stand on its own here (for example, an open code fence would take it in).';
+    const SOURCE_OPEN_HINT = `Block not inserted — this source has changes not applied. Apply them (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Enter) or cancel (Esc), then insert again.`;
+
+    /** The table's source box opened as a person opens it: the table selected, **Edit source** on its bar. */
+    const openTableBox = async () => {
         const cell = await page.waitForSelector('.mep-raw-block .mep-atom-content table');
         const box = await cell?.boundingBox();
         assert.ok(box);
@@ -270,24 +351,150 @@ suite('Editor insertBlock (e2e)', () => {
         assert.ok(at);
         await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
         await page.waitForSelector('.mep-raw-editor');
-        await page.keyboard.type('\n| 3 | 4 |');
-        const committed = withTable.replace('| 1 | 2 |\n', '| 1 | 2 |\n| 3 | 4 |\n');
+    };
+    const TABLE = '| a | b |\n| = | = |\n| 1 | 2 |\n';
+    const WITH_TABLE = `Intro paragraph.\n\n${TABLE}\nLast paragraph.\n`;
+    /** What the open box holds, and whether it has the keyboard; `null` when no box is open. */
+    const openBox = () => page.evaluate(() => {
+        const area = document.querySelector<HTMLTextAreaElement>('.mep-raw-editor');
+        return area === null ? null : { value: area.value, focused: document.activeElement === area };
+    });
+
+    test('a source box opened and nothing typed is committed with the block, with focus: one edit with the block alone, the box closes as the editor takes the keyboard, Ctrl+Z takes the block', async function () {
+        this.timeout(30000);
+        await showDocument(WITH_TABLE);
+        await openTableBox();
 
         const answer = await insert(QUOTE, true);
         assert.strictEqual(answer.inserted, true);
         const edits = await (editor as EditorPage).edits();
-        assert.strictEqual(edits.length, 1, 'one edit carries the box\'s text and the block');
-        assert.strictEqual(await hostReparses(), committed.replace('| 3 | 4 |\n', `| 3 | 4 |\n\n${QUOTE}\n`));
+        assert.strictEqual(edits.length, 1, 'one edit carries the block');
+        assert.strictEqual(await hostReparses(), WITH_TABLE.replace('| 1 | 2 |\n', `| 1 | 2 |\n\n${QUOTE}\n`));
         await page.waitForFunction(() => document.activeElement?.classList.contains('ProseMirror'), { timeout: 2000 });
         await settle();
-        assert.strictEqual((await (editor as EditorPage).edits()).length, 1, 'the focus leaving the box commits nothing more');
+        assert.strictEqual(await openBox(), null, 'the box closed as the focus left it');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, 1, 'and committed nothing more');
 
         await undoKey();
         await settle();
-        assert.strictEqual((await lastEdit())?.text, committed, 'first undo: the block');
+        assert.strictEqual((await lastEdit())?.text, WITH_TABLE, 'Ctrl+Z: the block, and nothing else');
+    });
+
+    test('a source box holding typed text not yet applied refuses the block (source-open), also with focus: nothing is written, the box stays open with its text and the keyboard; applied, it is written as typed', async function () {
+        this.timeout(30000);
+        await showDocument(WITH_TABLE);
+        await openTableBox();
+        await page.keyboard.type('\n| 3 | 4 |');
+
+        const answer = await insert(QUOTE, true);
+        assert.deepStrictEqual(answer, { type: 'blockInserted', requestId: answer.requestId, inserted: false, reason: 'source-open' });
+        await settle();
+        assert.strictEqual((await (editor as EditorPage).edits()).length, 0, 'nothing written: not the block, not the box\'s text');
+        assert.deepStrictEqual(await openBox(), { value: '| a | b |\n| = | = |\n| 1 | 2 |\n| 3 | 4 |', focused: true }, 'the box as it was');
+        assert.strictEqual((await page.$$('.ProseMirror > .mep-raw-block')).length, 1, 'no source block for the quote on the page');
+        // The page says why, under the box's block: never over the box or its Apply and Cancel.
+        const said = await hint();
+        assert.deepStrictEqual([said.shown, said.tone, said.text], [true, 'refusal', SOURCE_OPEN_HINT]);
+        const block = await page.$eval('.ProseMirror > .mep-raw-block', el => {
+            const r = el.getBoundingClientRect();
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+        });
+        assert.ok(!overlaps(said.rect, block), `the hint keeps off the box: ${JSON.stringify({ hint: said.rect, block })}`);
+        // And goes as every refusal does, after its time.
+        await delay(refusalMs(SOURCE_OPEN_HINT) + 300);
+        assert.strictEqual((await hint()).shown, false);
+
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('Enter');
+        await page.keyboard.up(MOD);
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, WITH_TABLE.replace('| 1 | 2 |\n', '| 1 | 2 |\n| 3 | 4 |\n'));
+    });
+
+    test('a source box whose typed text leaves a code fence open refuses the block (source-open): the block never lands in the fence, and the box keeps what was typed', async function () {
+        this.timeout(30000);
+        const withRaw = 'First paragraph.\n\n<div>raw block</div>\n\nLast paragraph.\n';
+        await showDocument(withRaw);
+        const box = await (await page.waitForSelector('.mep-raw-block .mep-atom-content'))?.boundingBox();
+        assert.ok(box);
+        await page.mouse.click(box.x + 10, box.y + box.height / 2, { clickCount: 2 });
+        await page.waitForSelector('.mep-raw-editor');
+        await delay(80);
+        await page.keyboard.type('\n\n```js\nlet a = 1;');
+
+        const answer = await insert(QUOTE);
+        assert.strictEqual(answer.inserted, false, 'not reported inserted');
+        assert.strictEqual(answer.reason, 'source-open');
+        await settle();
+        assert.strictEqual((await (editor as EditorPage).edits()).length, 0, 'nothing written');
+        assert.deepStrictEqual(await openBox(), { value: '<div>raw block</div>\n\n```js\nlet a = 1;', focused: true });
+    });
+
+    test('after a code fence left open at the file\'s end, the caret in it: the block would be code — not written (not-separate), the page shows the file with the typing before it, the caret stays, and one Ctrl+Z takes that typing: the refused insertion left no step behind (L2)', async function () {
+        this.timeout(20000);
+        const open = 'Intro paragraph.\n\n```js\nlet a = 1;\n';
+        await showDocument(open);
+        await clickText(page, 'Intro');
+        await page.keyboard.type('E');
+        await clickText(page, 'let a', 3);
+        const answer = await insert(QUOTE, true);
+        assert.strictEqual(answer.inserted, true, 'the page put it in its edit');
+        const typed = open.replace('Intro', 'EIntro');
+        assert.deepStrictEqual(await hostTakes(), { written: typed, refused: 'not-separate' });
+        await delay(250);
+        assert.deepStrictEqual(await page.$$eval('.ProseMirror > *', els => els.length), 2, 'the paragraph and the fence, no source block');
+        assert.ok(!(await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('Römer'));
+        assert.deepStrictEqual((await carets()).pop()?.position, { line: 3, character: 3 }, 'the caret where it was, in the fence');
+        // The page says why, at the caret, off its line.
+        const said = await hint();
+        assert.deepStrictEqual([said.shown, said.tone, said.text], [true, 'refusal', NOT_SEPARATE_HINT]);
+        const line = await page.evaluate(() => {
+            const r = window.getSelection()?.getRangeAt(0).getBoundingClientRect();
+            return r ? { left: r.left, right: r.right + 1, top: r.top, bottom: r.bottom } : null;
+        });
+        assert.ok(line !== null && !overlaps(said.rect, line), `the hint keeps off the caret: ${JSON.stringify({ hint: said.rect, line })}`);
+
         await undoKey();
         await settle();
-        assert.strictEqual((await lastEdit())?.text, withTable, 'second undo: the box\'s text');
+        assert.strictEqual((await lastEdit())?.text, open, 'one Ctrl+Z: the letter typed before');
+        assert.ok((await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('let a = 1;'));
+    });
+
+    for (const [what, file, word] of [
+        ['an admonition', 'Intro paragraph.\n\n!!! note "Title"\n    body text here\n\nLast paragraph.\n', 'body'],
+        ['a list item', 'Intro paragraph.\n\n- item one\n- item two\n\nLast paragraph.\n', 'two'],
+    ] as const) {
+        test(`typed in ${what}, then a block inserted after the first paragraph: inserted, and Ctrl+Z after the host's parse takes out the quote only (H1)`, async function () {
+            this.timeout(20000);
+            await showDocument(file);
+            await clickText(page, word);
+            await page.keyboard.type('XY');
+            await settle();
+            const typed = (await lastEdit())?.text;
+            assert.strictEqual(typed, file.replace(word, `XY${word}`));
+            await clickText(page, 'Intro', 3);
+            const answer = await insert(QUOTE);
+            assert.strictEqual(answer.inserted, true);
+            assert.strictEqual(await hostReparses(), (typed as string).replace('Intro paragraph.\n', `Intro paragraph.\n\n${QUOTE}\n`));
+            await page.waitForSelector('.ProseMirror > blockquote');
+            await undoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, typed, 'Ctrl+Z: the quote out, the typing kept');
+        });
+    }
+
+    test('Markdown that leaves a fence open itself would take the paragraph after it in: not written (not-separate); two letters typed just before are', async function () {
+        this.timeout(20000);
+        await clickText(page, 'Second');
+        await page.keyboard.press('Home');
+        await page.keyboard.type('AB');
+        const answer = await insert('```\nnot closed');
+        assert.strictEqual(answer.inserted, true);
+        const typed = SOURCE.replace('Second', 'ABSecond');
+        assert.deepStrictEqual(await hostTakes(), { written: typed, refused: 'not-separate' });
+        await delay(250);
+        assert.deepStrictEqual(await page.$$eval('.ProseMirror > *', els => els.map(el => el.tagName)), ['P', 'P', 'P'], 'the three paragraphs, nothing else');
+        assert.strictEqual(await page.$eval('.ProseMirror', el => (el.textContent ?? '').includes('ABSecond')), true);
     });
 
     test('Cmd+Z sent with the browser\'s own Undo command (macOS) is still the page\'s history: the block goes, nothing else', async function () {

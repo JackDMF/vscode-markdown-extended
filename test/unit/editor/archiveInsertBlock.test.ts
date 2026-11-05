@@ -4,6 +4,7 @@ import * as path from 'path';
 import { Node } from 'prosemirror-model';
 import { undo } from 'prosemirror-history';
 import { EditorState, NodeSelection } from 'prosemirror-state';
+import { insertionStandsAlone } from '../../../src/editor/host/insertCheck';
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -26,6 +27,7 @@ import { hostEngine, topChildren } from './helpers';
  * more, the quote, written back unchanged; one undo gives the file's bytes,
  * before the parse and after it (re-synced as the page is, with the parse's
  * tail) — without a line break more, also for the files that end without one.
+ * And the host's check before it writes lets each through: no false refusal.
  */
 const ROOT = process.env.MEP_ARCHIVE_ROOT;
 
@@ -160,6 +162,10 @@ suite('Editor insertBlock: Daniel\'s archive takes a quote block line for line (
                 }
                 if (write(reparsed, reparsed.doc) !== written) {
                     failures.push(`${where}: the host's parse is not written back unchanged`);
+                }
+                // The host's check before it writes (`host/insertCheck.ts`) lets every one of them through.
+                if (!insertionStandsAlone(after.doc, after.doc.resolve(inserted.pos).index(0), reparsed.doc)) {
+                    failures.push(`${where}: the host would not write it (not-separate)`);
                 }
                 let undone = after;
                 undo(after, tr => {

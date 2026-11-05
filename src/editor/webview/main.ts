@@ -14,13 +14,16 @@
  */
 import { Node } from 'prosemirror-model';
 import { closeHistory, redo, undo } from 'prosemirror-history';
-import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
+import { EditorState, NodeSelection, Selection, SelectionBookmark, TextSelection, Transaction } from 'prosemirror-state';
 import type { Mappable } from 'prosemirror-transform';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap, selectionOf } from '../positions';
-import type { AcceptOnEnter, CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import type { AcceptOnEnter, CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, InsertedBlocks, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import { minimalReplacement } from '../minimalEdit';
+import { PRESERVE_SOURCE_META } from '../fidelity';
 import { editorSchema } from '../schema';
+import { insertionStandsAlone, sameContent } from '../sharedEnds';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
@@ -28,7 +31,7 @@ import { completionBeforeDocument, completionBeforeSave, completionDocumentShown
 import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
-import { dismissRefusal, showChangeHint, showHint } from './hint';
+import { applyKey, dismissRefusal, showChangeHint, showHint, showRefusal } from './hint';
 import { hoverDocumentShown, hoverMessage, hoverPlugin } from './hover';
 import { SOURCE_VERB_META } from './sourceBlock';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
@@ -153,9 +156,11 @@ const documentKey = mount.dataset.documentUri ?? '';
  * a save, always: the host saves once it has applied the edit, so the file on
  * disk holds the last keystroke (see `onSaveKeydown`). With `reparse` the host
  * posts the document back parsed afresh: the toolbar wrote a construct as
- * source, which only the host can classify and render.
+ * source, which only the host can classify and render. With `insert` (and
+ * `reparse`), the edit carries another extension's blocks, which the host
+ * checks before it writes them (`insertBlock`).
  */
-function flush(save = false, reparse = false): void {
+function flush(save = false, reparse = false, insert?: InsertedBlocks): void {
     if (editTimer !== undefined) {
         clearTimeout(editTimer);
         editTimer = undefined;
@@ -175,6 +180,7 @@ function flush(save = false, reparse = false): void {
             baseVersion: current.version,
             ...(save ? { save: true as const } : {}),
             ...(reparse ? { reparse: true as const } : {}),
+            ...(insert ? { insert } : {}),
         });
     }
     // Behind the edit, so the host looks the blocks up in this text.
@@ -518,11 +524,46 @@ function applyInclude(requestId: number, insert: string | undefined): void {
 }
 
 /**
- * A block another extension inserted (`insertBlock`) whose parse the host has
- * not shown yet: the position right after it, mapped through every change the
- * page makes meanwhile, and whether the page takes the keyboard once it shows.
+ * A block another extension inserted (`insertBlock` `requestId`) whose parse
+ * the host has not shown yet: where its source block starts and ends and the
+ * selection before the insertion, mapped through every change the page makes
+ * meanwhile, and whether the page takes the keyboard once it shows. The
+ * source block is not in the page's history: the host may still refuse it
+ * (`takeIntoHistory`). `around`: the blocks on either side as they stood
+ * before the insertion, which changed their `src` or `gap`.
  */
-let insertedBlock: { end: number; focus: boolean } | undefined;
+let insertedBlock: {
+    requestId: number;
+    start: number;
+    end: number;
+    around: Around;
+    selectionBefore: SelectionBookmark;
+    focus: boolean;
+} | undefined;
+
+/**
+ * The top-level blocks before and after an insertion's place; `null` where
+ * there is none. `before` and `after` as they stood before it, whose `src`
+ * and `gap` an undo gives back; `seenBefore` and `seenAfter` as the insertion
+ * left them — a last block's `src` with the line ending it gained — which the
+ * host's parse of them must match for the insertion to become a history step.
+ */
+interface Around {
+    before: Node | null;
+    after: Node | null;
+    seenBefore: Node | null;
+    seenAfter: Node | null;
+}
+
+/**
+ * The selection from before blocks the host refused (`insertBlockRefused`),
+ * put back once its parse without them is shown: the caret stays where it
+ * was, and for `not-separate` the page says why there.
+ */
+let selectionBeforeRefused: { bookmark: SelectionBookmark; say: boolean } | undefined;
+
+/** Why the page took no block another extension inserted, where the host's parse would have read it into what is around it. */
+const NOT_SEPARATE_HINT = 'Block not inserted — it would not stand on its own here (for example, an open code fence would take it in).';
 
 /**
  * The `insertBlock` requests this page has answered, or that the host withdrew
@@ -538,10 +579,14 @@ const answeredInserts = new Set<number>();
  * (`insertBlockTransaction`, one history step) and sent at once with
  * `reparse` — in one edit with whatever typing still waits in the delay, so
  * no keystroke is lost to it — then `blockInserted`, which the host takes
- * behind that edit. Answered without the block when the page shows no
- * document or the block was not taken; a request the host withdrew already
- * is not written and not answered again. The caret is put after the blocks
- * once the host's parse shows them (`showDocument`).
+ * behind that edit. The edit says where the blocks are and what the text is
+ * without them (`InsertedBlocks`): the host writes them only where they stand
+ * alone in its parse, else the text without them (`insertBlockRefused`).
+ * Answered without the block when the page shows no document, a raw block's
+ * source box holds text not yet applied (`source-open`: nothing is
+ * committed, the box stays as it is), or the block was not taken; a request
+ * the host withdrew already is not written and not answered again. The caret
+ * is put after the blocks once the host's parse shows them (`showDocument`).
  */
 function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
     if (answeredInserts.has(msg.requestId)) {
@@ -553,21 +598,73 @@ function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
         refuse('no-document');
         return;
     }
-    // A box open meanwhile is committed now, in the edit below: the focus leaving it would commit it after the block.
+    // Typed in a box and not applied: committed from outside, the text might leave a code fence open that takes
+    // the block in, and the box would stay open over what the host's parse made of it. The person applies it first.
+    const typedIn = [...openSourceEditors].find(editor => editor.holdsUnapplied?.() === true);
+    if (typedIn !== undefined) {
+        // Said under the box's block, never over the box or its Apply and Cancel.
+        const pos = typedIn.position?.();
+        const near = pos === undefined ? null : view.nodeDOM(pos);
+        showRefusal(view, `Block not inserted — this source has changes not applied. Apply them (${applyKey()}) or cancel (Esc), then insert again.`,
+            { at: 'caret', near: near instanceof Element ? near : undefined });
+        refuse('source-open');
+        return;
+    }
+    // A box open meanwhile — nothing typed in it, or the properties' — is committed now, in the edit below: the
+    // focus leaving it would commit it after the block.
     commitForSending();
     const before = view.state.doc;
+    const selectionBefore = view.state.selection.getBookmark();
+    // The text without the blocks, as the edit below would carry it: what the host writes should they not stand alone.
+    const withoutBlocks = serialize(before);
     const inserted = insertBlockTransaction(view.state, msg.src, current.eol);
     if (inserted !== null) {
-        view.dispatch(inserted.tr);
+        // Out of the history until the host's parse shows the blocks standing alone (`takeIntoHistory`): a refused
+        // insertion leaves no step behind for Ctrl+Z.
+        view.dispatch(inserted.tr.setMeta('addToHistory', false));
     }
-    if (inserted === null || view.state.doc === before) {
+    const withBlocks = serialize(view.state.doc);
+    const without = minimalReplacement(withBlocks, withoutBlocks);
+    if (inserted === null || view.state.doc === before || without === null) {
         flush();
         refuse('refused');
         return;
     }
-    insertedBlock = { end: inserted.end, focus: msg.focus };
-    flush(false, true);
+    const at = before.resolve(inserted.pos).index(0);
+    const now = view.state.doc;
+    insertedBlock = {
+        requestId: msg.requestId,
+        start: inserted.pos,
+        end: inserted.end,
+        around: {
+            before: at > 0 ? before.child(at - 1) : null,
+            after: at < before.childCount ? before.child(at) : null,
+            seenBefore: at > 0 ? now.child(at - 1) : null,
+            seenAfter: at + 1 < now.childCount ? now.child(at + 1) : null,
+        },
+        selectionBefore: selectionBefore.map(inserted.tr.mapping),
+        focus: msg.focus,
+    };
+    flush(false, true, {
+        requestId: msg.requestId,
+        page: view.state.doc.toJSON() as Record<string, unknown>,
+        index: view.state.doc.resolve(inserted.pos).index(0),
+        without,
+    });
     post({ type: 'blockInserted', requestId: msg.requestId, inserted: true });
+}
+
+/**
+ * The host did not write the blocks `insertBlock` `requestId` inserted: they
+ * do not stand alone in its parse. Its parse of the text without them comes
+ * right behind and takes the source block out; the selection from before the
+ * insertion is put back then, and the page does not take the keyboard.
+ */
+function insertRefused(requestId: number, reason: 'not-separate' | 'error-state'): void {
+    if (insertedBlock?.requestId === requestId) {
+        selectionBeforeRefused = { bookmark: insertedBlock.selectionBefore, say: reason === 'not-separate' };
+        insertedBlock = undefined;
+    }
 }
 
 /**
@@ -581,6 +678,79 @@ function cancelInsert(requestId: number): void {
     }
     answeredInserts.add(requestId);
     post({ type: 'blockInserted', requestId, inserted: false, reason: 'cancelled' });
+}
+
+/**
+ * The blocks another extension inserted — top-level blocks `index` to
+ * `index + count` of the page, now that the host's parse of them is shown —
+ * made a step of the history: taken out outside it, the blocks `around` them
+ * given back the `src` and `gap` they had before the insertion, and all of it
+ * done again as one step of its own. Ctrl+Z takes that step: the blocks out,
+ * the file's bytes as they were (no blank line left before a block that stood
+ * tight, no line break after a last line that had none), and Ctrl+Y puts it
+ * back. Their source block went in outside the history, as the host might have
+ * refused it. Also when they are all the document holds (an empty file): taken
+ * out, it is empty for a moment, as the schema lets a document be. Not done —
+ * the insertion left out of the history — when a block around them is no
+ * longer the one the insertion left there (`Around.seenBefore`,
+ * `seenAfter`).
+ */
+function takeIntoHistory(target: EditorView, index: number, count: number, around: Around): void {
+    const doc = target.state.doc;
+    const prev = index > 0 ? doc.child(index - 1) : null;
+    const next = index + count < doc.childCount ? doc.child(index + count) : null;
+    const same = (was: Node | null, now: Node | null) => (was === null ? now === null : now !== null && sameContent(was, now));
+    // Against the blocks as the insertion left them, not as they stood before it: it gave a last block its line
+    // ending, and a source block's `src` is what it holds (`sameContent`).
+    if (count < 1 || index + count > doc.childCount || !same(around.seenBefore, prev) || !same(around.seenAfter, next)) {
+        return;
+    }
+    let from = 0;
+    for (let i = 0; i < index; i++) {
+        from += doc.child(i).nodeSize;
+    }
+    let to = from;
+    for (let i = index; i < index + count; i++) {
+        to += doc.child(i).nodeSize;
+    }
+    const blocks = doc.slice(from, to).content;
+    const markup = (tr: Transaction, pos: number, node: Node | null) => {
+        const there = tr.doc.nodeAt(pos);
+        if (node !== null && there !== null && !there.sameMarkup(node)) {
+            tr.setNodeMarkup(pos, node.type, node.attrs, node.marks);
+        }
+        return tr;
+    };
+    const prevAt = prev === null ? -1 : from - prev.nodeSize;
+    const out = target.state.tr;
+    markup(out, to, around.after);
+    if (prev !== null) {
+        markup(out, prevAt, around.before);
+    }
+    target.dispatch(out.delete(from, to).setMeta('addToHistory', false).setMeta(PRESERVE_SOURCE_META, true));
+    const back = target.state.tr.insert(from, blocks);
+    markup(back, to, next);
+    if (prev !== null) {
+        markup(back, prevAt, prev);
+    }
+    target.dispatch(closeHistory(back).setMeta(PRESERVE_SOURCE_META, true));
+}
+
+/**
+ * Where the host's parse put the blocks another extension inserted as the
+ * source block `[start, end)` of `page`, in `shown` (that parse, re-synced):
+ * when the re-sync replaced that source block and nothing else
+ * (`insertionStandsAlone`), the run of `shown`'s top-level blocks in its
+ * place, from `index`; else `null`.
+ */
+function parsedBlocks(page: Node, start: number, end: number, shown: Node): { index: number; count: number } | null {
+    const $start = page.resolve(Math.min(start, page.content.size));
+    const index = $start.index(0);
+    if ($start.depth !== 0 || index >= page.childCount || start + page.child(index).nodeSize !== end
+        || !insertionStandsAlone(page, index, shown)) {
+        return null;
+    }
+    return { index, count: shown.childCount - page.childCount + 1 };
 }
 
 /**
@@ -974,7 +1144,12 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
     }
     if (tr.docChanged) {
         if (insertedBlock !== undefined) {
+            insertedBlock.start = tr.mapping.map(insertedBlock.start, 1);
             insertedBlock.end = tr.mapping.map(insertedBlock.end, -1);
+            insertedBlock.selectionBefore = insertedBlock.selectionBefore.map(tr.mapping);
+        }
+        if (selectionBeforeRefused !== undefined) {
+            selectionBeforeRefused.bookmark = selectionBeforeRefused.bookmark.map(tr.mapping);
         }
         scheduleFlush();
     }
@@ -1040,9 +1215,24 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         }
         if (insertedBlock !== undefined) {
             // The host's parse of blocks another extension inserted: the source block is now what its text is.
-            const { end, focus } = insertedBlock;
+            const { start, end, around, focus } = insertedBlock;
             insertedBlock = undefined;
+            const parsed = parsedBlocks(before, start, end, shown.state.doc);
+            if (parsed !== null) {
+                takeIntoHistory(shown, parsed.index, parsed.count, around);
+            }
+            // Without them in the history — typing in the round trip changed a block the re-sync replaced with
+            // them — the insertion is not undone on its own.
             placeAfterInserted(shown, resync.mapping.map(end, 1), focus);
+        }
+        if (selectionBeforeRefused !== undefined) {
+            // The host's parse without blocks it refused: the selection from before them, not one the re-sync mapped.
+            const { bookmark, say } = selectionBeforeRefused;
+            selectionBeforeRefused = undefined;
+            shown.dispatch(shown.state.tr.setSelection(bookmark.map(resync.mapping).resolve(shown.state.doc)).setMeta('addToHistory', false));
+            if (say) {
+                showRefusal(shown, NOT_SEPARATE_HINT);
+            }
         }
         sendDeferredActions();
         caretReporter.documentShown();
@@ -1107,9 +1297,10 @@ function sayClosedSourceBoxes(shown: EditorView, reopen: (change: SourceChangedO
  * A source block's box a document from the host closed opens again on the
  * same block, as it was (`SourceChangedOutside.reopen`), when that block is
  * there unchanged: ProseMirror draws an untouched block anew when much
- * around it changed, and a source block inserted right before it takes its
- * node — the re-sync matches source blocks by type alone and gives the kept
- * node the new one's source. The same block is the one with the box's
+ * around it changed, and through 4.13.0 a source block inserted right
+ * before it took its node — the re-sync matched source blocks by type alone
+ * and gave the kept node the new one's source (it reads their `src` since,
+ * `sharedEnds`). The same block is the one with the box's
  * source, between where the start and the end of its old place map to (the
  * run the document replaced, or the insertion beside it), at the same place
  * among the blocks of that very source — counted in the whole document,
@@ -1202,6 +1393,7 @@ function showError(message: string): void {
     }
     caretReporter.dispose();
     insertedBlock = undefined;
+    selectionBeforeRefused = undefined;
     view?.destroy();
     view = undefined;
     current = undefined;
@@ -1298,6 +1490,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'insertBlockCancel':
             cancelInsert(msg.requestId);
+            break;
+        case 'insertBlockRefused':
+            insertRefused(msg.requestId, msg.reason);
             break;
         case 'linkChoicesResult':
             applyLinkChoices(msg.requestId, msg.items);

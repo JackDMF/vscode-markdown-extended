@@ -350,7 +350,7 @@ suite('Editor source box and a change from outside (e2e)', () => {
         assert.ok(said.shown && said.tone === 'refusal' && said.text.startsWith(NOT_APPLIED), said.text);
     });
 
-    test('a block inserted for another extension with the box open, the host dropping the edit: the typing is on the clipboard', async function () {
+    test('a block another extension inserts while the box holds typing is refused (source-open): nothing committed, and a change elsewhere from outside leaves the box open with its typing, nothing on the clipboard', async function () {
         this.timeout(30000);
         const text = 'First.\n\n<div>raw</div>\n\nLast.\n';
         if (!await open(text)) {
@@ -360,9 +360,12 @@ suite('Editor source box and a change from outside (e2e)', () => {
         await page.keyboard.type(' typed');
         await (editor as EditorPage).send({ type: 'insertBlock', requestId: 1, src: '> Quote', focus: false });
         await settle();
-        assert.ok((await edits()).pop()?.text.includes('<div>raw</div> typed'), 'the box was committed before the block');
+        const answers = (await (editor as EditorPage).posted()).filter(m => m.type === 'blockInserted');
+        assert.deepStrictEqual(answers, [{ type: 'blockInserted', requestId: 1, inserted: false, reason: 'source-open' }]);
+        assert.deepStrictEqual(await edits(), [], 'the box was not committed');
         await showDocument(text.replace('First.', 'First, changed outside.'));
-        assert.deepStrictEqual(await copied(), ['<div>raw</div> typed']);
+        assert.deepStrictEqual(await boxes(), ['<div>raw</div> typed']);
+        assert.deepStrictEqual(await copied(), []);
     });
 
     test('the front matter: a save from the box the host dropped, then a change elsewhere: the YAML typed is on the clipboard', async function () {

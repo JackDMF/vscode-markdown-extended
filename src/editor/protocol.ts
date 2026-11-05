@@ -218,6 +218,15 @@ export type HostMessage =
      */
     | { type: 'insertBlockCancel'; requestId: number }
     /**
+     * The blocks `insertBlock` `requestId` inserted were not written, for
+     * `reason`: they do not stand alone in the host's parse (`not-separate`,
+     * `host/insertCheck.ts`), or that could not be told (`error-state`). The
+     * host wrote the edit without them and posts its parse right behind this,
+     * which takes the source block out. The page leaves its caret where it is
+     * and, for `not-separate`, says why at it.
+     */
+    | { type: 'insertBlockRefused'; requestId: number; reason: 'not-separate' | 'error-state' }
+    /**
      * The answer to `pickInclude`: the line the person chose, exactly as the
      * extension offering it wrote it (`IncludeChoice.insert`, one line without
      * its terminator); absent when they dismissed the pick or nothing was offered.
@@ -350,8 +359,11 @@ export type WebviewMessage =
      * toolbar construct outside the editable core, inserted as source): the host
      * applies the edit and then posts the document parsed afresh, although its
      * text is the page's own — the one case the page asks to see its edit again.
+     * With `insert`, the edit carries blocks another extension inserted
+     * (`insertBlock`), which the host writes only if they stand alone in its
+     * parse (`InsertedBlocks`).
      */
-    | { type: 'edit'; text: string; baseVersion: number; save?: true; reparse?: true }
+    | { type: 'edit'; text: string; baseVersion: number; save?: true; reparse?: true; insert?: InsertedBlocks }
     /** Render a raw block's source after the person edited it. */
     | { type: 'render'; requestId: number; src: string }
     /** Open the snippet file an include expansion was read from (`mark.path`). */
@@ -469,9 +481,10 @@ export type WebviewMessage =
      * page had not seen), once per `requestId`, posted right after the `edit`
      * (with `reparse`) that carries the block. Without the block, `reason`
      * says why: the page shows no document (`no-document`), the host withdrew
-     * the request first (`cancelled`), or the page would not take the block
-     * (`refused`). The host takes it in its queue, behind that edit, and
-     * answers the extension once the edit has been applied.
+     * the request first (`cancelled`), the page would not take the block
+     * (`refused`), or a source box holds text not yet applied (`source-open`).
+     * The host takes it in its queue, behind that edit, and answers the
+     * extension once the edit has been applied.
      */
     | { type: 'blockInserted'; requestId: number; inserted: boolean; reason?: InsertRefusal }
     /** The quick fixes for a diagnostic's source `range`, in the text of `baseVersion`; answered with `quickFixes`. */
@@ -508,8 +521,26 @@ export type WebviewMessage =
     /** **Export → Export settings…**: VS Code's Settings, filtered to `markdownExtended.export`. */
     | { type: 'exportSettings' };
 
+/**
+ * What the host needs to tell, before it writes an edit carrying blocks
+ * another extension inserted, whether they stand alone (`edit.insert`,
+ * `host/insertCheck.ts`): undo reaches them only when the page's re-sync to
+ * the host's parse replaces their source block and nothing else, and only the
+ * page holds what it re-syncs from.
+ */
+export interface InsertedBlocks {
+    /** The `insertBlock` request. */
+    requestId: number;
+    /** The page's document as the edit's text was written from it, ProseMirror JSON. */
+    page: Record<string, unknown>;
+    /** The top-level index of the source block holding the inserted blocks in `page`. */
+    index: number;
+    /** The replacement on the edit's text that gives it without the insertion: offsets `[start, end)` and their text. */
+    without: { start: number; end: number; text: string };
+}
+
 /** Why the page did not insert a block (`blockInserted`). */
-export type InsertRefusal = 'no-document' | 'cancelled' | 'refused';
+export type InsertRefusal = 'no-document' | 'cancelled' | 'refused' | 'source-open';
 
 /** The format names of the export's table (`formats.ts`), which the page and the host both read. */
 export type { ExportFormatName };

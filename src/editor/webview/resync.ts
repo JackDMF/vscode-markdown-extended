@@ -1,6 +1,7 @@
-import { Mark, Node } from 'prosemirror-model';
+import { Node } from 'prosemirror-model';
 import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { PRESERVE_SOURCE_META } from '../fidelity';
+import { sharedEnds } from '../sharedEnds';
 
 /**
  * `pos` inside the top-level block at `oldFrom` in `old`, at the same place
@@ -29,22 +30,19 @@ function samePlace(old: Node, pos: number, next: Node, newFrom: number): number 
     return node.inlineContent && $pos.parentOffset <= node.content.size ? at + 1 + $pos.parentOffset : null;
 }
 
-/** Same type, marks and content — the node may still differ in its attributes. */
-function sameContent(a: Node, b: Node): boolean {
-    return a.type === b.type && Mark.sameSet(a.marks, b.marks) && a.content.eq(b.content);
-}
-
 /**
  * The transaction that turns `state.doc` into `next` — the host's parse of the
  * text document after a change made elsewhere — without rebuilding the state,
  * so prosemirror-history survives it and earlier edits stay undoable.
  *
  * It replaces only what differs. The top-level children the two documents
- * share at the start and at the end (same content, attributes aside) stay in
- * place, and only the run between them is replaced by `next`'s. A child kept in
- * place whose attributes differ — typically `src`, which the host sets on a
- * block the page had edited — has them set with `setNodeMarkup`, which keeps the
- * content positions, so a history step inside it still maps. A single
+ * share at the start and at the end (same text and structure, attributes
+ * aside at every depth: `sharedEnds`) stay in place, and only the run between
+ * them is replaced by `next`'s. A node kept in place, at any depth, whose
+ * attributes differ — `src`, which the host sets on a block the page had
+ * edited; a nested paragraph's `lineWidth`, which typing in a list item or an
+ * admonition left as it was — has them set with `setNodeMarkup`, which keeps
+ * the content positions, so a history step inside it still maps. A single
  * whole-document replace would be simpler and would lose the history: a step
  * whose position a replace deleted cannot be mapped, and undo drops it.
  *
@@ -61,16 +59,7 @@ export function resyncTransaction(state: EditorState, next: Node): Transaction {
     const doc = state.doc;
     const oldCount = doc.childCount;
     const newCount = next.childCount;
-
-    let head = 0;
-    while (head < oldCount && head < newCount && sameContent(doc.child(head), next.child(head))) {
-        head++;
-    }
-    let tail = 0;
-    while (tail < oldCount - head && tail < newCount - head
-        && sameContent(doc.child(oldCount - 1 - tail), next.child(newCount - 1 - tail))) {
-        tail++;
-    }
+    const { head, tail } = sharedEnds(doc, next);
 
     let from = 0;
     for (let i = 0; i < head; i++) {
@@ -105,8 +94,28 @@ export function resyncTransaction(state: EditorState, next: Node): Transaction {
     next.forEach((child, offset, index) => {
         const kept = index < head || index >= newCount - tail;
         if (kept && !tr.doc.child(index).eq(child)) {
-            tr.setNodeMarkup(offset, child.type, child.attrs, child.marks);
+            markupAs(tr, offset, child);
         }
     });
     return tr.setMeta('addToHistory', false).setMeta(PRESERVE_SOURCE_META, true);
+}
+
+/**
+ * The node at `pos` in `tr.doc` and every node inside it given the attributes
+ * (and marks) of `next`, which has its text and structure (`sharedEnds`): one
+ * `setNodeMarkup` per node that differs, so positions inside stay as they are.
+ */
+function markupAs(tr: Transaction, pos: number, next: Node): void {
+    const have = tr.doc.nodeAt(pos);
+    if (have === null || have.eq(next)) {
+        return;
+    }
+    if (!have.sameMarkup(next)) {
+        tr.setNodeMarkup(pos, next.type, next.attrs, next.marks);
+    }
+    next.forEach((child, offset) => {
+        if (!child.isText) {
+            markupAs(tr, pos + 1 + offset, child);
+        }
+    });
 }

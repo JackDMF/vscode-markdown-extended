@@ -5,6 +5,8 @@ import { EditorState, Transaction } from 'prosemirror-state';
 import { fidelityPlugin, parseDocument, serializeDocument } from '../../../src/editor';
 import { parsedDocumentFromJSON, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { resyncTransaction } from '../../../src/editor/webview/resync';
+import { insertBlockTransaction } from '../../../src/editor/webview/toolbar/commands';
+import { sharedEnds } from '../../../src/editor/sharedEnds';
 import { hostEngine } from './helpers';
 
 const SOURCE = [
@@ -116,5 +118,54 @@ suite('Editor webview: re-sync from the host', () => {
         });
         assert.deepStrictEqual(anchors, ['sn-anchor', 'mn-anchor']);
         assert.strictEqual(page.write(), withNotes);
+    });
+
+    /**
+     * Typing in a block nested in another — a list item, an admonition — leaves
+     * attributes the page does not keep up to date on the nested nodes (a
+     * paragraph's `lineWidth`), which only the host's parse sets again. The
+     * re-sync takes the block as kept, its text and structure the parse's, and
+     * gives every node in it the parse's attributes: the result equals the parse,
+     * and a quote inserted beside it is replaced alone, so Ctrl+Z after the parse
+     * takes out the quote and nothing else (review of the insertBlock check, H1).
+     */
+    for (const [what, file, word] of [
+        ['an admonition', 'Intro.\n\n!!! note "Title"\n    body text here\n\nLast.\n', 'body'],
+        ['a list item', 'Intro.\n\n- item one\n- item two\n\nLast.\n', 'two'],
+        ['an ordered list\'s item', 'Intro.\n\n1. first\n2. second\n\nLast.\n', 'second'],
+    ] as const) {
+        test(`typed in ${what}, a quote inserted after the first block: the re-sync to the parse equals it, and Ctrl+Z takes out the quote only`, () => {
+            const host = parseDocument(md, file);
+            const write = (doc: Node) => serializeDocument({ ...host, doc }, { defaultWrap: 90 });
+            let s = EditorState.create({ doc: host.doc, plugins: [history(), fidelityPlugin()] });
+            let at = -1;
+            s.doc.descendants((n, p) => {
+                if (at < 0 && n.isText && n.text?.includes(word)) {
+                    at = p + (n.text ?? '').indexOf(word);
+                }
+            });
+            s = s.apply(s.tr.insertText('XY', at));
+            const typed = write(s.doc);
+            const inserted = insertBlockTransaction(s.apply(closeHistory(s.tr)), '> Quote', host.eol);
+            assert.ok(inserted);
+            s = s.apply(closeHistory(s.tr)).apply(inserted.tr);
+            const written = write(s.doc);
+            const next = parseDocument(md, written).doc;
+            s = s.apply(resyncTransaction(s, next));
+            assert.ok(s.doc.eq(next), 'the page holds the parse, node for node, attributes included');
+            assert.ok(undo(s, tr => {
+                s = s.apply(tr);
+            }));
+            assert.strictEqual(write(s.doc), typed, 'one Ctrl+Z: the quote out, the typing kept');
+        });
+    }
+
+    test('two source blocks the parse joins otherwise — a comment the inserted text closes — are not kept in place: their src is what they hold', () => {
+        const host = parseDocument(md, 'Intro.\n\n<!-- a\n');
+        const page = EditorState.create({ doc: host.doc, plugins: [history(), fidelityPlugin()] });
+        const end = page.doc.content.size;
+        const inserted = page.apply(page.tr.insert(end, page.schema.nodes.raw_block.create({ src: 'x -->\n\n<div>y</div>\n', gap: null, html: '' }))).doc;
+        const next = parseDocument(md, 'Intro.\n\n<!-- a\n\nx -->\n\n<div>y</div>\n').doc;
+        assert.deepStrictEqual(sharedEnds(inserted, next), { head: 1, tail: 0 }, 'the comment\'s block differs from the parse\'s, so does the inserted one');
     });
 });

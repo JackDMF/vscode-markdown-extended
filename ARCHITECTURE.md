@@ -1519,7 +1519,7 @@ as the heading's id.
 
 The session remembers the text it believes the page holds. An `edit` is written only
 when its `baseVersion` is the last posted version and the document still holds that
-text — then as **one minimal replacement** (`host/minimalEdit.ts`: common prefix and
+text — then as **one minimal replacement** (`minimalEdit.ts`: common prefix and
 suffix, never splitting `\r\n` or a surrogate pair); otherwise the page is re-synced
 and the edit dropped. A document change that leaves the text equal to the page's is
 the page's own edit and is not posted back; any other change is re-parsed and posted.
@@ -1539,10 +1539,15 @@ error state the key stays VS Code's. A save started elsewhere (menu, auto-save) 
 waits on the edits already received, and only on those.
 
 **A new document for a page that shows one** is taken in place, not by rebuilding the
-`EditorState`: `webview/resync.ts` replaces only the run of top-level blocks that differs,
-sets the attributes of the blocks kept around it with `setNodeMarkup` (the host's `src` on
-a block the page had edited), and marks the transaction `addToHistory: false` and
-`PRESERVE_SOURCE_META`. prosemirror-history maps its steps through it, so an edit made
+`EditorState`: `webview/resync.ts` replaces only the run of top-level blocks that differs
+— by type, marks, text and structure at every depth (`sharedEnds.ts`), attributes aside
+except a nested leaf's (an image's address) and a source block's `src` —, gives every node
+of the blocks kept around it the parse's attributes with `setNodeMarkup` (the host's `src` on
+a block the page had edited; a nested paragraph's `lineWidth`, which typing in a list item or
+an admonition leaves as it was), and marks the transaction `addToHistory: false` and
+`PRESERVE_SOURCE_META`. Until 4.13.0 a nested node's stale attribute made its block differ,
+and the run replaced reached from it to whatever else changed — past an inserted block,
+whose undo it then dropped. prosemirror-history maps its steps through it, so an edit made
 before a change elsewhere — a save that trims trailing whitespace is one — stays
 undoable; a whole-document replace would have deleted every position those steps name.
 An edit still waiting in the page's 250 ms delay at that moment was computed against the
@@ -2960,7 +2965,7 @@ visualEditor: {
     onDidChangeActive: vscode.Event<{ uri: vscode.Uri; caret: vscode.Position | undefined; selection?: vscode.Selection } | undefined>;
     /** API 2: Markdown blocks inserted by the page (below, "Inserting blocks for another extension"). */
     insertBlock(uri: vscode.Uri, markdown: string, options?: { focus?: boolean }): Promise<
-        { inserted: true } | { inserted: false; reason: 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'unconfirmed' }>;
+        { inserted: true } | { inserted: false; reason: 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'source-open' | 'not-separate' | 'unconfirmed' }>;
 }
 ```
 
@@ -3033,11 +3038,23 @@ markdown, { focus })`.
   false)`), which works for an editor in a background tab too. The column is named: without it
   VS Code shows the editor in the active group, and for a custom text editor that is a second
   Visual Editor over the file there, the active text editor pushed aside (4.12.0).
-- **Page.** A source box open meanwhile is committed first, as a save commits it — its text is
-  a history step before the block's and goes in the same edit; the focus leaving it later
-  commits nothing more. Then `insertBlockTransaction` (`toolbar/commands.ts`, the sister of
-  `insertLineTransaction`) puts a source block holding the text as given — its line breaks the
-  document's, those at its end dropped (`blockSource`) — at `insertionPoint`: after the
+- **Page.** A raw block's source box holding text typed and not yet applied refuses the
+  block: `source-open`, nothing committed, nothing written, the box left open with its text
+  and the keyboard (`SourceEditor.holdsUnapplied`). The page says so under the box's block — a
+  refusal of `hint.ts`, never over the box or its Apply and Cancel, gone as every refusal goes:
+  "Block not inserted — this source has changes not applied. Apply them (Ctrl+Enter) or cancel
+  (Esc), then insert again." (Cmd+Enter on a Mac). Committed from outside, that text could
+  leave a construct open — a code fence typed but not closed — which the host's parse would
+  read the block into (the extension hearing `inserted`, undo no longer reaching it); and the
+  box, which a commit leaves open, would stand over a block the parse split, whose next
+  commit writes the split-off text a second time. The person applies or cancels the box, and
+  the caller may ask again. A box opened with nothing typed, and the properties' rows and
+  YAML (front matter ends at its closing line, and nothing goes before it), are committed
+  first, as a save commits them — their text is a history step before the block's and goes
+  in the same edit; the focus leaving a box later commits nothing more. Then
+  `insertBlockTransaction` (`toolbar/commands.ts`, the sister of `insertLineTransaction`) puts
+  a source block holding the text as given — its line breaks the document's, those at its end
+  dropped (`blockSource`) — at `insertionPoint`: after the
   top-level block the selection ends in, never before the first block or the front matter,
   `gap: null` (a blank line before). The block after it keeps its gap — the blank lines the
   file wrote before it, spaces and line ending included — so the file gains lines only; only a
@@ -3048,27 +3065,63 @@ markdown, { focus })`.
   never merged with typing just before it. After the last line of a file without a final line
   break the block is written without one, so the file still ends so, and the line before it
   gains its line break in the same step — the host's parse gives it that `src` anyway, outside
-  the history, so an undo after the parse would otherwise leave the line break behind.
+  the history, so an undo after the parse would otherwise leave the line break behind. The
+  page applies the transaction outside its history (below, "Undo after the parse").
   `archiveInsertBlock.test.ts` (gated,
   `MEP_ARCHIVE_ROOT`) inserts a Bible quote block into every file of Daniel's archive at the
   seams that matter and holds that each differs by added lines only, and that one undo gives
   the file's bytes before the host's parse and after it. The page then flushes
   with `reparse` — one edit that carries the pending typing with the block, so no keystroke is
-  lost — and posts `blockInserted { requestId, inserted, reason? }` right behind it. Typing *after* the
+  lost, and says what the host checks before it writes the block (`insert`, `InsertedBlocks`:
+  the page's document as JSON, the source block's index in it, and the replacement that gives
+  the text without the insertion) — and posts `blockInserted { requestId, inserted, reason? }`
+  right behind it. Typing *after* the
   insertion and before the host's parse arrives (a round trip, milliseconds) is dropped by that
   document, as after any reparse (Includes, a source box's commit).
+- **The host's check.** Before it writes such an edit, the host parses its text as it will
+  post it and asks what the page's re-sync to that parse will replace (`host/insertCheck.ts`,
+  `insertionStandsAlone`, on `sharedEnds` — the same shared start and end `resyncTransaction`
+  keeps). Only when that is the inserted source block and nothing else — or nothing, the
+  block read back as a source block of its kind — is the text written: then undo reaches the
+  insertion (below). Otherwise the blocks do not stand on their own in the file: a construct
+  left open before their place (a code fence, an HTML comment, a container running to the
+  file's end — also one a source box committed earlier left open) reads them into it, or one
+  they leave open reads in what follows, and the extension would hear `inserted` while undo no
+  longer reached them, the re-sync replacing a range wider than the block (review 2,
+  03.11.2026). Then the host writes the edit without them — the typing and box commits in it
+  kept —, posts `insertBlockRefused { requestId, reason }` and its parse right behind; the page
+  puts back the selection from before the insertion, does not take the keyboard and, for
+  `not-separate`, says why at the caret (a refusal of `hint.ts`): "Block not inserted — it
+  would not stand on its own here (for example, an open code fence would take it in)." The
+  extension hears `not-separate` — only once the text without them is written: an edit dropped
+  for another writer's change is `changed`, blocks or not. The page's history holds nothing of
+  the refused insertion. A check that cannot run (no engine, a page document or text that
+  cannot be read) is `error-state`: the edit is written without the blocks, the typing in it
+  kept, and the page says nothing. Only where the blocks cannot be told apart from the rest —
+  a `without` that does not fit the text, a page's mistake — is nothing written: the text
+  unchecked could be the very insertion the check is for. An
+  accepted edit is parsed once: `post` takes the check's parse. `archiveInsertBlock.test.ts`
+  holds that the check lets every insertion into the archive through.
 - **Back on the host**, `blockInserted` stops the timers as it arrives and is settled in the
-  queue behind that edit, so the promise resolves once the edit is applied — or with `changed`
+  queue behind that edit, so the promise resolves once the edit is applied — or with
+  `not-separate` when the check refused the blocks, or with `changed`
   when the edit was dropped because the file changed elsewhere at that moment. A panel closed
   after the answer came does not change that: the queue still applies the edit, and the
   extension hears `inserted`; only a request the page had not answered is `closed`. The
   host's parse of the text (every markdown-it plugin) comes back as the document the edit asked
   for, and the re-sync replaces the source block with what the text is, a quote here.
-- **Undo after the parse.** The re-sync is outside the history, but prosemirror-history maps
-  the insertion's step through it: the source block's range was replaced whole, and a step
-  map sends its start to the replacement's start and its end to the replacement's end, so the
-  undo deletes exactly the parsed blocks. `insertBlock.e2e.test.ts` holds this, byte for byte,
-  with and without typing just before, in LF and CRLF.
+- **Undo after the parse.** The page inserts the source block outside its history, since the
+  host may refuse it. Once the parse shows the blocks replacing it alone (`insertionStandsAlone`,
+  as the host checked), the page makes them one step of its history (`takeIntoHistory`): takes
+  them out outside it, the blocks on either side given back the `src` and `gap` they had
+  before the insertion, and does all of it again as a step of its own. Ctrl+Z takes that step
+  — the parsed blocks out, the file's bytes as before, no blank line left before a block that
+  stood tight and no line break after a last line that had none — and redo puts it back. A
+  refused or dropped insertion leaves nothing for Ctrl+Z. `insertBlock.e2e.test.ts` holds
+  this, byte for byte, with and without typing just before — also in a list item or an
+  admonition —, in LF and CRLF. Ctrl+Z in the round trip, before the parse shows, takes the
+  step before the insertion; into an empty file too, Ctrl+Z gives back the empty file. Where
+  typing in the round trip changed a block beside them, the blocks stay outside the history.
 - **The caret.** The page keeps the position right after the block, mapped through its own
   changes meanwhile, and once the parse shows maps it through the re-sync and puts the caret
   there (`Selection.near`, forward first — the start of the next block; after the last block,
@@ -3085,14 +3138,14 @@ markdown, { focus })`.
   word at all within `INSERT_UNCONFIRMED_MS` (30 s) — it is hung — does the host stop waiting,
   with `unconfirmed`: the block may be in the document or not, and the caller must not take it
   as not inserted. The page's other reasons: no document (`error-state`), would not take the
-  block (`refused`, also `error-state`).
-- **Known limit: an open source box with unfinished text.** The box is committed before the
-  block, as a save would commit it. If its text leaves a construct open — a code fence typed
-  but not closed — the host's parse reads the block (and what follows) as part of it: the
-  extension still hears `inserted`, and undo no longer reaches the insertion, because the
-  re-sync replaces a range wider than the block. Nothing is lost (the file holds what was typed
-  plus the block), and it needs an insert from outside in the middle of typing a fence; it is
-  accepted, not guarded (review 2, 03.11.2026).
+  block (`refused`, also `error-state`), a source box with text not applied (`source-open`);
+  the host's, blocks that would not stand alone (`not-separate`). Reasons are added within
+  API 2 (`source-open` and `not-separate` after 4.13.0); a caller reads one it does not know
+  as the blocks not written, as every reason but `unconfirmed`.
+- **Limit: typing in the round trip.** Typing in the milliseconds between the insertion and
+  the host's parse is dropped by that parse (above); where it changed a block the re-sync then
+  replaces with the inserted one, the insertion is not made a step of the history either (Ctrl+Z
+  does not take it). The check cannot see it: the host has not had that typing.
 
 ### Styles
 

@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { MinimalReplacement, minimalReplacement } from '../../../src/editor/host/minimalEdit';
+import { MinimalReplacement, minimalReplacement } from '../../../src/editor/minimalEdit';
 
 /** Apply a replacement to the text it was computed from. */
 function apply(before: string, r: MinimalReplacement | null): string {
