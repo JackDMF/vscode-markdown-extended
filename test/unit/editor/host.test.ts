@@ -2401,6 +2401,37 @@ suite('Editor host: insertBlock', () => {
         }
     });
 
+    test('a check that cannot run (no engine at that moment): error-state, the typing in the edit written without the blocks, the page told without a hint\'s reason (L-d)', async function () {
+        this.timeout(10000);
+        const file = 'Intro paragraph.\n\nLast paragraph.\n';
+        let failNext = false;
+        const real = buildEditorEngine(EXTENSION_ID, () => undefined);
+        const flaky = () => {
+            if (failNext) {
+                failNext = false;
+                return Promise.reject(new Error('engine gone'));
+            }
+            return real;
+        };
+        const s = await open(flaky, file);
+        try {
+            const md = await real;
+            const result = insertBlockIn(s.uri, QUOTE);
+            const asked = await until(() => s.requests()[0], 2000);
+            assert.ok(asked);
+            const typed = file.replace('Intro', 'ABIntro');
+            const { text, insert } = insertAsThePage(md, typed, QUOTE, 0, asked.requestId);
+            failNext = true;
+            s.webview.send({ type: 'edit', text, baseVersion: s.posted().version, reparse: true, insert });
+            s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: true });
+            assert.deepStrictEqual(await result, { inserted: false, reason: 'error-state' });
+            assert.strictEqual(s.document.getText(), typed, 'the typing is written, the block is not');
+            assert.ok(s.webview.posted.some(m => m.type === 'insertBlockRefused' && m.reason === 'error-state'));
+        } finally {
+            s.close();
+        }
+    });
+
     test('a refusal that comes after the request was given up on (unconfirmed) is not kept (L4)', async function () {
         this.timeout(10000);
         const file = 'Intro paragraph.\n\n```js\nlet a = 1;\n';

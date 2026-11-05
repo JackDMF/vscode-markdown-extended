@@ -20,7 +20,7 @@ import { FileLister } from './linkChoices';
 import { LinksAndImages } from './linksImages';
 import { fragmentHeading, fragmentLine, headingAnchors, resolveLinkTarget } from './links';
 import { minimalReplacement } from '../minimalEdit';
-import { InsertionVerdict, judgeInsertion } from './insertCheck';
+import { InsertionVerdict, judgeInsertion, textWithout } from './insertCheck';
 import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
 import { inPlaceEnv } from '../footnoteEngine';
 
@@ -1015,7 +1015,9 @@ export class VisualEditorSession implements vscode.Disposable {
                 return;
             }
             if (verdict.text === undefined) {
-                // Nothing to write: the page is shown the document as it stands, without the blocks.
+                // The blocks cannot be told apart from the rest (`without` does not fit): writing the text unchecked
+                // could be the very insertion the check is for, so nothing is written, and the page is shown the
+                // document as it stands. Only a page's mistake gets here.
                 await this.refuseInsert(insert.requestId, 'error-state');
                 await this.post();
                 return;
@@ -1091,8 +1093,9 @@ export class VisualEditorSession implements vscode.Disposable {
             const md = await this.host.engine();
             return { ...judgeInsertion(md, text, insert, this.env(), inlineEngineDefinition(md)), md };
         } catch (error) {
+            // Not checked: the blocks are not written, the typing with them is, where it can be told apart.
             this.host.log(`[WARN] Visual Editor: inserted blocks not checked: ${message(error)}`);
-            return { text: undefined, refused: 'error-state' };
+            return { text: textWithout(text, insert.without), refused: 'error-state' };
         }
     }
 

@@ -8,6 +8,20 @@ import { insertionStandsAlone } from '../sharedEnds';
 
 export { insertionStandsAlone };
 
+/**
+ * The edit's `text` without the inserted blocks (`insert.without`): what the
+ * host writes when it does not write them, the typing and box commits that
+ * went with them kept. `undefined` when `without` does not fit the text or
+ * changes nothing — then the blocks cannot be told apart from the rest.
+ */
+export function textWithout(text: string, without: InsertedBlocks['without']): string | undefined {
+    const { start, end, text: replacement } = without;
+    const valid = Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start <= end && end <= text.length
+        && typeof replacement === 'string';
+    const rest = valid ? text.slice(0, start) + replacement + text.slice(end) : text;
+    return rest === text ? undefined : rest;
+}
+
 /** What the host writes for an edit that carries inserted blocks: `text`, or why not and what instead. */
 export interface InsertionVerdict {
     /** The text to write: the edit's, or the edit's without the insertion; `undefined`: nothing. */
@@ -29,10 +43,8 @@ export interface InsertionVerdict {
  * ask the same.
  */
 export function judgeInsertion(md: MarkdownIt, text: string, insert: InsertedBlocks, env: Environment = {}, definition: InlineEngineDefinition = definitionOf(md)): InsertionVerdict {
-    const { start, end, text: replacement } = insert.without;
-    const valid = Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start <= end && end <= text.length;
-    const without = valid ? text.slice(0, start) + replacement + text.slice(end) : text;
-    if (without === text) {
+    const without = textWithout(text, insert.without);
+    if (without === undefined) {
         return { text: undefined, refused: 'error-state' };
     }
     let parsed: ParsedDocument;
