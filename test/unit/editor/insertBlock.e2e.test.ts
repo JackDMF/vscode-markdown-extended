@@ -355,31 +355,25 @@ suite('Editor insertBlock (e2e)', () => {
         assert.deepStrictEqual(await openBox(), { value: '<div>raw block</div>\n\n```js\nlet a = 1;', focused: true });
     });
 
-    test('after a code fence left open at the file\'s end, the caret in it: the block would be code — not written (not-separate), the page shows the file as it was, the caret stays, and Ctrl+Z takes nothing more', async function () {
+    test('after a code fence left open at the file\'s end, the caret in it: the block would be code — not written (not-separate), the page shows the file with the typing before it, the caret stays, and one Ctrl+Z takes that typing: the refused insertion left no step behind (L2)', async function () {
         this.timeout(20000);
         const open = 'Intro paragraph.\n\n```js\nlet a = 1;\n';
         await showDocument(open);
+        await clickText(page, 'Intro');
+        await page.keyboard.type('E');
         await clickText(page, 'let a', 3);
         const answer = await insert(QUOTE, true);
         assert.strictEqual(answer.inserted, true, 'the page put it in its edit');
-        assert.deepStrictEqual(await hostTakes(), { written: open, refused: 'not-separate' });
+        const typed = open.replace('Intro', 'EIntro');
+        assert.deepStrictEqual(await hostTakes(), { written: typed, refused: 'not-separate' });
         await delay(250);
         assert.deepStrictEqual(await page.$$eval('.ProseMirror > *', els => els.length), 2, 'the paragraph and the fence, no source block');
         assert.ok(!(await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('Römer'));
         assert.deepStrictEqual((await carets()).pop()?.position, { line: 3, character: 3 }, 'the caret where it was, in the fence');
 
-        // The page writes a fence it edited closed (`fences.ts`), as ever.
-        await page.keyboard.type('X');
-        await settle();
-        assert.ok((await lastEdit())?.text.startsWith('Intro paragraph.\n\n```js\nletX a = 1;\n'), 'typing goes where the caret is');
         await undoKey();
         await settle();
-        const undone = (await lastEdit())?.text;
-        assert.ok(undone?.startsWith('Intro paragraph.\n\n```js\nlet a = 1;\n') && !undone.includes('Römer'), JSON.stringify(undone));
-        const edits = (await (editor as EditorPage).edits()).length;
-        await undoKey();
-        await settle();
-        assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'the refused insertion leaves nothing for undo to take');
+        assert.strictEqual((await lastEdit())?.text, open, 'one Ctrl+Z: the letter typed before');
         assert.ok((await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('let a = 1;'));
     });
 
