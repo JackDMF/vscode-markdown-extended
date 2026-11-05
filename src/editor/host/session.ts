@@ -6,7 +6,7 @@ import { ErrorHandler, ErrorSeverity } from '../../services/common/errorHandler'
 import { ExportFormat, formatNamed } from '../../services/exporter/formats';
 import { escapeHtml } from '../../services/exporter/shared';
 import { inlineEngineDefinition } from '../inlineEngine';
-import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
+import { ParsedDocument, blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
 import { MappedPagePosition, SourcePosition, SourceSelection, validPosition, validRange } from '../positions';
 import { HostMessage, InsertRefusal, InsertedBlocks, WebviewMessage } from '../protocol';
 import type { InsertBlockOptions, InsertBlockRefusal, InsertBlockResult } from './activeEditor';
@@ -20,7 +20,7 @@ import { FileLister } from './linkChoices';
 import { LinksAndImages } from './linksImages';
 import { fragmentHeading, fragmentLine, headingAnchors, resolveLinkTarget } from './links';
 import { minimalReplacement } from '../minimalEdit';
-import { judgeInsertion } from './insertCheck';
+import { InsertionVerdict, judgeInsertion } from './insertCheck';
 import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
 import { inPlaceEnv } from '../footnoteEngine';
 
@@ -242,6 +242,11 @@ export class VisualEditorSession implements vscode.Disposable {
      * says only that the page put them in its edit.
      */
     private readonly refusedInserts = new Map<number, InsertBlockRefusal>();
+    /**
+     * The parse of an edit's text the insertion check made (`judge`), which
+     * `post` takes instead of parsing the same text again with the same engine.
+     */
+    private parsedAhead: { md: MarkdownIt; text: string; parsed: ParsedDocument } | undefined;
     private disposed = false;
 
     constructor(
@@ -933,7 +938,9 @@ export class VisualEditorSession implements vscode.Disposable {
             // Read before any state is set, so an engine that cannot say fails the document as a parse error does.
             inline = inlineEngineDefinition(md);
             // Its literals are judged with that definition, as the page judges them with the one posted.
-            const parsed = parseDocument(md, text, this.env(), inline);
+            const ahead = this.parsedAhead;
+            this.parsedAhead = undefined;
+            const parsed = ahead !== undefined && ahead.md === md && ahead.text === text ? ahead.parsed : parseDocument(md, text, this.env(), inline);
             json = parsedDocumentToJSON(parsed);
             this.snippetPaths = collectSnippetPaths(json.doc);
         } catch (error) {
@@ -986,10 +993,11 @@ export class VisualEditorSession implements vscode.Disposable {
      * or without it: the document on its way is parsed afresh anyway.
      *
      * With `insert`, the edit carries blocks another extension inserted: they
-     * are written only where they stand alone in the parse (`judgeInsertion`);
-     * else the text without them is, the page is told (`insertBlockRefused`)
-     * and shown the parse, which takes them out, and the extension hears
-     * `not-separate`.
+     * are written only where they stand alone in the parse (`judgeInsertion`,
+     * whose parse `post` then takes); else the text without them is, and once
+     * it is written the page is told (`insertBlockRefused`) and shown the
+     * parse, which takes them out, and the extension hears `not-separate`. An
+     * edit dropped for another writer's change is `changed`, blocks or not.
      */
     private async applyEdit(text: string, baseVersion: number, reparse = false, insert?: InsertedBlocks): Promise<void> {
         this.lastEditLanded = false;
@@ -998,24 +1006,32 @@ export class VisualEditorSession implements vscode.Disposable {
             // and the webview rebuilds from it.
             return;
         }
+        // The host's word on inserted blocks, said to the page and the extension once the edit is written.
+        let refused: InsertBlockRefusal | undefined;
         if (insert !== undefined) {
-            const written = await this.judgedText(text, insert);
+            const verdict = await this.judge(text, insert);
             // Asked again after the wait: a newer document may have been posted meanwhile, which drops the edit.
             if (this.broken || baseVersion !== this.postedVersion) {
                 return;
             }
-            if (written === undefined) {
+            if (verdict.text === undefined) {
                 // Nothing to write: the page is shown the document as it stands, without the blocks.
+                await this.refuseInsert(insert.requestId, 'error-state');
                 await this.post();
                 return;
             }
-            if (written !== text) {
-                text = written;
+            refused = verdict.refused;
+            if (refused !== undefined) {
+                text = verdict.text;
                 reparse = true;
+            } else if (verdict.parsed !== undefined && verdict.md !== undefined) {
+                this.parsedAhead = { md: verdict.md, text, parsed: verdict.parsed };
             }
         }
         const current = this.document.getText();
         if (current !== this.webviewText) {
+            // Another writer's change: the edit is dropped, blocks and all (`changed`).
+            this.parsedAhead = undefined;
             await this.post();
             return;
         }
@@ -1023,6 +1039,9 @@ export class VisualEditorSession implements vscode.Disposable {
         if (replacement === null) {
             // The document holds the page's text already.
             this.lastEditLanded = true;
+            if (refused !== undefined) {
+                await this.refuseInsert((insert as InsertedBlocks).requestId, refused);
+            }
             if (reparse) {
                 await this.post();
             }
@@ -1043,12 +1062,17 @@ export class VisualEditorSession implements vscode.Disposable {
         );
         const applied = await vscode.workspace.applyEdit(edit);
         this.lastEditLanded = applied;
+        if (applied && refused !== undefined) {
+            // Written without the blocks: now the refusal stands (without the edit written, it is `changed`).
+            await this.refuseInsert((insert as InsertedBlocks).requestId, refused);
+        }
         if (!applied || this.document.getText() !== text || reparse) {
             // Refused, or VS Code normalized the inserted line endings: show the
             // person what the document now holds. Or the page asked to see it.
             await this.post();
             return;
         }
+        this.parsedAhead = undefined;
         // The lenses of the text the page now holds: a provider's lines moved with the edit.
         this.lenses.schedule();
         // And its code actions: those of a block the edit did not touch are
@@ -1057,34 +1081,32 @@ export class VisualEditorSession implements vscode.Disposable {
     }
 
     /**
-     * The text to write for an edit carrying inserted blocks: the edit's, or
-     * — the blocks not standing alone in the host's parse, or that not told —
-     * the edit's without them, the refusal remembered for the page's
-     * `blockInserted` and said to the page before its document; `undefined`
-     * when nothing can be written.
+     * The host's word on an edit carrying inserted blocks (`judgeInsertion`):
+     * the text to write — the edit's, or the edit's without the blocks — and
+     * why not the edit's; `text: undefined` when nothing can be written. With
+     * the edit's text, its parse and the engine that made it.
      */
-    private async judgedText(text: string, insert: InsertedBlocks): Promise<string | undefined> {
-        let md: MarkdownIt;
+    private async judge(text: string, insert: InsertedBlocks): Promise<InsertionVerdict & { md?: MarkdownIt }> {
         try {
-            md = await this.host.engine();
+            const md = await this.host.engine();
+            return { ...judgeInsertion(md, text, insert, this.env(), inlineEngineDefinition(md)), md };
         } catch (error) {
             this.host.log(`[WARN] Visual Editor: inserted blocks not checked: ${message(error)}`);
-            this.refusedInserts.set(insert.requestId, 'error-state');
-            await this.postQuietly({ type: 'insertBlockRefused', requestId: insert.requestId });
-            return undefined;
+            return { text: undefined, refused: 'error-state' };
         }
-        let verdict;
-        try {
-            verdict = judgeInsertion(md, text, insert, this.env(), inlineEngineDefinition(md));
-        } catch (error) {
-            this.host.log(`[WARN] Visual Editor: inserted blocks not checked: ${message(error)}`);
-            verdict = { text: undefined, refused: 'error-state' as const };
+    }
+
+    /**
+     * The blocks `insertBlock` `requestId` inserted were not written, for
+     * `reason`: remembered for the page's `blockInserted` — unless the request
+     * was settled already (`unconfirmed`) — and said to the page, before the
+     * document it is shown next, so it leaves its caret where it was.
+     */
+    private async refuseInsert(requestId: number, reason: InsertBlockRefusal): Promise<void> {
+        if (this.pendingInserts.has(requestId)) {
+            this.refusedInserts.set(requestId, reason);
         }
-        if (verdict.refused !== undefined) {
-            this.refusedInserts.set(insert.requestId, verdict.refused);
-            await this.postQuietly({ type: 'insertBlockRefused', requestId: insert.requestId });
-        }
-        return verdict.text;
+        await this.postQuietly({ type: 'insertBlockRefused', requestId });
     }
 
     /**

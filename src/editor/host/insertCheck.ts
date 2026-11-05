@@ -1,7 +1,7 @@
 import { Node } from 'prosemirror-model';
 import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { InlineEngineDefinition, definitionOf } from '../inlineEngine';
-import { parseDocument } from '../parse';
+import { ParsedDocument, parseDocument } from '../parse';
 import type { InsertedBlocks } from '../protocol';
 import { editorSchema } from '../schema';
 import { insertionStandsAlone } from '../sharedEnds';
@@ -14,6 +14,8 @@ export interface InsertionVerdict {
     text: string | undefined;
     /** Why the blocks are not written: `not-separate` (they do not stand alone), `error-state` (cannot be told). */
     refused?: 'not-separate' | 'error-state';
+    /** The parse of the edit's text, when that is the text to write: the host need not parse it again to post it. */
+    parsed?: ParsedDocument;
 }
 
 /**
@@ -33,11 +35,13 @@ export function judgeInsertion(md: MarkdownIt, text: string, insert: InsertedBlo
     if (without === text) {
         return { text: undefined, refused: 'error-state' };
     }
+    let parsed: ParsedDocument;
     let alone: boolean;
     try {
-        alone = insertionStandsAlone(Node.fromJSON(editorSchema, insert.page), insert.index, parseDocument(md, text, env, definition).doc);
+        parsed = parseDocument(md, text, env, definition);
+        alone = insertionStandsAlone(Node.fromJSON(editorSchema, insert.page), insert.index, parsed.doc);
     } catch {
         return { text: without, refused: 'error-state' };
     }
-    return alone ? { text } : { text: without, refused: 'not-separate' };
+    return alone ? { text, parsed } : { text: without, refused: 'not-separate' };
 }
