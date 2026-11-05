@@ -69,4 +69,28 @@ suite('Editor host: inserted blocks stand alone in the host\'s parse, or are not
         assert.strictEqual(insertionStandsAlone(page, page.childCount, parsed), false);
         assert.strictEqual(insertionStandsAlone(page, 0, parsed), false, 'the run replaced is the quote\'s, not the first block\'s');
     });
+
+    test('typing in an admonition or a list item before the insertion: the quote elsewhere still stands alone (H1)', () => {
+        for (const [file, word] of [
+            ['Intro.\n\n!!! note "Title"\n    body text here\n\nLast.\n', 'body'],
+            ['Intro.\n\n- item one\n- item two\n\nLast.\n', 'two'],
+        ] as const) {
+            const { text, insert } = insertAsThePage(md, file, QUOTE, 1, 1, state => {
+                let at = -1;
+                state.doc.descendants((n, p) => {
+                    if (at < 0 && n.isText && n.text?.includes(word)) {
+                        at = p + (n.text ?? '').indexOf(word);
+                    }
+                });
+                return state.apply(state.tr.insertText('XY', at));
+            });
+            assert.deepStrictEqual(judgeInsertion(md, text, insert), { text }, file);
+        }
+    });
+
+    test('inserted text that closes a comment left open before it is not taken as standing alone: its source block and the comment\'s are not the parse\'s (L1)', () => {
+        const file = 'Intro.\n\n<!-- a\n';
+        const { text, insert } = inserted(file, 'x -->\n\n<div>y</div>', 1);
+        assert.deepStrictEqual(judgeInsertion(md, text, insert), { text: file, refused: 'not-separate' });
+    });
 });

@@ -383,6 +383,29 @@ suite('Editor insertBlock (e2e)', () => {
         assert.ok((await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('let a = 1;'));
     });
 
+    for (const [what, file, word] of [
+        ['an admonition', 'Intro paragraph.\n\n!!! note "Title"\n    body text here\n\nLast paragraph.\n', 'body'],
+        ['a list item', 'Intro paragraph.\n\n- item one\n- item two\n\nLast paragraph.\n', 'two'],
+    ] as const) {
+        test(`typed in ${what}, then a block inserted after the first paragraph: inserted, and Ctrl+Z after the host's parse takes out the quote only (H1)`, async function () {
+            this.timeout(20000);
+            await showDocument(file);
+            await clickText(page, word);
+            await page.keyboard.type('XY');
+            await settle();
+            const typed = (await lastEdit())?.text;
+            assert.strictEqual(typed, file.replace(word, `XY${word}`));
+            await clickText(page, 'Intro', 3);
+            const answer = await insert(QUOTE);
+            assert.strictEqual(answer.inserted, true);
+            assert.strictEqual(await hostReparses(), (typed as string).replace('Intro paragraph.\n', `Intro paragraph.\n\n${QUOTE}\n`));
+            await page.waitForSelector('.ProseMirror > blockquote');
+            await undoKey();
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, typed, 'Ctrl+Z: the quote out, the typing kept');
+        });
+    }
+
     test('Markdown that leaves a fence open itself would take the paragraph after it in: not written (not-separate); two letters typed just before are', async function () {
         this.timeout(20000);
         await clickText(page, 'Second');
