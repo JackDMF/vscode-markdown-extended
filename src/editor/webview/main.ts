@@ -552,12 +552,11 @@ const answeredInserts = new Set<number>();
  * behind that edit. The edit says where the blocks are and what the text is
  * without them (`InsertedBlocks`): the host writes them only where they stand
  * alone in its parse, else the text without them (`insertBlockRefused`).
- * Answered without the block when the page shows no
- * document, a raw block's source box holds text not yet applied
- * (`source-open`: nothing is committed, the box stays as it is), or the block
- * was not taken; a request the host withdrew already is not written and not
- * answered again. The caret is put after the blocks once the host's parse
- * shows them (`showDocument`).
+ * Answered without the block when the page shows no document, a raw block's
+ * source box holds text not yet applied (`source-open`: nothing is
+ * committed, the box stays as it is), or the block was not taken; a request
+ * the host withdrew already is not written and not answered again. The caret
+ * is put after the blocks once the host's parse shows them (`showDocument`).
  */
 function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
     if (answeredInserts.has(msg.requestId)) {

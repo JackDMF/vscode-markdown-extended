@@ -3036,8 +3036,9 @@ markdown, { focus })`.
   YAML (front matter ends at its closing line, and nothing goes before it), are committed
   first, as a save commits them — their text is a history step before the block's and goes
   in the same edit; the focus leaving a box later commits nothing more. Then
-  `insertBlockTransaction` (`toolbar/commands.ts`, the sister of `insertLineTransaction`) puts a source block holding the text as given — its line breaks the
-  document's, those at its end dropped (`blockSource`) — at `insertionPoint`: after the
+  `insertBlockTransaction` (`toolbar/commands.ts`, the sister of `insertLineTransaction`) puts
+  a source block holding the text as given — its line breaks the document's, those at its end
+  dropped (`blockSource`) — at `insertionPoint`: after the
   top-level block the selection ends in, never before the first block or the front matter,
   `gap: null` (a blank line before). The block after it keeps its gap — the blank lines the
   file wrote before it, spaces and line ending included — so the file gains lines only; only a
