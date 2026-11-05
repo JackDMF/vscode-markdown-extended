@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
+import { judgeInsertion } from '../../../src/editor/host/insertCheck';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
@@ -50,12 +51,31 @@ suite('Editor insertBlock (e2e)', () => {
         return (await posted()).find((m): m is BlockInserted => m.type === 'blockInserted' && m.requestId === requestId) as BlockInserted;
     };
 
-    /** The host's half after an inserting edit: it applies it and posts its parse (`applyEdit` with `reparse`). */
-    const hostReparses = async (): Promise<string> => {
+    /**
+     * The host's half after an inserting edit, as `applyEdit` plays it: the
+     * blocks judged (`judgeInsertion`), the text written — the edit's, or the
+     * edit's without them, the page told first (`insertBlockRefused`) — and its
+     * parse posted.
+     */
+    const hostTakes = async (): Promise<{ written: string | undefined; refused: string | undefined }> => {
         const edit = await lastEdit();
         assert.ok(edit?.reparse, 'the insertion asks for a re-parse');
-        await showDocument(edit.text);
-        return edit.text;
+        assert.ok(edit.insert, 'and says where the blocks are');
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const verdict = judgeInsertion(md, edit.text, edit.insert);
+        if (verdict.refused !== undefined) {
+            await (editor as EditorPage).send({ type: 'insertBlockRefused', requestId: edit.insert.requestId });
+        }
+        assert.ok(verdict.text !== undefined, 'something to write');
+        await showDocument(verdict.text);
+        return { written: verdict.text, refused: verdict.refused };
+    };
+
+    /** The host's half after an inserting edit whose blocks stand alone: the edit applied, its parse posted. */
+    const hostReparses = async (): Promise<string> => {
+        const { written, refused } = await hostTakes();
+        assert.strictEqual(refused, undefined, 'the blocks stand alone in the host\'s parse');
+        return written as string;
     };
 
     const undoKey = async () => {
@@ -333,6 +353,48 @@ suite('Editor insertBlock (e2e)', () => {
         await settle();
         assert.strictEqual((await (editor as EditorPage).edits()).length, 0, 'nothing written');
         assert.deepStrictEqual(await openBox(), { value: '<div>raw block</div>\n\n```js\nlet a = 1;', focused: true });
+    });
+
+    test('after a code fence left open at the file\'s end, the caret in it: the block would be code — not written (not-separate), the page shows the file as it was, the caret stays, and Ctrl+Z takes nothing more', async function () {
+        this.timeout(20000);
+        const open = 'Intro paragraph.\n\n```js\nlet a = 1;\n';
+        await showDocument(open);
+        await clickText(page, 'let a', 3);
+        const answer = await insert(QUOTE, true);
+        assert.strictEqual(answer.inserted, true, 'the page put it in its edit');
+        assert.deepStrictEqual(await hostTakes(), { written: open, refused: 'not-separate' });
+        await delay(250);
+        assert.deepStrictEqual(await page.$$eval('.ProseMirror > *', els => els.length), 2, 'the paragraph and the fence, no source block');
+        assert.ok(!(await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('Römer'));
+        assert.deepStrictEqual((await carets()).pop()?.position, { line: 3, character: 3 }, 'the caret where it was, in the fence');
+
+        // The page writes a fence it edited closed (`fences.ts`), as ever.
+        await page.keyboard.type('X');
+        await settle();
+        assert.ok((await lastEdit())?.text.startsWith('Intro paragraph.\n\n```js\nletX a = 1;\n'), 'typing goes where the caret is');
+        await undoKey();
+        await settle();
+        const undone = (await lastEdit())?.text;
+        assert.ok(undone?.startsWith('Intro paragraph.\n\n```js\nlet a = 1;\n') && !undone.includes('Römer'), JSON.stringify(undone));
+        const edits = (await (editor as EditorPage).edits()).length;
+        await undoKey();
+        await settle();
+        assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'the refused insertion leaves nothing for undo to take');
+        assert.ok((await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('let a = 1;'));
+    });
+
+    test('Markdown that leaves a fence open itself would take the paragraph after it in: not written (not-separate); two letters typed just before are', async function () {
+        this.timeout(20000);
+        await clickText(page, 'Second');
+        await page.keyboard.press('Home');
+        await page.keyboard.type('AB');
+        const answer = await insert('```\nnot closed');
+        assert.strictEqual(answer.inserted, true);
+        const typed = SOURCE.replace('Second', 'ABSecond');
+        assert.deepStrictEqual(await hostTakes(), { written: typed, refused: 'not-separate' });
+        await delay(250);
+        assert.deepStrictEqual(await page.$$eval('.ProseMirror > *', els => els.map(el => el.tagName)), ['P', 'P', 'P'], 'the three paragraphs, nothing else');
+        assert.strictEqual(await page.$eval('.ProseMirror', el => (el.textContent ?? '').includes('ABSecond')), true);
     });
 
     test('Cmd+Z sent with the browser\'s own Undo command (macOS) is still the page\'s history: the block goes, nothing else', async function () {

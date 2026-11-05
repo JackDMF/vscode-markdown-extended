@@ -2952,7 +2952,7 @@ visualEditor: {
     onDidChangeActive: vscode.Event<{ uri: vscode.Uri; caret: vscode.Position | undefined; selection?: vscode.Selection } | undefined>;
     /** API 2: Markdown blocks inserted by the page (below, "Inserting blocks for another extension"). */
     insertBlock(uri: vscode.Uri, markdown: string, options?: { focus?: boolean }): Promise<
-        { inserted: true } | { inserted: false; reason: 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'source-open' | 'unconfirmed' }>;
+        { inserted: true } | { inserted: false; reason: 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'source-open' | 'not-separate' | 'unconfirmed' }>;
 }
 ```
 
@@ -3035,8 +3035,8 @@ markdown, { focus })`.
   the caller may ask again. A box opened with nothing typed, and the properties' rows and
   YAML (front matter ends at its closing line, and nothing goes before it), are committed
   first, as a save commits them — their text is a history step before the block's and goes
-  in the same edit; the focus leaving a box later commits nothing more. Then `insertBlockTransaction` (`toolbar/commands.ts`, the sister of
-  `insertLineTransaction`) puts a source block holding the text as given — its line breaks the
+  in the same edit; the focus leaving a box later commits nothing more. Then
+  `insertBlockTransaction` (`toolbar/commands.ts`, the sister of `insertLineTransaction`) puts a source block holding the text as given — its line breaks the
   document's, those at its end dropped (`blockSource`) — at `insertionPoint`: after the
   top-level block the selection ends in, never before the first block or the front matter,
   `gap: null` (a blank line before). The block after it keeps its gap — the blank lines the
@@ -3054,11 +3054,33 @@ markdown, { focus })`.
   seams that matter and holds that each differs by added lines only, and that one undo gives
   the file's bytes before the host's parse and after it. The page then flushes
   with `reparse` — one edit that carries the pending typing with the block, so no keystroke is
-  lost — and posts `blockInserted { requestId, inserted, reason? }` right behind it. Typing *after* the
+  lost, and says what the host checks before it writes the block (`insert`, `InsertedBlocks`:
+  the page's document as JSON, the source block's index in it, and the replacement that gives
+  the text without the insertion) — and posts `blockInserted { requestId, inserted, reason? }`
+  right behind it. Typing *after* the
   insertion and before the host's parse arrives (a round trip, milliseconds) is dropped by that
   document, as after any reparse (Includes, a source box's commit).
+- **The host's check.** Before it writes such an edit, the host parses its text as it will
+  post it and asks what the page's re-sync to that parse will replace (`host/insertCheck.ts`,
+  `insertionStandsAlone`, on `sharedEnds` — the same shared start and end `resyncTransaction`
+  keeps). Only when that is the inserted source block and nothing else — or nothing, the
+  block read back as a source block of its kind — is the text written: then undo reaches the
+  insertion (below). Otherwise the blocks do not stand on their own in the file: a construct
+  left open before their place (a code fence, an HTML comment, a container running to the
+  file's end — also one a source box committed earlier left open) reads them into it, or one
+  they leave open reads in what follows, and the extension would hear `inserted` while undo no
+  longer reached them, the re-sync replacing a range wider than the block (review 2,
+  03.11.2026). Then the host writes the edit without them — the typing and box commits in it
+  kept —, posts `insertBlockRefused { requestId }` and its parse right behind; the page puts
+  back the selection from before the insertion and does not take the keyboard, and the
+  extension hears `not-separate`. The page's history keeps the insertion's step, mapped to
+  nothing: one Ctrl+Z there changes nothing. A page document or text that cannot be read is
+  `error-state`, the edit written without the blocks, or — when not even that can be told —
+  not at all. `archiveInsertBlock.test.ts` holds that the check lets every insertion into the
+  archive through.
 - **Back on the host**, `blockInserted` stops the timers as it arrives and is settled in the
-  queue behind that edit, so the promise resolves once the edit is applied — or with `changed`
+  queue behind that edit, so the promise resolves once the edit is applied — or with
+  `not-separate` when the check refused the blocks, or with `changed`
   when the edit was dropped because the file changed elsewhere at that moment. A panel closed
   after the answer came does not change that: the queue still applies the edit, and the
   extension hears `inserted`; only a request the page had not answered is `closed`. The
@@ -3085,15 +3107,14 @@ markdown, { focus })`.
   word at all within `INSERT_UNCONFIRMED_MS` (30 s) — it is hung — does the host stop waiting,
   with `unconfirmed`: the block may be in the document or not, and the caller must not take it
   as not inserted. The page's other reasons: no document (`error-state`), would not take the
-  block (`refused`, also `error-state`), a source box with text not applied (`source-open`).
-  Reasons are added within API 2 (`source-open` after 4.13.0); a caller reads one it does not
-  know as nothing written, as every reason but `unconfirmed`.
-- **Known limit: an unclosed construct in the file.** A construct left open in the file
-  itself — a code fence, an HTML comment, a container running to the file's end, before the
-  block's place — reads the block into it in the host's parse: the extension still hears
-  `inserted`, and undo no longer reaches the insertion, because the re-sync replaces a range
-  wider than the block. Nothing is lost. The source box's share of it (review 2, 03.11.2026)
-  is refused since (`source-open`, above).
+  block (`refused`, also `error-state`), a source box with text not applied (`source-open`);
+  the host's, blocks that would not stand alone (`not-separate`). Reasons are added within
+  API 2 (`source-open` and `not-separate` after 4.13.0); a caller reads one it does not know
+  as nothing written, as every reason but `unconfirmed`.
+- **Limit: typing in the round trip.** Typing in the milliseconds between the insertion and
+  the host's parse is dropped by that parse (above); where it changed a block the re-sync then
+  replaces with the inserted one, undo no longer reaches the insertion either. The check
+  cannot see it: the host has not had that typing.
 
 ### Styles
 

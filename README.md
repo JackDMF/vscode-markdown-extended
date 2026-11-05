@@ -161,12 +161,16 @@ exports `visualEditor`:
   editor comes to the front; requests to one editor are taken one after the other. It
   resolves with `{ inserted: true }` once the file holds the blocks, or with
   `{ inserted: false, reason }`. With `no-editor`, `error-state`, `empty`, `timeout`, `closed`
-  or `changed` nothing was written. With `source-open` (added after 4.13.0) nothing was
-  written either: an **Edit source** box in the editor holds text typed and not yet applied,
-  which stays as it is — ask the person to apply (Ctrl+Enter, Cmd+Enter on a Mac) or cancel it, then insert again.
-  With `unconfirmed` — the editor gave no answer at all within 30 s — **it is not known**: the
-  blocks may be in the file. Do not insert them a second time elsewhere; say so and let the
-  person look. More reasons may come within API 2: take one you do not know as nothing written.
+  or `changed` nothing was written. Two reasons added after 4.13.0 mean the same:
+  `source-open` — an **Edit source** box in the editor holds text typed and not yet applied,
+  which stays as it is: ask the person to apply (Ctrl+Enter, Cmd+Enter on a Mac) or cancel it,
+  then insert again; `not-separate` — in the file the blocks would not stand on their own (a
+  code fence or HTML comment left open before the caret's block would take them in, or your
+  Markdown leaves one open that would take in what follows), so they were not written, typing
+  that went with them was. With `unconfirmed` — the editor gave no answer at all within 30 s —
+  **it is not known**: the blocks may be in the file. Do not insert them a second time
+  elsewhere; say so and let the person look. More reasons may come within API 2: take one you
+  do not know as nothing written.
 
 `visualEditor.version` is 2 from 4.12.0 and absent before; test for the member you call
 (`typeof api.insertBlock === 'function'`). ARCHITECTURE.md, *The active editor and its caret*

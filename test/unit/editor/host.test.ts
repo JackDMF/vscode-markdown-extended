@@ -23,6 +23,7 @@ import { createEditorEngine } from '../../../src/editor/engine';
 import { blockLineRanges, parseDocument } from '../../../src/editor/parse';
 import { plugins } from '../../../src/plugin/plugins';
 import { entriesDocument } from './footnoteSample';
+import { insertAsThePage } from './insertAsPage';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { ActiveVisualEditor, ActiveVisualEditorTracker, InsertBlockResult, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
 
@@ -2131,9 +2132,9 @@ suite('Editor host: insertBlock', () => {
     const UNCONFIRMED = 1500;
     type CancelMessage = Extract<HostMessage, { type: 'insertBlockCancel' }>;
 
-    /** A session over a fresh copy of SOURCE, its first document posted; `reveals` counts the panel's reveals. */
-    async function open(engine: () => Promise<MarkdownIt> = () => buildEditorEngine(EXTENSION_ID, () => undefined)) {
-        const uri = tempMarkdown(SOURCE);
+    /** A session over a fresh copy of `text` (SOURCE), its first document posted; `reveals` counts the panel's reveals. */
+    async function open(engine: () => Promise<MarkdownIt> = () => buildEditorEngine(EXTENSION_ID, () => undefined), text = SOURCE) {
+        const uri = tempMarkdown(text);
         const document = await vscode.workspace.openTextDocument(uri);
         const engineChanged = new vscode.EventEmitter<void>();
         const webview = new FakeWebview();
@@ -2288,6 +2289,54 @@ suite('Editor host: insertBlock', () => {
             s.webview.send({ type: 'blockInserted', requestId: second.requestId, inserted: true });
             assert.deepStrictEqual(await dropped, { inserted: false, reason: 'changed' });
             assert.ok(!s.document.getText().includes(QUOTE), 'the block was not written over the other writer\'s change');
+        } finally {
+            s.close();
+        }
+    });
+
+    test('blocks the page inserted after a code fence left open, which the parse would read as code, are not written: not-separate, the typing in the same edit is, and the page hears of it before the parse', async function () {
+        this.timeout(10000);
+        const file = 'Intro paragraph.\n\n```js\nlet a = 1;\n';
+        const s = await open(undefined, file);
+        try {
+            const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+            const result = insertBlockIn(s.uri, QUOTE);
+            const asked = await until(() => s.requests()[0], 2000);
+            assert.ok(asked);
+            // Two letters typed in the page's delay, and the block after the fence: one edit.
+            const typed = file.replace('Intro', 'ABIntro');
+            const { text, insert } = insertAsThePage(md, typed, QUOTE, 1, asked.requestId);
+            const documents = s.webview.documents().length;
+            s.webview.send({ type: 'edit', text, baseVersion: s.posted().version, reparse: true, insert });
+            s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: true });
+            assert.deepStrictEqual(await result, { inserted: false, reason: 'not-separate' });
+            assert.strictEqual(s.document.getText(), typed, 'the typing is written, the block is not');
+            const types = s.webview.posted.map(m => m.type);
+            const refused = types.lastIndexOf('insertBlockRefused');
+            assert.ok(refused >= 0 && refused < types.lastIndexOf('document'), `the page is told before the parse: ${JSON.stringify(types)}`);
+            assert.deepStrictEqual(s.webview.posted[refused], { type: 'insertBlockRefused', requestId: asked.requestId });
+            assert.strictEqual(s.webview.documents().length, documents + 1, 'and shown the parse of what was written');
+            assert.strictEqual(s.posted().version, s.document.version);
+        } finally {
+            s.close();
+        }
+    });
+
+    test('blocks that stand alone in the parse are written as the page sent them: inserted', async function () {
+        this.timeout(10000);
+        const file = 'Intro paragraph.\n\nLast paragraph.\n';
+        const s = await open(undefined, file);
+        try {
+            const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+            const result = insertBlockIn(s.uri, QUOTE);
+            const asked = await until(() => s.requests()[0], 2000);
+            assert.ok(asked);
+            const { text, insert } = insertAsThePage(md, file, QUOTE, 0, asked.requestId);
+            s.webview.send({ type: 'edit', text, baseVersion: s.posted().version, reparse: true, insert });
+            s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: true });
+            assert.deepStrictEqual(await result, { inserted: true });
+            assert.strictEqual(s.document.getText(), `Intro paragraph.\n\n${QUOTE}\n\nLast paragraph.\n`);
+            assert.ok(!s.webview.posted.some(m => m.type === 'insertBlockRefused'));
         } finally {
             s.close();
         }

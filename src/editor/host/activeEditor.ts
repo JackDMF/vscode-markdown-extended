@@ -64,17 +64,22 @@ export type InsertBlockResult =
  * (`closed`); the file changed elsewhere as the page's edit arrived, which was
  * dropped for it (`changed`); a source box (**Edit source**) holds text typed
  * and not yet applied, which is left as it is — the person applies or
- * cancels it, and the caller may ask again (`source-open`, added after 4.13.0).
+ * cancels it, and the caller may ask again (`source-open`); the blocks would
+ * not stand on their own in the file — a construct left open before their
+ * place (a code fence, an HTML comment) would take them in, or one they leave
+ * open would take in what follows — so the host wrote the edit without them,
+ * typing that went with them kept (`not-separate`). Both were added after
+ * 4.13.0.
  *
  * `unconfirmed` is the exception: the page gave no word at all within 30 s
  * (it is hung), and the blocks **may be in the document or not**. A caller
  * must not take it as "not inserted" — not insert the blocks a second time
  * elsewhere, but say that it is unknown and let the person look.
  *
- * Reasons may be added within API 2, as `source-open` was: a caller takes one
+ * Reasons may be added within API 2, as these two were: a caller takes one
  * it does not know as every reason but `unconfirmed` — nothing was written.
  */
-export type InsertBlockRefusal = 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'source-open' | 'unconfirmed';
+export type InsertBlockRefusal = 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'source-open' | 'not-separate' | 'unconfirmed';
 
 export interface InsertBlockOptions {
     /** Bring the Visual Editor to the front, the keyboard in its page. */
@@ -96,8 +101,9 @@ export interface VisualEditorApi {
      * written as given — line endings turned into the document's, line breaks
      * at its end dropped — a blank line before it, as one step of the page's
      * history (Ctrl+Z removes it), in the same edit as any typing still in the
-     * page's delay, and parsed by the host with every markdown-it plugin.
-     * Afterwards the caret is right after the inserted blocks and they are
+     * page's delay, and parsed by the host with every markdown-it plugin —
+     * written only where that parse reads them as blocks of their own, so
+     * Ctrl+Z reaches them (else `not-separate`). Afterwards the caret is right after the inserted blocks and they are
      * scrolled into view. With `focus`, the panel is revealed and the page
      * takes the keyboard. Works on a Visual Editor in a background tab too.
      * Requests to one editor are taken one after the other. Resolves once the

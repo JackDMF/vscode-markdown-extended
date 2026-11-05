@@ -14,12 +14,13 @@
  */
 import { Node } from 'prosemirror-model';
 import { closeHistory, redo, undo } from 'prosemirror-history';
-import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
+import { EditorState, NodeSelection, Selection, SelectionBookmark, TextSelection, Transaction } from 'prosemirror-state';
 import type { Mappable } from 'prosemirror-transform';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap, selectionOf } from '../positions';
-import type { AcceptOnEnter, CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import type { AcceptOnEnter, CodeActionItem, ExportFormatName, HostMessage, InsertRefusal, InsertedBlocks, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import { minimalReplacement } from '../minimalEdit';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
@@ -153,9 +154,11 @@ const documentKey = mount.dataset.documentUri ?? '';
  * a save, always: the host saves once it has applied the edit, so the file on
  * disk holds the last keystroke (see `onSaveKeydown`). With `reparse` the host
  * posts the document back parsed afresh: the toolbar wrote a construct as
- * source, which only the host can classify and render.
+ * source, which only the host can classify and render. With `insert` (and
+ * `reparse`), the edit carries another extension's blocks, which the host
+ * checks before it writes them (`insertBlock`).
  */
-function flush(save = false, reparse = false): void {
+function flush(save = false, reparse = false, insert?: InsertedBlocks): void {
     if (editTimer !== undefined) {
         clearTimeout(editTimer);
         editTimer = undefined;
@@ -175,6 +178,7 @@ function flush(save = false, reparse = false): void {
             baseVersion: current.version,
             ...(save ? { save: true as const } : {}),
             ...(reparse ? { reparse: true as const } : {}),
+            ...(insert ? { insert } : {}),
         });
     }
     // Behind the edit, so the host looks the blocks up in this text.
@@ -518,11 +522,18 @@ function applyInclude(requestId: number, insert: string | undefined): void {
 }
 
 /**
- * A block another extension inserted (`insertBlock`) whose parse the host has
- * not shown yet: the position right after it, mapped through every change the
- * page makes meanwhile, and whether the page takes the keyboard once it shows.
+ * A block another extension inserted (`insertBlock` `requestId`) whose parse
+ * the host has not shown yet: the position right after it and the selection
+ * before the insertion, mapped through every change the page makes meanwhile,
+ * and whether the page takes the keyboard once it shows.
  */
-let insertedBlock: { end: number; focus: boolean } | undefined;
+let insertedBlock: { requestId: number; end: number; selectionBefore: SelectionBookmark; focus: boolean } | undefined;
+
+/**
+ * The selection from before blocks the host refused (`insertBlockRefused`),
+ * put back once its parse without them is shown: the caret stays where it was.
+ */
+let selectionBeforeRefused: SelectionBookmark | undefined;
 
 /**
  * The `insertBlock` requests this page has answered, or that the host withdrew
@@ -538,7 +549,10 @@ const answeredInserts = new Set<number>();
  * (`insertBlockTransaction`, one history step) and sent at once with
  * `reparse` — in one edit with whatever typing still waits in the delay, so
  * no keystroke is lost to it — then `blockInserted`, which the host takes
- * behind that edit. Answered without the block when the page shows no
+ * behind that edit. The edit says where the blocks are and what the text is
+ * without them (`InsertedBlocks`): the host writes them only where they stand
+ * alone in its parse, else the text without them (`insertBlockRefused`).
+ * Answered without the block when the page shows no
  * document, a raw block's source box holds text not yet applied
  * (`source-open`: nothing is committed, the box stays as it is), or the block
  * was not taken; a request the host withdrew already is not written and not
@@ -565,18 +579,41 @@ function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
     // focus leaving it would commit it after the block.
     commitForSending();
     const before = view.state.doc;
+    const selectionBefore = view.state.selection.getBookmark();
+    // The text without the blocks, as the edit below would carry it: what the host writes should they not stand alone.
+    const withoutBlocks = serialize(before);
     const inserted = insertBlockTransaction(view.state, msg.src, current.eol);
     if (inserted !== null) {
         view.dispatch(inserted.tr);
     }
-    if (inserted === null || view.state.doc === before) {
+    const withBlocks = serialize(view.state.doc);
+    const without = minimalReplacement(withBlocks, withoutBlocks);
+    if (inserted === null || view.state.doc === before || without === null) {
         flush();
         refuse('refused');
         return;
     }
-    insertedBlock = { end: inserted.end, focus: msg.focus };
-    flush(false, true);
+    insertedBlock = { requestId: msg.requestId, end: inserted.end, selectionBefore: selectionBefore.map(inserted.tr.mapping), focus: msg.focus };
+    flush(false, true, {
+        requestId: msg.requestId,
+        page: view.state.doc.toJSON() as Record<string, unknown>,
+        index: view.state.doc.resolve(inserted.pos).index(0),
+        without,
+    });
     post({ type: 'blockInserted', requestId: msg.requestId, inserted: true });
+}
+
+/**
+ * The host did not write the blocks `insertBlock` `requestId` inserted: they
+ * do not stand alone in its parse. Its parse of the text without them comes
+ * right behind and takes the source block out; the selection from before the
+ * insertion is put back then, and the page does not take the keyboard.
+ */
+function insertRefused(requestId: number): void {
+    if (insertedBlock?.requestId === requestId) {
+        selectionBeforeRefused = insertedBlock.selectionBefore;
+        insertedBlock = undefined;
+    }
 }
 
 /**
@@ -984,7 +1021,9 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
     if (tr.docChanged) {
         if (insertedBlock !== undefined) {
             insertedBlock.end = tr.mapping.map(insertedBlock.end, -1);
+            insertedBlock.selectionBefore = insertedBlock.selectionBefore.map(tr.mapping);
         }
+        selectionBeforeRefused = selectionBeforeRefused?.map(tr.mapping);
         scheduleFlush();
     }
     if (tr.docChanged || tr.selectionSet) {
@@ -1052,6 +1091,12 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
             const { end, focus } = insertedBlock;
             insertedBlock = undefined;
             placeAfterInserted(shown, resync.mapping.map(end, 1), focus);
+        }
+        if (selectionBeforeRefused !== undefined) {
+            // The host's parse without blocks it refused: the selection from before them, not one the re-sync mapped.
+            const back = selectionBeforeRefused.map(resync.mapping).resolve(shown.state.doc);
+            selectionBeforeRefused = undefined;
+            shown.dispatch(shown.state.tr.setSelection(back).setMeta('addToHistory', false));
         }
         sendDeferredActions();
         caretReporter.documentShown();
@@ -1211,6 +1256,7 @@ function showError(message: string): void {
     }
     caretReporter.dispose();
     insertedBlock = undefined;
+    selectionBeforeRefused = undefined;
     view?.destroy();
     view = undefined;
     current = undefined;
@@ -1307,6 +1353,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'insertBlockCancel':
             cancelInsert(msg.requestId);
+            break;
+        case 'insertBlockRefused':
+            insertRefused(msg.requestId);
             break;
         case 'linkChoicesResult':
             applyLinkChoices(msg.requestId, msg.items);
