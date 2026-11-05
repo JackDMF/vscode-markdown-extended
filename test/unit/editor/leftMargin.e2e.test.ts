@@ -210,31 +210,38 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
         });
     }
 
-    test('with the archive sheet\'s time margin: scrolling moves the bar with the text and probes nothing again', async function () {
-        this.timeout(60000);
-        if (editor === undefined) {
-            this.skip();
-        }
-        const filler = Array.from({ length: 40 }, (_, k) => `Zeile ${k} mit etwas Text.`).join('\n\n');
-        await b.show(`${filler}\n\nMitte $Uhrzeit\${class=living} kurz.\n\n${filler}\n\nThe last paragraph.\n`);
-        await page.evaluate(() => (Array.from(document.querySelectorAll('.ProseMirror .left-sidebar')).find(e => (e.textContent ?? '').includes('Uhrzeit')) as HTMLElement).scrollIntoView({ block: 'center' }));
-        await delay(300);
-        await b.restAt('Uhrzeit', 2);
-        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
-        const before = (await measure()).bar;
-        const calls = await page.evaluate(async () => {
-            let n = 0;
-            const orig = document.elementFromPoint.bind(document);
-            document.elementFromPoint = (x, y) => { n++; return orig(x, y); };
-            window.scrollBy(0, 3);
-            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-            document.elementFromPoint = orig;
-            return n;
+    // Plain, and with the document's last block drawn as no box (a user sheet hiding it; ProseMirror's gap cursor is such a
+    // box too): how far the content reaches is read from the last block that has one, so a scroll still changes nothing (N-1).
+    for (const [label, last] of [['', 'The last paragraph.'], [', the last block hidden by the stylesheet', 'The last paragraph. {.versteckt}']] as const) {
+        test(`with the archive sheet's time margin${label}: scrolling moves the bar with the text and probes nothing again`, async function () {
+            this.timeout(60000);
+            if (editor === undefined) {
+                this.skip();
+            }
+            await page.addStyleTag({ content: '.ProseMirror > p.versteckt { display: none; }' });
+            const filler = Array.from({ length: 40 }, (_, k) => `Zeile ${k} mit etwas Text.`).join('\n\n');
+            await b.show(`${filler}\n\nMitte $Uhrzeit\${class=living} kurz.\n\n${filler}\n\n${last}\n`);
+            const hidden = await page.evaluate(() => ((document.querySelector('.ProseMirror') as HTMLElement).lastElementChild as HTMLElement).getClientRects().length === 0);
+            assert.strictEqual(hidden, label !== '', 'the last block has a box only where it is not hidden');
+            await page.evaluate(() => (Array.from(document.querySelectorAll('.ProseMirror .left-sidebar')).find(e => (e.textContent ?? '').includes('Uhrzeit')) as HTMLElement).scrollIntoView({ block: 'center' }));
+            await delay(300);
+            await b.restAt('Uhrzeit', 2);
+            await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+            const before = (await measure()).bar;
+            const calls = await page.evaluate(async () => {
+                let n = 0;
+                const orig = document.elementFromPoint.bind(document);
+                document.elementFromPoint = (x, y) => { n++; return orig(x, y); };
+                window.scrollBy(0, 3);
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                document.elementFromPoint = orig;
+                return n;
+            });
+            const after = (await measure()).bar;
+            assert.strictEqual(calls, 0, 'no probes for a scroll');
+            assert.ok(Math.abs(after.top - (before.top - 3)) < 1.5 && Math.abs(after.left - before.left) < 1, JSON.stringify({ before, after }));
         });
-        const after = (await measure()).bar;
-        assert.strictEqual(calls, 0, 'no probes for a scroll');
-        assert.ok(Math.abs(after.top - (before.top - 3)) < 1.5 && Math.abs(after.left - before.left) < 1, JSON.stringify({ before, after }));
-    });
+    }
 
     test('a bar that falls back into the column keeps off a note in the right margin beside it, as every bar does (review round 3, M-1)', async function () {
         await closeEditorPage(this, editor);
@@ -338,6 +345,49 @@ suite('Editor left margin: a bar for a left sidebar (e2e)', () => {
             assert.ok(after.gap >= 0 && after.gap <= after.side.line, `the bar moved with its sidebar: ${JSON.stringify({ before, after })}`);
         });
     }
+
+    // A row drawn under the sidebar's block while its bar is up, the sidebar unmoved: nothing moved the anchor, the page or the frame,
+    // and still the bar is measured again — it was placed for a band that was free and now holds the row.
+    test('a bar fallen back into the column: a row of lenses drawn under its block while it is up, the sidebar unmoved — measured again, over neither the row nor any text', async function () {
+        await closeEditorPage(this, editor);
+        this.timeout(90000);
+        editor = await openEditorPage({ width: 800, height: 600, styles: ['markdown-extended.css'], userStyles: [TIME_MARGIN] });
+        if (!editor) {
+            this.skip();
+        }
+        page = (editor as EditorPage).page;
+        // A stylesheet that sets these blocks apart: room above the sidebar's paragraph and above the next one, so the bar under the
+        // block (or over it) stands over no text. The sidebar on the paragraph's second line: its own lines above and below it leave
+        // no free height within a line's height, so the bar falls back into the column, under the block.
+        await page.addStyleTag({ content: '.ProseMirror > p.abgesetzt { margin-top: 3.5em; }' });
+        const lines = Array.from({ length: 4 }, (_, k) => `Zeile ${k} mit etwas Text, der bis an den Rand der Spalte läuft.`);
+        const blocks = [
+            ...lines,
+            'Ein Absatz mit genug Text, dass er umbricht, und erst auf seiner zweiten Zeile steht $Zeit${class=living} mitten im Satz, der danach noch eine dritte und eine vierte Zeile füllt und so weitergeht, bis er endet. {.abgesetzt}',
+            'Der Absatz danach, mit Abstand. {.abgesetzt}',
+            ...lines,
+            'The last paragraph.',
+        ];
+        const m = await barAt(`${blocks.join('\n\n')}\n`, 'Zeit');
+        const paragraph = await page.evaluate(() => { const r = (document.querySelector('.ProseMirror > p.abgesetzt') as HTMLElement).getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; });
+        const side = await sidebarOf('Zeit');
+        assert.ok(side.top > paragraph.top + side.line / 2 && side.bottom < paragraph.bottom - side.line / 2, `the sidebar on a middle line: ${JSON.stringify({ side, paragraph })}`);
+        assert.ok(m.bar.left >= m.column - 1, `fallen back into the column: ${JSON.stringify(m.bar)}`);
+        assert.deepStrictEqual(overText(m), [], `over no text to start with: ${JSON.stringify(m)}`);
+        await (editor as EditorPage).send({ type: 'lenses', version: 1_000_000, blocks: blocks.length, rows: [
+            { blockIndex: lines.length + 1, items: [{ id: 'u', title: 'Lens under the sidebar\'s block' }] },
+        ] });
+        await page.waitForFunction(() => document.querySelectorAll('.ProseMirror > .mep-lens-row').length === 1);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await delay(200);
+        const after = await measure();
+        const row = await page.$eval('.ProseMirror > .mep-lens-row', e => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; });
+        const still = await sidebarOf('Zeit');
+        assert.ok(Math.abs(still.top - side.top) < 0.5, `the sidebar did not move: ${JSON.stringify({ side, still })}`);
+        assert.ok(after.bar.bottom <= row.top || after.bar.top >= row.bottom, `off the row that came under it: ${JSON.stringify({ bar: after.bar, row })}`);
+        assert.deepStrictEqual(overText(after), [], `over no text: ${JSON.stringify(after)}`);
+        assert.ok(!after.bar.cut, `never cut: ${JSON.stringify(after.bar)}`);
+    });
 
     // The user's own stylesheet, read in place (`MEP_USER_STYLESHEET`; skipped without it): the rule's invariants, wherever its
     // geometry puts the bar — never cut; in the margin at the edge + 16 px off every text and within a line's height of its

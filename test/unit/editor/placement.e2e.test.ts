@@ -1244,6 +1244,82 @@ suite('Editor placement (e2e)', () => {
         await clickBefore('After', 1);
     });
 
+    // -- content that arrives under a placed bar, its anchor unmoved ---------------
+
+    /**
+     * A link alone at the right of its line, a short paragraph above it and one below: the bar's band is free on both
+     * sides, so it stands below the link. `next` is the block after the link's paragraph. Returns the blocks and the
+     * index of `next`, the bar shown and measured.
+     */
+    const freeAround = async (next: string) => {
+        const blocks = [...Array.from({ length: 8 }, (_, i) => `Paragraph ${i + 1}.`), 'Ab.', 'Eine Zeile mit etwas mehr Text vor dem [linkwort](https://example.com/w) danach.', next, 'Ef.', 'After the link.'];
+        await showDocument(`${blocks.join('\n\n')}\n`, 'After the link');
+        // No row left from the scenario before: a document from the host keeps the rows of the blocks it keeps.
+        await (editor as EditorPage).send({ type: 'lenses', version, blocks: blocks.length, rows: [] });
+        await page.waitForFunction(() => document.querySelector('.ProseMirror > .mep-lens-row') === null, { timeout: 2000 });
+        await clickBefore('linkwort', 3);
+        await waitBar();
+        const bar = await box(BAR);
+        const link = await page.$eval('.ProseMirror a', a => { const r = a.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; });
+        assert.ok(bar && bar.top >= link.bottom, `below the link to start with: ${JSON.stringify({ bar, link })}`);
+        assert.deepStrictEqual(await coveredText(BAR), [], 'over no text to start with');
+        return { blocks, nextIndex: blocks.indexOf(next) };
+    };
+
+    /** Two frames and a moment: what a change sets off has been placed. */
+    const settle = async () => {
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await delay(150);
+    };
+
+    test('c1: a row of lenses drawn under the block of a link while its bar is up, the link unmoved: the bar is measured again — over neither the row nor any text', async function () {
+        this.timeout(20000);
+        const { blocks, nextIndex } = await freeAround('Cd.');
+        await (editor as EditorPage).send({ type: 'lenses', version, blocks: blocks.length, rows: [{ blockIndex: nextIndex, items: [{ id: 'c1', title: 'A lens row that runs across the column under the link' }] }] });
+        await page.waitForSelector('.ProseMirror > .mep-lens-row', { timeout: 2000 });
+        await settle();
+        const bar = await box(BAR);
+        const row = await box('.ProseMirror > .mep-lens-row');
+        assert.ok(bar && row);
+        assert.ok(!overlap(bar, row), `off the row that came under it: ${JSON.stringify({ bar, row })}`);
+        assert.deepStrictEqual(await coveredText(BAR), [], 'over no text');
+        assert.ok(offLine(bar, await caret()), 'off the caret\'s line');
+    });
+
+    test('c3: an edit from outside lengthens the line under a link\'s bar, nothing moving: the bar is measured again — over no text', async function () {
+        this.timeout(20000);
+        const { blocks, nextIndex } = await freeAround('Cd.');
+        // The host's document again (an edit in the text editor), the short line under the link now running under it — one line still.
+        const edited = blocks.map((b, i) => (i === nextIndex ? 'Cd. Eine längere Zeile, die nun bis unter den Link und weiter reicht.' : b));
+        await resendDocument(`${edited.join('\n\n')}\n`);
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('bis unter den Link'));
+        await settle();
+        assert.ok(await shown(BAR), 'the bar is still up');
+        assert.deepStrictEqual(await coveredText(BAR), [], 'over no text');
+    });
+
+    test('c2: an image under a link\'s bar that loads only after the bar is up, the link unmoved: the bar is measured again — over neither the image nor any text', async function () {
+        this.timeout(20000);
+        const resolves = async () => (await (editor as EditorPage).posted()).flatMap(m => (m.type === 'resolveImages' ? [m] : []));
+        const before = (await resolves()).length;
+        await freeAround('![spät](bilder/spaet.png)');
+        const asked = (await resolves()).slice(before).find(m => m.srcs.includes('bilder/spaet.png'));
+        assert.ok(asked, 'the page asked where the image is');
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="120"><rect width="640" height="120" fill="#888"/></svg>';
+        await (editor as EditorPage).send({ type: 'imagesResolved', requestId: asked.requestId, sources: { 'bilder/spaet.png': `data:image/svg+xml,${encodeURIComponent(svg)}` } });
+        await page.waitForFunction(() => {
+            const img = document.querySelector<HTMLImageElement>('.ProseMirror img[data-mep-src="bilder/spaet.png"]');
+            return img !== null && img.complete && img.naturalHeight > 0;
+        }, { timeout: 2000 });
+        await settle();
+        const bar = await box(BAR);
+        const image = await box('.ProseMirror img[data-mep-src="bilder/spaet.png"]');
+        assert.ok(bar && image);
+        assert.ok(image.bottom - image.top > 60, `the image is drawn at its size: ${JSON.stringify(image)}`);
+        assert.ok(!overlap(bar, image), `off the image that came under it: ${JSON.stringify({ bar, image })}`);
+        assert.deepStrictEqual(await coveredText(BAR), [], 'over no text');
+    });
+
     // -- shots ----------------------------------------------------------------
 
     test('shots: every scenario light and dark at 1280 and 520', async function () {

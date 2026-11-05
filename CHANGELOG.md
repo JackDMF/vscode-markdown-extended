@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- A floating bar (or bubble, or field) is placed again when something appears under it while what it is about stays where it was — another extension's lens row drawn under the block, an image that finishes loading below: it no longer keeps covering the new row or image where the other side of its anchor is free. A left sidebar's bar fallen back into the column alike.
+
 ## v4.13.0 — Margins, Suggestions and Two Editors
 
 - An open Edit source box (a source block's or the properties' YAML) no longer writes its old text over a change made outside the editor to its block: it closes unapplied, your typing goes to the clipboard, and a hint says so.
