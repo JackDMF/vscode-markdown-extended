@@ -303,8 +303,8 @@ suite('Editor insertBlock (e2e)', () => {
     });
     type Box = { left: number; right: number; top: number; bottom: number };
     const overlaps = (a: Box, b: Box) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-    const NOT_SEPARATE_HINT = 'Block not inserted — it would not stand on its own here, for example inside an open code fence.';
-    const SOURCE_OPEN_HINT = `Block not inserted — apply this source (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Enter) or cancel it (Esc) first.`;
+    const NOT_SEPARATE_HINT = 'Block not inserted — it would not stand on its own here (for example, an open code fence would take it in).';
+    const SOURCE_OPEN_HINT = `Block not inserted — this source has changes not applied. Apply them (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Enter) or cancel (Esc), then insert again.`;
 
     /** The table's source box opened as a person opens it: the table selected, **Edit source** on its bar. */
     const openTableBox = async () => {

@@ -555,7 +555,7 @@ interface Around {
 let selectionBeforeRefused: { bookmark: SelectionBookmark; say: boolean } | undefined;
 
 /** Why the page took no block another extension inserted, where the host's parse would have read it into what is around it. */
-const NOT_SEPARATE_HINT = 'Block not inserted — it would not stand on its own here, for example inside an open code fence.';
+const NOT_SEPARATE_HINT = 'Block not inserted — it would not stand on its own here (for example, an open code fence would take it in).';
 
 /**
  * The `insertBlock` requests this page has answered, or that the host withdrew
@@ -597,7 +597,7 @@ function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
         // Said under the box's block, never over the box or its Apply and Cancel.
         const pos = typedIn.position?.();
         const near = pos === undefined ? null : view.nodeDOM(pos);
-        showRefusal(view, `Block not inserted — apply this source (${applyKey()}) or cancel it (Esc) first.`,
+        showRefusal(view, `Block not inserted — this source has changes not applied. Apply them (${applyKey()}) or cancel (Esc), then insert again.`,
             { at: 'caret', near: near instanceof Element ? near : undefined });
         refuse('source-open');
         return;

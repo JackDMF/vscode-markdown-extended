@@ -3034,8 +3034,8 @@ markdown, { focus })`.
   block: `source-open`, nothing committed, nothing written, the box left open with its text
   and the keyboard (`SourceEditor.holdsUnapplied`). The page says so under the box's block — a
   refusal of `hint.ts`, never over the box or its Apply and Cancel, gone as every refusal goes:
-  "Block not inserted — apply this source (Ctrl+Enter) or cancel it (Esc) first." (Cmd+Enter
-  on a Mac). Committed from outside, that text could
+  "Block not inserted — this source has changes not applied. Apply them (Ctrl+Enter) or cancel
+  (Esc), then insert again." (Cmd+Enter on a Mac). Committed from outside, that text could
   leave a construct open — a code fence typed but not closed — which the host's parse would
   read the block into (the extension hearing `inserted`, undo no longer reaching it); and the
   box, which a commit leaves open, would stand over a block the parse split, whose next
@@ -3084,11 +3084,14 @@ markdown, { focus })`.
   kept —, posts `insertBlockRefused { requestId, reason }` and its parse right behind; the page
   puts back the selection from before the insertion, does not take the keyboard and, for
   `not-separate`, says why at the caret (a refusal of `hint.ts`): "Block not inserted — it
-  would not stand on its own here, for example inside an open code fence." The
+  would not stand on its own here (for example, an open code fence would take it in)." The
   extension hears `not-separate` — only once the text without them is written: an edit dropped
   for another writer's change is `changed`, blocks or not. The page's history holds nothing of
-  the refused insertion. A page document or text that cannot be read is `error-state`, the
-  edit written without the blocks, or — when not even that can be told — not at all. An
+  the refused insertion. A check that cannot run (no engine, a page document or text that
+  cannot be read) is `error-state`: the edit is written without the blocks, the typing in it
+  kept, and the page says nothing. Only where the blocks cannot be told apart from the rest —
+  a `without` that does not fit the text, a page's mistake — is nothing written: the text
+  unchecked could be the very insertion the check is for. An
   accepted edit is parsed once: `post` takes the check's parse. `archiveInsertBlock.test.ts`
   holds that the check lets every insertion into the archive through.
 - **Back on the host**, `blockInserted` stops the timers as it arrives and is settled in the
