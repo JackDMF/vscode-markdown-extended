@@ -62,14 +62,19 @@ export type InsertBlockResult =
  * answer within 2 s, so the request was withdrawn and the page confirmed it
  * wrote nothing (`timeout`); its panel closed before the page answered
  * (`closed`); the file changed elsewhere as the page's edit arrived, which was
- * dropped for it (`changed`).
+ * dropped for it (`changed`); a source box (**Edit source**) holds text typed
+ * and not yet applied, which is left as it is — the person applies or
+ * cancels it, and the caller may ask again (`source-open`, added after 4.13.0).
  *
  * `unconfirmed` is the exception: the page gave no word at all within 30 s
  * (it is hung), and the blocks **may be in the document or not**. A caller
  * must not take it as "not inserted" — not insert the blocks a second time
  * elsewhere, but say that it is unknown and let the person look.
+ *
+ * Reasons may be added within API 2, as `source-open` was: a caller takes one
+ * it does not know as every reason but `unconfirmed` — nothing was written.
  */
-export type InsertBlockRefusal = 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'unconfirmed';
+export type InsertBlockRefusal = 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'source-open' | 'unconfirmed';
 
 export interface InsertBlockOptions {
     /** Bring the Visual Editor to the front, the keyboard in its page. */

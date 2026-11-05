@@ -539,9 +539,11 @@ const answeredInserts = new Set<number>();
  * `reparse` — in one edit with whatever typing still waits in the delay, so
  * no keystroke is lost to it — then `blockInserted`, which the host takes
  * behind that edit. Answered without the block when the page shows no
- * document or the block was not taken; a request the host withdrew already
- * is not written and not answered again. The caret is put after the blocks
- * once the host's parse shows them (`showDocument`).
+ * document, a raw block's source box holds text not yet applied
+ * (`source-open`: nothing is committed, the box stays as it is), or the block
+ * was not taken; a request the host withdrew already is not written and not
+ * answered again. The caret is put after the blocks once the host's parse
+ * shows them (`showDocument`).
  */
 function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
     if (answeredInserts.has(msg.requestId)) {
@@ -553,7 +555,14 @@ function insertBlock(msg: Extract<HostMessage, { type: 'insertBlock' }>): void {
         refuse('no-document');
         return;
     }
-    // A box open meanwhile is committed now, in the edit below: the focus leaving it would commit it after the block.
+    // Typed in a box and not applied: committed from outside, the text might leave a code fence open that takes
+    // the block in, and the box would stay open over what the host's parse made of it. The person applies it first.
+    if ([...openSourceEditors].some(editor => editor.holdsUnapplied?.() === true)) {
+        refuse('source-open');
+        return;
+    }
+    // A box open meanwhile — nothing typed in it, or the properties' — is committed now, in the edit below: the
+    // focus leaving it would commit it after the block.
     commitForSending();
     const before = view.state.doc;
     const inserted = insertBlockTransaction(view.state, msg.src, current.eol);

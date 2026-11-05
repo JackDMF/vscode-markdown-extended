@@ -2260,17 +2260,19 @@ suite('Editor host: insertBlock', () => {
         }
     });
 
-    test('the page\'s reason is kept: no document and refused are error-state; its edit dropped as the file changed elsewhere: changed', async function () {
+    test('the page\'s reason is kept: no document and refused are error-state, a source box with text not applied is source-open; its edit dropped as the file changed elsewhere: changed', async function () {
         this.timeout(10000);
         const s = await open();
         try {
-            for (const reason of ['no-document', 'refused'] as const) {
+            for (const [reason, said] of [['no-document', 'error-state'], ['refused', 'error-state'], ['source-open', 'source-open']] as const) {
                 const count = s.requests().length;
+                const before = s.document.getText();
                 const refused = insertBlockIn(s.uri, QUOTE);
                 const asked = await until(() => s.requests()[count], 2000);
                 assert.ok(asked);
                 s.webview.send({ type: 'blockInserted', requestId: asked.requestId, inserted: false, reason });
-                assert.deepStrictEqual(await refused, { inserted: false, reason: 'error-state' }, reason);
+                assert.deepStrictEqual(await refused, { inserted: false, reason: said }, reason);
+                assert.strictEqual(s.document.getText(), before, `${reason}: nothing written`);
             }
 
             const count = s.requests().length;

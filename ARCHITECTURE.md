@@ -2952,7 +2952,7 @@ visualEditor: {
     onDidChangeActive: vscode.Event<{ uri: vscode.Uri; caret: vscode.Position | undefined; selection?: vscode.Selection } | undefined>;
     /** API 2: Markdown blocks inserted by the page (below, "Inserting blocks for another extension"). */
     insertBlock(uri: vscode.Uri, markdown: string, options?: { focus?: boolean }): Promise<
-        { inserted: true } | { inserted: false; reason: 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'unconfirmed' }>;
+        { inserted: true } | { inserted: false; reason: 'no-editor' | 'error-state' | 'empty' | 'timeout' | 'closed' | 'changed' | 'source-open' | 'unconfirmed' }>;
 }
 ```
 
@@ -3025,9 +3025,17 @@ markdown, { focus })`.
   false)`), which works for an editor in a background tab too. The column is named: without it
   VS Code shows the editor in the active group, and for a custom text editor that is a second
   Visual Editor over the file there, the active text editor pushed aside (4.12.0).
-- **Page.** A source box open meanwhile is committed first, as a save commits it — its text is
-  a history step before the block's and goes in the same edit; the focus leaving it later
-  commits nothing more. Then `insertBlockTransaction` (`toolbar/commands.ts`, the sister of
+- **Page.** A raw block's source box holding text typed and not yet applied refuses the
+  block: `source-open`, nothing committed, nothing written, the box left open with its text
+  and the keyboard (`SourceEditor.holdsUnapplied`). Committed from outside, that text could
+  leave a construct open — a code fence typed but not closed — which the host's parse would
+  read the block into (the extension hearing `inserted`, undo no longer reaching it); and the
+  box, which a commit leaves open, would stand over a block the parse split, whose next
+  commit writes the split-off text a second time. The person applies or cancels the box, and
+  the caller may ask again. A box opened with nothing typed, and the properties' rows and
+  YAML (front matter ends at its closing line, and nothing goes before it), are committed
+  first, as a save commits them — their text is a history step before the block's and goes
+  in the same edit; the focus leaving a box later commits nothing more. Then `insertBlockTransaction` (`toolbar/commands.ts`, the sister of
   `insertLineTransaction`) puts a source block holding the text as given — its line breaks the
   document's, those at its end dropped (`blockSource`) — at `insertionPoint`: after the
   top-level block the selection ends in, never before the first block or the front matter,
@@ -3077,14 +3085,15 @@ markdown, { focus })`.
   word at all within `INSERT_UNCONFIRMED_MS` (30 s) — it is hung — does the host stop waiting,
   with `unconfirmed`: the block may be in the document or not, and the caller must not take it
   as not inserted. The page's other reasons: no document (`error-state`), would not take the
-  block (`refused`, also `error-state`).
-- **Known limit: an open source box with unfinished text.** The box is committed before the
-  block, as a save would commit it. If its text leaves a construct open — a code fence typed
-  but not closed — the host's parse reads the block (and what follows) as part of it: the
-  extension still hears `inserted`, and undo no longer reaches the insertion, because the
-  re-sync replaces a range wider than the block. Nothing is lost (the file holds what was typed
-  plus the block), and it needs an insert from outside in the middle of typing a fence; it is
-  accepted, not guarded (review 2, 03.11.2026).
+  block (`refused`, also `error-state`), a source box with text not applied (`source-open`).
+  Reasons are added within API 2 (`source-open` after 4.13.0); a caller reads one it does not
+  know as nothing written, as every reason but `unconfirmed`.
+- **Known limit: an unclosed construct in the file.** A construct left open in the file
+  itself — a code fence, an HTML comment, a container running to the file's end, before the
+  block's place — reads the block into it in the host's parse: the extension still hears
+  `inserted`, and undo no longer reaches the insertion, because the re-sync replaces a range
+  wider than the block. Nothing is lost. The source box's share of it (review 2, 03.11.2026)
+  is refused since (`source-open`, above).
 
 ### Styles
 

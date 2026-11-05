@@ -254,11 +254,8 @@ suite('Editor insertBlock (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, `${open}\n\n${QUOTE}`);
     });
 
-    test('an open source box is committed before the block, with focus: Ctrl+Z takes the block, then the box\'s text', async function () {
-        this.timeout(30000);
-        const table = '| a | b |\n| = | = |\n| 1 | 2 |\n';
-        const withTable = `Intro paragraph.\n\n${table}\nLast paragraph.\n`;
-        await showDocument(withTable);
+    /** The table's source box opened as a person opens it: the table selected, **Edit source** on its bar. */
+    const openTableBox = async () => {
         const cell = await page.waitForSelector('.mep-raw-block .mep-atom-content table');
         const box = await cell?.boundingBox();
         assert.ok(box);
@@ -270,24 +267,72 @@ suite('Editor insertBlock (e2e)', () => {
         assert.ok(at);
         await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
         await page.waitForSelector('.mep-raw-editor');
-        await page.keyboard.type('\n| 3 | 4 |');
-        const committed = withTable.replace('| 1 | 2 |\n', '| 1 | 2 |\n| 3 | 4 |\n');
+    };
+    const TABLE = '| a | b |\n| = | = |\n| 1 | 2 |\n';
+    const WITH_TABLE = `Intro paragraph.\n\n${TABLE}\nLast paragraph.\n`;
+    /** What the open box holds, and whether it has the keyboard; `null` when no box is open. */
+    const openBox = () => page.evaluate(() => {
+        const area = document.querySelector<HTMLTextAreaElement>('.mep-raw-editor');
+        return area === null ? null : { value: area.value, focused: document.activeElement === area };
+    });
+
+    test('a source box opened and nothing typed is committed with the block, with focus: one edit with the block alone, the box closes as the editor takes the keyboard, Ctrl+Z takes the block', async function () {
+        this.timeout(30000);
+        await showDocument(WITH_TABLE);
+        await openTableBox();
 
         const answer = await insert(QUOTE, true);
         assert.strictEqual(answer.inserted, true);
         const edits = await (editor as EditorPage).edits();
-        assert.strictEqual(edits.length, 1, 'one edit carries the box\'s text and the block');
-        assert.strictEqual(await hostReparses(), committed.replace('| 3 | 4 |\n', `| 3 | 4 |\n\n${QUOTE}\n`));
+        assert.strictEqual(edits.length, 1, 'one edit carries the block');
+        assert.strictEqual(await hostReparses(), WITH_TABLE.replace('| 1 | 2 |\n', `| 1 | 2 |\n\n${QUOTE}\n`));
         await page.waitForFunction(() => document.activeElement?.classList.contains('ProseMirror'), { timeout: 2000 });
         await settle();
-        assert.strictEqual((await (editor as EditorPage).edits()).length, 1, 'the focus leaving the box commits nothing more');
+        assert.strictEqual(await openBox(), null, 'the box closed as the focus left it');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, 1, 'and committed nothing more');
 
         await undoKey();
         await settle();
-        assert.strictEqual((await lastEdit())?.text, committed, 'first undo: the block');
-        await undoKey();
+        assert.strictEqual((await lastEdit())?.text, WITH_TABLE, 'Ctrl+Z: the block, and nothing else');
+    });
+
+    test('a source box holding typed text not yet applied refuses the block (source-open), also with focus: nothing is written, the box stays open with its text and the keyboard; applied, it is written as typed', async function () {
+        this.timeout(30000);
+        await showDocument(WITH_TABLE);
+        await openTableBox();
+        await page.keyboard.type('\n| 3 | 4 |');
+
+        const answer = await insert(QUOTE, true);
+        assert.deepStrictEqual(answer, { type: 'blockInserted', requestId: answer.requestId, inserted: false, reason: 'source-open' });
         await settle();
-        assert.strictEqual((await lastEdit())?.text, withTable, 'second undo: the box\'s text');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, 0, 'nothing written: not the block, not the box\'s text');
+        assert.deepStrictEqual(await openBox(), { value: '| a | b |\n| = | = |\n| 1 | 2 |\n| 3 | 4 |', focused: true }, 'the box as it was');
+        assert.strictEqual((await page.$$('.ProseMirror > .mep-raw-block')).length, 1, 'no source block for the quote on the page');
+
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('Enter');
+        await page.keyboard.up(MOD);
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, WITH_TABLE.replace('| 1 | 2 |\n', '| 1 | 2 |\n| 3 | 4 |\n'));
+    });
+
+    test('a source box whose typed text leaves a code fence open refuses the block (source-open): the block never lands in the fence, and the box keeps what was typed', async function () {
+        this.timeout(30000);
+        const withRaw = 'First paragraph.\n\n<div>raw block</div>\n\nLast paragraph.\n';
+        await showDocument(withRaw);
+        const box = await (await page.waitForSelector('.mep-raw-block .mep-atom-content'))?.boundingBox();
+        assert.ok(box);
+        await page.mouse.click(box.x + 10, box.y + box.height / 2, { clickCount: 2 });
+        await page.waitForSelector('.mep-raw-editor');
+        await delay(80);
+        await page.keyboard.type('\n\n```js\nlet a = 1;');
+
+        const answer = await insert(QUOTE);
+        assert.strictEqual(answer.inserted, false, 'not reported inserted');
+        assert.strictEqual(answer.reason, 'source-open');
+        await settle();
+        assert.strictEqual((await (editor as EditorPage).edits()).length, 0, 'nothing written');
+        assert.deepStrictEqual(await openBox(), { value: '<div>raw block</div>\n\n```js\nlet a = 1;', focused: true });
     });
 
     test('Cmd+Z sent with the browser\'s own Undo command (macOS) is still the page\'s history: the block goes, nothing else', async function () {

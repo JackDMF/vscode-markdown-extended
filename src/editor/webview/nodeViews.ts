@@ -117,6 +117,16 @@ export interface SourceEditor {
      * `lostInBox` measures against from here on.
      */
     hostShown?(): void;
+    /**
+     * Whether the box holds text its block does not — typed and not yet
+     * applied. Only a raw block's box says so: another extension's
+     * `insertBlock` is refused while one does (`source-open`), since its text,
+     * committed from outside, may leave a construct open that takes the
+     * inserted block in, and the box would stay open over a block the host's
+     * parse split. The properties' rows and YAML commit as before: front
+     * matter ends at its closing line, and nothing is inserted before it.
+     */
+    holdsUnapplied?(): boolean;
 }
 
 type GetPos = () => number | undefined;
@@ -375,6 +385,15 @@ export class RawBlockView extends AtomView implements SourceEditor {
         if (this.editor) {
             this.confirmedSource = this.node.attrs.src as string;
         }
+    }
+
+    holdsUnapplied(): boolean {
+        const area = this.editor;
+        if (!area) {
+            return false;
+        }
+        const src = this.node.attrs.src as string;
+        return withSourceTerminators(area.value, src, this.port.eol()) !== src;
     }
 
     commitSource(): void {

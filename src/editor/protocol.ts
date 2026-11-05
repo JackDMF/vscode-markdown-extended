@@ -469,9 +469,10 @@ export type WebviewMessage =
      * page had not seen), once per `requestId`, posted right after the `edit`
      * (with `reparse`) that carries the block. Without the block, `reason`
      * says why: the page shows no document (`no-document`), the host withdrew
-     * the request first (`cancelled`), or the page would not take the block
-     * (`refused`). The host takes it in its queue, behind that edit, and
-     * answers the extension once the edit has been applied.
+     * the request first (`cancelled`), the page would not take the block
+     * (`refused`), or a source box holds text not yet applied (`source-open`).
+     * The host takes it in its queue, behind that edit, and answers the
+     * extension once the edit has been applied.
      */
     | { type: 'blockInserted'; requestId: number; inserted: boolean; reason?: InsertRefusal }
     /** The quick fixes for a diagnostic's source `range`, in the text of `baseVersion`; answered with `quickFixes`. */
@@ -509,7 +510,7 @@ export type WebviewMessage =
     | { type: 'exportSettings' };
 
 /** Why the page did not insert a block (`blockInserted`). */
-export type InsertRefusal = 'no-document' | 'cancelled' | 'refused';
+export type InsertRefusal = 'no-document' | 'cancelled' | 'refused' | 'source-open';
 
 /** The format names of the export's table (`formats.ts`), which the page and the host both read. */
 export type { ExportFormatName };

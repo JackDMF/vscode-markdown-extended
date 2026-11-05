@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- An extension inserting blocks (`visualEditor.insertBlock`) while an Edit source box holds text you typed and have not applied is refused with the new reason `source-open`: your text stays in the box as it was, and the block no longer lands inside a code fence you had just opened there.
+
 ## v4.13.0 — Margins, Suggestions and Two Editors
 
 - An open Edit source box (a source block's or the properties' YAML) no longer writes its old text over a change made outside the editor to its block: it closes unapplied, your typing goes to the clipboard, and a hint says so.

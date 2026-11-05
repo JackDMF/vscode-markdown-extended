@@ -633,8 +633,9 @@ export class VisualEditorSession implements vscode.Disposable {
      * would not take the block), `closed` (the panel closed before the page
      * answered), `timeout` (no answer within `MAP_TIMEOUT_MS`: the request was
      * withdrawn — `insertBlockCancel` — and the page confirmed it wrote
-     * nothing), or `changed` (the file changed elsewhere as the edit arrived,
-     * and the edit was dropped). `unconfirmed` is not one of them: the page
+     * nothing), `changed` (the file changed elsewhere as the edit arrived,
+     * and the edit was dropped), or `source-open` (a source box on the page
+     * holds text not yet applied). `unconfirmed` is not one of them: the page
      * said nothing at all within `INSERT_UNCONFIRMED_MS`, and the block may be
      * in the document or not. With `focus`, the panel comes to the front
      * first, and the page takes the keyboard.
@@ -719,7 +720,7 @@ export class VisualEditorSession implements vscode.Disposable {
     /** What the extension is told for the page's `blockInserted`, read behind the edit that carried the block. */
     private insertedResult(inserted: boolean, refusal: InsertRefusal | undefined): InsertBlockResult {
         if (!inserted) {
-            return { inserted: false, reason: refusal === 'cancelled' ? 'timeout' : 'error-state' };
+            return { inserted: false, reason: refusal === 'cancelled' ? 'timeout' : refusal === 'source-open' ? 'source-open' : 'error-state' };
         }
         return this.lastEditLanded ? { inserted: true } : { inserted: false, reason: 'changed' };
     }
